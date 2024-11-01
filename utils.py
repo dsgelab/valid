@@ -1,15 +1,29 @@
 import pandas as pd
 import numpy as np
 
+######## Directories and Logging ########
 import os
 def make_dir(dir_path):
     if not os.path.exists(dir_path): os.makedirs(dir_path)
 
+import logging
+def init_logging(log_dir, log_file_name, logger):
+    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
+    logger.info("Time: " + get_datetime() + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
+
+from datetime import datetime
+def get_date():
+    return datetime.today().strftime("%Y-%m-%d")
+def get_datetime():
+    return datetime.today().strftime("%Y-%m-%d-%H%M")
+
+######### Printing and Plotting #########
 def print_count(data):
     print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+"""Plots trajectory of lab values for a specific individual. (x=DATE, y=VALUE)"""
 def plot_data(data, fg_id):
     crnt_data = data.loc[data.FINNGENID == fg_id]
     fig, ax = plt.subplots()
