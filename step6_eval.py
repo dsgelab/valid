@@ -2,6 +2,7 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/"))
 from utils import *
+from plot_utils import *
 # Standard stuff
 import numpy as np
 import pandas as pd
@@ -17,34 +18,102 @@ import math
 set_names = {1:"Valid", 2: "Test", 0: "Train"}
 sns.set_style("whitegrid")
 
-def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set):
+"""Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""
+def bootstrap_metric(func, obs, preds, n_boots=500, rng_seed=42):
+    bootstraps = []
+    obs = np.array(obs)
+    preds = np.array(preds)
+    rng = np.random.RandomState(rng_seed)
+    try:
+        total_est = func(obs, preds)
+    except:
+        return(np.nan, np.nan, np.nan)
+    for i in np.arange(n_boots):
+        idxs = rng.randint(0, len(obs), len(obs))
+        try: # tweedie sometimes has issues
+            bootstraps.append(func(obs[idxs], preds[idxs]))
+        except:
+            continue
+    if len(bootstraps) > 0:
+        # Sorting
+        bootstraps = np.array(bootstraps)
+        bootstraps.sort()
+        # 95% CI
+        ci_low = bootstraps[int(0.025*len(bootstraps))]
+        ci_high = bootstraps[int(0.975*len(bootstraps))]
+
+        return(total_est, ci_low, ci_high)
+    else:
+        return(np.nan, np.nan, np.nan)
+        
+"""Calculate metrics on given set of data."""
+def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set, subset_name="all", n_boots=500, train_type="cont"):
     set_data = pred_data.loc[pred_data.SET == set]
     n_indv = set_data.shape[0]
     n_abnorm = set_data.loc[:,y_goal_col].sum()
-    mse = skm.mean_squared_error(set_data.loc[:,y_cont_goal_col], set_data.loc[:,y_cont_pred_col])
+
+    if train_type != "binary":
+        # Measurement for continuous value
+        mse = bootstrap_metric(skm.mean_squared_error, set_data.loc[:,y_cont_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
+        tweedie = bootstrap_metric(lambda x, y: skm.d2_tweedie_score(x, y, power=3), set_data.loc[:,y_cont_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
+    else:
+        AUC = bootstrap_metric(skm.roc_auc_score, set_data.loc[:,y_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
+        avPRC = bootstrap_metric(skm.average_precision_score, set_data.loc[:,y_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
+
+    # Measurement for binary outcome
     set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
+    set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
 
-    f1 = skm.f1_score(set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], average="macro")
-    accuracy = skm.accuracy_score(set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col])
-    accuracy_balanced = skm.balanced_accuracy_score(set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col])
-    precision = skm.precision_score(set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col])
-    recall = skm.recall_score(set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col])
+    ## Making sure at least one abnormal is present, otherwise metrics make no sense
+    if n_abnorm > 0:
+        accuracy = bootstrap_metric(skm.accuracy_score, set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], n_boots=n_boots)
+        f1 = bootstrap_metric(lambda x, y: skm.f1_score(x, y, average="macro", zero_division=0), set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], n_boots=n_boots)
+        precision = bootstrap_metric(lambda x, y: skm.precision_score(x, y, zero_division=0), set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], n_boots=n_boots)
+        recall = bootstrap_metric(lambda x, y: skm.recall_score(x, y, zero_division=0), set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], n_boots=n_boots)
 
-    print("{} - MSE: {:.2f}   F1: {:.2f}   acurracy: {:.2f}".format(set_names[set], mse, f1, accuracy))
-    eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": "All", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "MSE":mse, "F1":f1, "accuracy":accuracy, "accuracy_balanced":accuracy_balanced, "precision": precision, "recall": recall}, ignore_index=True)
+        # Results
+        if train_type!="binary":
+            print("{} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
+        else:
+            print("{} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
+
+        ## First row in dataset
+        if eval_metrics.shape[0] == 0:
+            if train_type!="binary":
+                eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "tweedie": [tweedie[0]], "tweedie_CIneg": [tweedie[1]], "tweedie_CIpos": [tweedie[2]], "MSE": [mse[0]], "MSE_CIneg": [mse[1]], "MSE_CIpos": [mse[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
+            else:
+                eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "AUC": [AUC[0]], "AUC_CIneg": [AUC[1]], "AUC_CIpos": [AUC[2]], "avPRC": [avPRC[0]], "avPRC_CIneg": [avPRC[1]], "avPRC_CIpos": [avPRC[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
+
+        ## All other rows
+        else:
+            if train_type!="binary":
+                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
+            else:
+                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC": AUC[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
+
+    ## Only continuous metrics
+    else:
+        # Results
+        if train_type!="binary":
+            print("{} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})".format(set_names[set], tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2]))
+            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name,"GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2]}, ignore_index=True)
+        else:
+            print("{} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f}) ".format(set_names[set], AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2]))
+            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC": AUC_CIpos[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2]}, ignore_index=True)
+
     return(eval_metrics)
 
 def conf_matrix_dfs(pred_data, y_goal_col, y_pred_col, all_conf_mats):
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=0)
-    crnt_conf_mats = pd.DataFrame.from_dict({"ALL": cm[0].flatten()}, orient="index")
+    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
     crnt_conf_mats.loc[:,"SET"] = set_names[0]
     all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=1)
-    crnt_conf_mats = pd.DataFrame.from_dict({"ALL": cm[0].flatten()}, orient="index")
+    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
     crnt_conf_mats.loc[:,"SET"] = set_names[1]
     all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=2)
-    crnt_conf_mats = pd.DataFrame.from_dict({"ALL": cm[0].flatten()}, orient="index")
+    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
     crnt_conf_mats.loc[:,"SET"] = set_names[2]
     all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
     
@@ -58,7 +127,7 @@ def conf_matrix(pred_data, y_goal_col, y_pred_col, set=1, title=""):
     cm = skm.confusion_matrix(set_data.loc[:,y_goal_col].values, set_data.loc[:,y_pred_col].values)
     return(cm, cm_norm)
 
-def time_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats):
+def time_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats, subset_name):
     max_years = math.ceil(max(pred_data.TIME_LAST/365.25))
     time_scores = pd.DataFrame()
     conf_mats = pd.DataFrame()
@@ -66,147 +135,171 @@ def time_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_c
         set_data = pred_data.loc[pred_data.SET == set]
         set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
         set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
-        crnt_time_scores = pd.DataFrame({"SUBSET": pd.cut(pred_data.TIME_LAST, np.arange(0, 365.25*max_years, 365.25)).cat.categories})
+        crnt_time_scores = pd.DataFrame({"GROUP": pd.cut(pred_data.TIME_LAST, np.arange(0, 365.25*max_years, 365.25)).cat.categories})
         crnt_conf_mats = {}
         for level in pd.cut(set_data.TIME_LAST, np.arange(0, 365.25*11, 365.25)).cat.categories:
             crnt_data = set_data.loc[np.logical_and(set_data.TIME_LAST >= level.left, set_data.TIME_LAST <= level.right)]
             if crnt_data.shape[0] >= 5 and crnt_data.loc[:,y_goal_col].sum() >= 5:   
                 conf_mats_square = conf_matrix(crnt_data, y_goal_col, y_pred_col, set, title="(" + str(level.left/365.25) + "," + str(level.right/365.25) + "]")
                 crnt_conf_mats[level] = conf_mats_square[0].flatten()
-                f1 = skm.f1_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], average="macro")
-                accuracy = skm.accuracy_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
-                accuracy_balanced = skm.balanced_accuracy_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
-                precision = skm.precision_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
-                recall = skm.recall_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
 
                 mse = skm.mean_squared_error(crnt_data.loc[:,y_cont_goal_col], crnt_data.loc[:,y_cont_pred_col])
-            
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "F1"] = f1
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "accuracy"] = accuracy
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "accuracy_balanced"] = accuracy_balanced
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "precision"] = precision
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "recall"] = recall
+                try:
+                    tweedie = skm.d2_tweedie_score(crnt_data.loc[:,y_cont_goal_col], crnt_data.loc[:,y_cont_pred_col], power=3)
+                    if tweedie < 0: tweedie = np.nan
+                except:
+                    tweedie = np.nan
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "tweedie"] = tweedie
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "MSE"] = mse
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "N_INDV"] = crnt_data.shape[0]
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "N_ABNORM"] = crnt_data.loc[:,y_goal_col].sum()
 
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "MSE"] = mse
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "N_INDV"] = crnt_data.shape[0]
-                crnt_time_scores.loc[crnt_time_scores.SUBSET == level, "N_ABNORM"] = crnt_data.loc[:,y_goal_col].sum()
+                f1 = skm.f1_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], average="macro", zero_division=0)
+                accuracy = skm.accuracy_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
+                precision = skm.precision_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], zero_division=0)
+                recall = skm.recall_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], zero_division=0)
+
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "F1"] = f1
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "accuracy"] = accuracy
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "precision"] = precision
+                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "recall"] = recall
                 
         crnt_conf_mats = pd.DataFrame.from_dict(crnt_conf_mats, orient="index") 
         crnt_conf_mats.loc[:,"SET"] = set_names[set]
         crnt_time_scores.loc[:,"SET"] = set_names[set]
+        crnt_conf_mats.loc[:,"SUBSET"] = subset_name
+        crnt_time_scores.loc[:,"SUBSET"] = subset_name
+        
         if time_scores.shape[0] >= 5: 
             time_scores = pd.concat([time_scores, crnt_time_scores])
             conf_mats = pd.concat([conf_mats, crnt_conf_mats])
         else: 
             time_scores = crnt_time_scores.copy()
             conf_mats = crnt_conf_mats.copy()
-
-    min_y = min([min(time_scores.F1), min(time_scores.accuracy), min(time_scores.precision), min(time_scores.recall)])
-
-    fig, axes = plt.subplots(1, 3, figsize=(20,5))
-    sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET",  "F1", "accuracy", "accuracy_balanced"]].reset_index().melt(["index", "SUBSET"]), palette=["#D5694F", "#29557B", "#EAB034"],x="index", y="value", hue="variable", ax=axes[0])
-    axes[0].set_ylim(min_y, 1)
-    axes[0].set_xlabel("Years")
-    axes[0].set_ylabel("")
-
-    sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET",  "F1", "precision", "recall"]].reset_index().melt(["index", "SUBSET"]), palette=["#D5694F", "#748AAA", "#CCB6AF"],x="index", y="value", hue="variable", ax=axes[1])
-    axes[1].set_ylim(min_y, 1)
-    axes[1].set_xlabel("Years")
-    axes[1].set_label("")
-
-    sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET", "MSE"]].reset_index().melt(["index", "SUBSET"]), palette=["#841C26"], x="index", y="value", hue="variable", ax=axes[2])
-    axes[2].set_xlabel("Years")
-    axes[2].set_ylabel("MSE")
     
+    fig = plot_scores_metrics(time_scores, eval_metrics, "Years", "GROUP", subset_name)
+
     eval_metrics = pd.concat([eval_metrics, time_scores])
     all_conf_mats = pd.concat([all_conf_mats, conf_mats])
     return(eval_metrics, all_conf_mats, fig)
 
-def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics):
+def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, subset_name):
     age_scores = pd.DataFrame()
     age_groups = pred_data.AGE_GROUP.cat.remove_unused_categories().cat.categories
 
     for set in [0,1,2]:
-        crnt_age_scores = pd.DataFrame({"SUBSET": age_groups})
+        crnt_age_scores = pd.DataFrame({"GROUP": age_groups})
         set_data = pred_data.loc[pred_data.SET == set]
         set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
         set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
         for group in age_groups:
             group_data = set_data.loc[set_data.AGE_GROUP == group]
+            mse = skm.mean_squared_error(group_data.loc[:,y_cont_goal_col], group_data.loc[:,y_cont_pred_col])
+            try:
+                tweedie = skm.d2_tweedie_score(group_data.loc[:,y_cont_goal_col], group_data.loc[:,y_cont_pred_col], power=3)
+                if tweedie < 0: tweedie = np.nan
+            except:
+                tweedie = np.nan
+            
+            crnt_age_scores.loc[crnt_age_scores.GROUP == group, "tweedie"] = tweedie
+            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"MSE"] = mse
+            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_INDV"] = group_data.shape[0]
+            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_ABNORM"] = group_data.loc[:,y_goal_col].sum()
             if group_data.shape[0] >= 5:
-                f1 = skm.f1_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], average="macro")
+                f1 = skm.f1_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], average="macro", zero_division=0)
                 accuracy = skm.accuracy_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col])
-                mse = skm.mean_squared_error(group_data.loc[:,y_cont_goal_col], group_data.loc[:,y_cont_pred_col])
-                precision = skm.precision_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col])
-                recall = skm.recall_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col])
-                accuracy_balanced = skm.balanced_accuracy_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col])
-                
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"F1"] = f1
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"accuracy"] = accuracy
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"MSE"] = mse
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"accuracy_balanced"] = accuracy_balanced
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"precision"] = precision
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"recall"] = recall
-
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"N_INDV"] = group_data.shape[0]
-                crnt_age_scores.loc[crnt_age_scores.SUBSET == group,"N_INDV"] = group_data.loc[:,y_goal_col].sum()
-
+                precision = skm.precision_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], zero_division=0)
+                recall = skm.recall_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], zero_division=0)
+                    
+                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"F1"] = f1
+                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"accuracy"] = accuracy
+                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"precision"] = precision
+                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"recall"] = recall
 
         crnt_age_scores.loc[:,"SET"] = set_names[set]
+        crnt_age_scores.loc[:,"SUBSET"] = subset_name
         if age_scores.shape[0] > 0: age_scores = pd.concat([age_scores, crnt_age_scores])
         else: age_scores = crnt_age_scores.copy()
-            
-    age_scores["AGE_MID"] = age_scores.SUBSET.transform(lambda x: x.mid)
-
-    fig, axes = plt.subplots(1, 3, figsize=(20,5))
-    min_y = min([min(age_scores.F1), min(age_scores.accuracy), min(age_scores.precision), min(age_scores.recall)])
-    sns.lineplot(age_scores.loc[age_scores.SET=="Valid"][["AGE_MID",  "F1", "accuracy", "accuracy_balanced"]].melt(["AGE_MID"]), palette=["#D5694F", "#29557B", "#EAB034"],x="AGE_MID", y="value", hue="variable", ax=axes[0])
-    axes[0].set_ylim(min_y, 1)
-    axes[0].set_xlabel("Age")
-    axes[0].set_ylabel("")
-
-    sns.lineplot(age_scores.loc[age_scores.SET=="Valid"][["AGE_MID",  "F1", "precision", "recall"]].melt(["AGE_MID"]), palette=["#D5694F", "#748AAA", "#CCB6AF"],x="AGE_MID", y="value", hue="variable", ax=axes[1])
-    axes[1].set_ylim(min_y, 1)
-    axes[1].set_xlabel("Age")
-    axes[1].set_label("")
-
-    sns.lineplot(age_scores.loc[age_scores.SET=="Valid"][["AGE_MID", "MSE"]].melt(["AGE_MID"]), palette=["#841C26"], x="AGE_MID", y="value", hue="variable", ax=axes[2])
-    axes[2].set_xlabel("Age")
-    axes[2].set_ylabel("MSE")
-
+    eval_metrics = pd.concat([eval_metrics, age_scores])
+    age_scores["AGE_MID"] = age_scores.GROUP.transform(lambda x: x.mid)
+    fig = plot_scores_metrics(age_scores, eval_metrics, "Age", "AGE_MID", subset_name)
+    
     return(eval_metrics, fig)
     
-def eval_preds(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, file_source, res_dir):
-    sns.scatterplot(pred_data.loc[pred_data.SET == 1], x=y_cont_pred_col, y=y_cont_goal_col)
+def eval_subset(eval_metrics, all_conf_mats, data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="all", n_boots=500, train_type="cont"):
+    if train_type != "binary":
+        N_indv = data.shape[0]
+        g, newcol_x, newcol_y = plot_observerd_vs_predicted_min5(data, y_cont_goal_col, y_cont_pred_col)
+        g.savefig(fig_path + "_" + subset_name + "_scatter_min5.png", dpi=300)
+        g.savefig(fig_path + "_" + subset_name + "_scatter_min5.pdf")
+        newcol_x.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_x.csv", sep=",")
+        newcol_y.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_y.csv", sep=",")
+        
+        g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col)
+        g.savefig(fig_path + "_" + subset_name + "_scatter.png", dpi=300)
+    else:
+        g, newcol_x, newcol_y = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
+        g.savefig(fig_path + "_" + subset_name + "_scatter_min5.png", dpi=300)
+        g.savefig(fig_path + "_" + subset_name + "_scatter_min5.pdf")
+        newcol_x.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_x.csv", sep=",")
+        newcol_y.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_y.csv", sep=",")
 
-    all_conf_mats = pd.DataFrame()
-    all_conf_mats = conf_matrix_dfs(pred_data, y_goal_col, y_pred_col, all_conf_mats)
-    date = datetime.today().strftime("%Y-%m-%d")
+    all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
+    # Metrics with bootstrap for different sets
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=0, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=1, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=2, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
 
-    eval_metrics = pd.DataFrame(columns=("SET", "SUBSET", "N_INDV", "N_ABNORM", "MSE", "F1", "accuracy"))
-    eval_metrics = set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=0)
-    eval_metrics = set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=1)
-    eval_metrics = set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=2)
-    eval_metrics, fig = age_group_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics)
+    if train_type == "cont":
+    ## Age-group level
+        eval_metrics, fig = age_group_evals(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, subset_name)
+        fig.savefig(fig_path + "_" + subset_name + "_agestrata.png", dpi=300)
+        fig.savefig(fig_path + "_" + subset_name + "_agestrata.pdf")
     
-    fig.savefig(res_dir + "plots/agestrat_"+file_source+"_"+y_cont_goal_col+"_"+date+".png")
-    fig.savefig(res_dir + "plots/agestrat_"+file_source+"_"+y_cont_goal_col+"_"+date+".pdf")
-    eval_metrics, all_conf_mats, fig = time_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats)
-    fig.savefig(res_dir + "plots/timestrat_"+file_source+"_"+y_cont_goal_col+"_"+date+".png")
-    fig.savefig(res_dir + "plots/timestrat_"+file_source+"_"+y_cont_goal_col+"_"+date+".pdf")
+        ## Time level
+        if "TIME_LAST" in data.columns:
+            eval_metrics, all_conf_mats, fig = time_evals(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats, subset_name)
+            fig.savefig(fig_path + "_" + subset_name +"_timestrata.png", dpi=300)
+            fig.savefig(fig_path + "_" + subset_name + "_timestrata.pdf")
+    
+    return(eval_metrics, all_conf_mats)
+    
+def eval_preds(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, fig_path, table_path, n_boots=500, train_type="cont"):
+    eval_metrics = pd.DataFrame()
+    all_conf_mats = pd.DataFrame()
 
-    eval_metrics.loc[eval_metrics.MSE.notnull()].to_csv(res_dir + "tables/eval_"+file_source+y_cont_goal_col+date+".csv", sep=",", index=False)
-    all_conf_mats.to_csv(res_dir + "tables/confmats_"+file_source+"_"+y_cont_goal_col+"_"+date+".csv", sep=",", index=False)
+    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, n_boots=n_boots, train_type=train_type)
+    # Testing on subset of undiagnosed
+    print("No diag-------------------------------------------------------------------------------------------------------------------------------")
+    subset_data = data.loc[np.logical_or(data.DIAG_DATE.isnull(), data.DIAG_DATE>=data.START_DATE)]
+    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="nodiag", n_boots=n_boots, train_type=train_type)
 
-"""Data needs at least columns y_DATE and DATE. y_DATE is the date of the last observation, DATE is the date of the prediction."""
+    # Data diag
+    print("No data diag-------------------------------------------------------------------------------------------------------------------------------")
+    subset_data = data.loc[np.logical_or(data.DATA_DIAG_CUSTOM_DATE.isnull(), data.DATA_DIAG_CUSTOM_DATE>=data.START_DATE)]
+    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="nodatadiag", n_boots=n_boots, train_type=train_type)
+
+    # No data abnormal
+    print("No abnormal-------------------------------------------------------------------------------------------------------------------------------")
+    subset_data = data.loc[np.logical_or(data.FIRST_ABNORM_CUSTOM_DATE.isnull(), data.FIRST_ABNORM_CUSTOM_DATE>=data.START_DATE)]
+    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="noabnorm", n_boots=n_boots, train_type=train_type)
+
+    # No fg abnormal
+    print("No fg abnormal-------------------------------------------------------------------------------------------------------------------------------")
+    subset_data = data.loc[np.logical_or(data.FIRST_ABNORM_DATE.isnull(), data.FIRST_ABNORM_DATE>=data.START_DATE)]
+    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="nofgabnorm", n_boots=n_boots, train_type=train_type)
+    
+    return(eval_metrics, all_conf_mats)
+
 def merge_preds_and_labels(data, labels):
-    data = pd.merge(data, labels, on="FINNGENID", how="inner")
-    data.DATE = data.DATE.astype("datetime64[ns]")
-    data.y_DATE = data.y_DATE.astype("datetime64[ns]")
-    time_last = data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).y_DATE - data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).DATE 
-    time_last = pd.merge(data[["FINNGENID"]], time_last.rename("TIME_LAST"), left_index=True, right_index=True, how="inner")
-    time_last.TIME_LAST = time_last.TIME_LAST.dt.days
-    data = pd.merge(data, time_last, on="FINNGENID", how="inner")
+    data = pd.merge(data, labels.rename(columns={"EVENT_AGE": "y_EVENT_AGE"}), on="FINNGENID", how="inner")
+    data.START_DATE = data.START_DATE.astype("datetime64[ns]")
+    if "DATE" in data.columns:
+        data.DATE = data.DATE.astype("datetime64[ns]")
+        time_last = data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).START_DATE - data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).DATE 
+        time_last = pd.merge(data[["FINNGENID"]], time_last.rename("TIME_LAST"), left_index=True, right_index=True, how="inner")
+        time_last.TIME_LAST = time_last.TIME_LAST.dt.days
+        data = pd.merge(data, time_last, on="FINNGENID", how="inner")
     return(data)
 
 def get_parser_arguments():
@@ -215,11 +308,17 @@ def get_parser_arguments():
     parser.add_argument("--res_dir", help="Path to the results directory", default="/home/ivm/valid/results/model_evals/carryover/")
     parser.add_argument("--file_path_preds", help="Full source file path to prediction file", required=True)
     parser.add_argument("--file_path_labels", help="Full source file path to labels file", required=True)
+    parser.add_argument("--file_path_meta", help="Full source file path to labels file", required=True)
+    parser.add_argument("--file_path_diags", help="Full source file path to labels file", required=True)
     parser.add_argument("--source_file", type=str, help="Name of orig file", required=True)
-    parser.add_argument("--y_pred_col", type=str, help="Column name of prediction for ABNORMity", default="ABNORM_CUSTOM")
+    parser.add_argument("--y_pred_col", type=str, help="Column name of prediction for abnormality", default="ABNORM_CUSTOM")
     parser.add_argument("--y_pred_cont_col", type=str, help="Column name of prediction for value", default="VALUE")
-    parser.add_argument("--y_goal_col", type=str, help="Column name of goal for ABNORMity", default="y_ABNORM_CUSTOM")
+    parser.add_argument("--y_goal_col", type=str, help="Column name of goal for abnormality", default="y_ABNORM_CUSTOM")
     parser.add_argument("--y_goal_cont_col", type=str, help="Column name of goal for value", default="y_MEAN")
+    parser.add_argument("--n_boots", type=int, help="Number of random samples for bootstrapping of metrics", default=500)
+    parser.add_argument("--train_type", type=str, help="Type of training, i.e. regression will be cont and logistic regression binary.", default="cont")
+    parser.add_argument("--save_csv", type=int, help="Whether to save the eval metrics file. If false can do a rerun on low boots.", default=1)
+
     args = parser.parse_args()
 
     return(args)
@@ -241,19 +340,32 @@ if __name__ == "__main__":
     make_dir(log_dir)
     make_dir(args.res_dir+"plots/")
     make_dir(args.res_dir+"tables/")
+    fig_path = args.res_dir + "plots/"+args.source_file+"_"+date
+    table_path = args.res_dir + "tables/"+args.source_file+"_"+date
 
     init_logging(log_dir, log_file_name, date_time)
-
+    
     #### Getting Data
     data = pd.read_csv(args.file_path_preds)
     labels = pd.read_csv(args.file_path_labels)
     data = merge_preds_and_labels(data, labels)
+    # Diag and abnorm for subsetting
+    diags = pd.read_csv(args.file_path_diags)
+    abnorms = pd.read_csv(args.file_path_meta)[["FINNGENID", "DIAG_DATE", "FIRST_ABNORM_DATE", "FIRST_ABNORM_CUSTOM_DATE"]]
+    data = pd.merge(data, diags, on="FINNGENID", how="left")
+    data = pd.merge(data, abnorms, on="FINNGENID", how="left")
+    data.DIAG_DATE = data.DIAG_DATE.astype("datetime64[ns]")
+    data.FIRST_ABNORM_DATE = data.FIRST_ABNORM_DATE.astype("datetime64[ns]")
+    data.FIRST_ABNORM_CUSTOM_DATE = data.FIRST_ABNORM_CUSTOM_DATE.astype("datetime64[ns]")
+    data.DATA_DIAG_DATE = data.DATA_DIAG_DATE.astype("datetime64[ns]")
+    data.DATA_DIAG_CUSTOM_DATE = data.DATA_DIAG_CUSTOM_DATE.astype("datetime64[ns]")
+    # age grouping
     data["AGE_GROUP"] = pd.cut(data["EVENT_AGE"], [18, 30, 40, 50, 60, 70, 80])
-
+    
     #### Evaluating
-    eval_preds(data, args.y_pred_col, args.y_pred_cont_col, args.y_goal_col, args.y_goal_cont_col, args.source_file, args.res_dir)
-#python3 /home/ivm/valid/scripts/step6_eval.py --file_path_preds=/home/ivm/valid/data/processed_data/step5/preds_hba1c_2024-10-15_1-year_carryover_2024-10-16.csv --file_path_labels=/home/ivm/valid/data/processed_data/step4/labels_hba1c_2024-10-15_1-year_2024-10-16.csv --source_file=hba1c_2024-10-15 --y_goal_cont_col=y_MEAN
-
-#python3 /home/ivm/valid/scripts/step3/eval_model.py --file_path_preds=/home/ivm/valid/data/processed_data/step3/preds_hba1c_ca_2024-10-11_1-year_carrylast_2024-10-14.csv --file_path_labels=labels_hba1c_ca_2024-10-11_1-year_2024-10-14.csv --source_file=hba1c_ca_2024-10-11_1-year_2024-10-14 
-
-
+    eval_metrics, all_conf_mats = eval_preds(data, args.y_pred_col, args.y_pred_cont_col, args.y_goal_col, args.y_goal_cont_col, fig_path, table_path, args.n_boots, args.train_type)
+    if args.save_csv == 1:
+        eval_metrics.loc[eval_metrics.F1.notnull()].to_csv(table_path + "_evals.csv", sep=",", index=False)
+        all_conf_mats.to_csv(table_path + "_confmats.csv", sep=",", index=False)
+    print(timer.get_elapsed())
+    logger.info("Time total: "+timer.get_elapsed())
