@@ -7,7 +7,7 @@ def make_dir(dir_path):
     if not os.path.exists(dir_path): os.makedirs(dir_path)
 
 import logging
-def init_logging(log_dir, log_file_name, logger):
+def init_logging(log_dir, log_file_name, logger, args):
     logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
     logger.info("Time: " + get_datetime() + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
 
