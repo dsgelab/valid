@@ -9,14 +9,15 @@ def get_abnorm_func_based_on_name(lab_name):
     if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
     else: raise("Sorry, no function for this lab name.")
 
+def get_abnorm_func_based_on_name(lab_name):
+    if lab_name == "tsh": return(tsh_abnorm)
+    if lab_name == "hba1c": return(hba1c_abnorm)
+    if lab_name == "ldl": return(ldl_abnorm)
+    if lab_name == "egfr" or lab_name == "krea": return(egfr_abnorm)
+    if lab_name == "cyst": return(cystc_abnorm)
+    if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
+    else: raise("Sorry, no function for this lab name.")
 
-def egfr_transform(data, value_col_name="VALUE"):
-    data.loc[np.logical_and(data[value_col_name] <= 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data[value_col_name] <= 62, data["SEX"] == "female"), value_col_name]/61.9 )**(-0.329))*(0.993**data.loc[np.logical_and(data[value_col_name] <= 62, data["SEX"] == "female"), "EVENT_AGE"])*144
-    data.loc[np.logical_and(data[value_col_name] > 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data[value_col_name] > 62, data["SEX"] == "female"), value_col_name]/61.9 )**(-1.209))*(0.993**data.loc[np.logical_and(data[value_col_name] > 62, data["SEX"] == "female"), "EVENT_AGE"])*144
-    data.loc[np.logical_and(data[value_col_name] <= 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data[value_col_name] <= 80, data["SEX"] == "male"), value_col_name]/79.6 )**(-0.411))*(0.993**data.loc[np.logical_and(data[value_col_name] <= 80, data["SEX"] == "male"), "EVENT_AGE"])*141
-    data.loc[np.logical_and(data[value_col_name] > 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data[value_col_name] > 80, data["SEX"] == "male"), value_col_name]/79.6 )**(-1.209))*(0.993**data.loc[np.logical_and(data[value_col_name] > 80, data["SEX"] == "male"), "EVENT_AGE"])*141
-    data[value_col_name] = data.VALUE_TRANSFORM
-    return(data)
 
 """Individual ABNORMity with grey area 2.5-4"""
 def tsh_abnorm(data):
