@@ -144,12 +144,14 @@ if __name__ == "__main__":
     args = get_parser_arguments()
     
     log_dir = args.res_dir + "logs/"
-    file_name = args.lab_name + "_" + get_date()
-    log_file_name = "meta_" + args.lab_name + "_" + get_datetime()
+    date = datetime.today().strftime("%Y-%m-%d")
+    date_time = datetime.today().strftime("%Y-%m-%d-%H%M")
+    file_name = args.lab_name + "_" + date
+    log_file_name = "meta_" + args.lab_name + "_" + date_time
     make_dir(log_dir)
     make_dir(args.res_dir)
     
-    init_logging(log_dir, log_file_name, logger)
+    init_logging(log_dir, log_file_name, date_time)
 
     #### Data processing
     # Raw data
@@ -177,3 +179,4 @@ if __name__ == "__main__":
     n_indvs_stats.to_csv(log_dir + file_name + "_counts.csv", sep=",", index=False)
     #Final logging
     logger.info("Time total: "+timer.get_elapsed())
+    

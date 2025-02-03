@@ -42,6 +42,10 @@ def get_parser_arguments():
 
     return(args)
 
+def init_logging(log_dir, log_file_name, date_time):
+    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
+    logger.info("Time: " + date_time + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
+     
 if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
@@ -56,12 +60,12 @@ if __name__ == "__main__":
     make_dir(log_dir)
     make_dir(args.res_dir)
     
-    init_logging(log_dir, log_file_name, date_time, logger)
+    init_logging(log_dir, log_file_name, date_time)
 
     ### Getting Data
     data = pd.read_csv(file_path_data, sep=",")
     metadata = pd.read_csv(file_path_meta, sep=",")
-    data = pd.merge(data, metadata, on="FINNGENIcD", how="left")
+    data = pd.merge(data, metadata, on="FINNGENID", how="left")
     
     ### Processing
     data = add_start_of_pred_period(data, args.pred_len)

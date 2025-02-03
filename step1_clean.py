@@ -17,7 +17,7 @@ sns.set_style("whitegrid")
 import scipy.stats as st
 
 
-"""Get only entries with the main unit. Records new and removed number of rows and individuals in statistics df n_indvs_stats."""
+"""Get main"""
 def get_main_unit_data(data, n_indvs_stats, main_unit):
     # Stats
     n_indv = len(set(data.FINNGENID))
@@ -53,8 +53,7 @@ def remove_missing_values(data, n_indvs_stats):
     one is kept. For measurements with different values, removing all measurements at the same
     time where the difference between min and max > 10%IQR of all measurements. As it is not
     possible to know what is causing this extreme difference. 
-    Averaging the rest and recording the max-flux value for this test.
-    Records number of rows and individuals in statistics df n_indvs_stats."""
+    Averaging the rest and recording the max-flux value for this test."""
 def handle_duplicates(data, n_indvs_stats):
     # Stats
     n_indv = len(set(data.FINNGENID))
@@ -84,8 +83,7 @@ def handle_duplicates(data, n_indvs_stats):
 
     return(data, n_indvs_stats)
     
-"""Removes severe outliers based on the z-scores. Saving plots before and after.
-   Relevant for measurements such as eGFR where some extreme measurements are likely errors."""
+"""Removes severe outliers based on the z-scores >= 10. Saving plots before and after."""
 def remove_severe_value_outliers(data,max_z, n_indvs_stats, res_dir, file_name):
     ### Severe z-score outliers
     data.loc[:,"Z"] = st.zscore(data.VALUE)
@@ -131,10 +129,6 @@ def remove_severe_value_outliers(data,max_z, n_indvs_stats, res_dir, file_name):
 
     return(data, n_indvs_stats)
 
-""""Removes single value outliers. I.e. individuals with only one measurement that is an outlier.
-    For eGFR problems because of wrong recording/conversion of units.
-    Only removing values with high z-score>5 and value>500 or low z-score<-4 and value<53.
-    Records number of rows and individuals in statistics df n_indvs_stats."""
 def remove_single_value_outliers(data, n_indvs_stats):
     # Z-scores for each individuals value distributions
     data.loc[:,"Z_indv"] = data.groupby("FINNGENID").VALUE.transform(lambda x: st.zscore(x))
@@ -163,42 +157,51 @@ def get_parser_arguments():
     args = parser.parse_args()
     return(args)
 
+def init_logging(log_dir, log_file_name, date_time):
+    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
+    logger.info("Time: " + date_time + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
+    
 if __name__ == "__main__":
     #### Preparations
     timer = Timer()
     args = get_parser_arguments()
     
     log_dir = args.res_dir + "logs/"
-    file_name = args.lab_name + "_" + get_date()
-    log_file_name = args.lab_name + "_" + get_datetime()
+    date = datetime.today().strftime("%Y-%m-%d")
+    date_time = datetime.today().strftime("%Y-%m-%d-%H%M")
+    file_name = args.lab_name + "_" + date
+    log_file_name = args.lab_name + "_" + date_time
     make_dir(log_dir)
     make_dir(args.res_dir)
     
-    init_logging(log_dir, log_file_name, logger)
+    init_logging(log_dir, log_file_name, date_time)
 
     #### Data processing
-    ## Raw data
+    # Raw data
     data = pd.read_csv(args.file_path, sep=",")
-    ## Prep
+    # Prep
     n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Values", "Unit", "Duplicates", "Outliers", "Outliers_single"]})
-    n_indv = len(data.FINNGENID.unique())
-    ## Stats
+    n_indv = len(set(data.FINNGENID))
+
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_ROWS_NOW"] = data.shape[0]
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_INDVS_NOW"] = n_indv
-    ## Cleaning
+    # Cleaning
     data, n_indvs_stats = remove_missing_values(data, n_indvs_stats)
     data, n_indvs_stats = get_main_unit_data(data, n_indvs_stats, args.main_unit)
     data, n_indvs_stats = handle_duplicates(data, n_indvs_stats)
     data, n_indvs_stats = remove_severe_value_outliers(data, args.max_z, n_indvs_stats, log_dir, file_name)
-    # For eGFR also removing single individual outliers as the difference in units leads to some clear
-    # errors in the data. Such that i.e. one individuals has values around 70 and one around 700 in the middle. 
-    # Only removing values with high z-score>5 and value>500 or low z-score<-4 and value<53.
     if args.lab_name == "egfr" or args.lab_name == "krea":
         data, n_indvs_stats = remove_single_value_outliers(data, n_indvs_stats)
 
     #### Finishing
-    ## Saving
+    # Saving
     data.to_csv(args.res_dir + file_name + ".csv", sep=",", index=False)
     n_indvs_stats.to_csv(log_dir + file_name + "_counts.csv", sep=",", index=False)
-    ## Final logging
+    #Final logging
     logger.info("Time total: "+timer.get_elapsed())
+
+    
+#python3 /home/ivm/valid/scripts/step1_clean.py --file_path=/home/ivm/valid/data/processed_data/step0/hba1c_2024-10-16.csv --lab_name=hba1c --main_unit=mmol/mol
+#python3 /home/ivm/valid/scripts/step1_clean.py --file_path=/home/ivm/valid/data/processed_data/step0/krea_2024-10-16.csv --lab_name=krea --main_unit=umol/l --max_z=13
+#python3 /home/ivm/valid/scripts/step1_clean.py --file_path=/home/ivm/valid/data/processed_data/step0/ldl_2024-10-16.csv --lab_name=ldl --main_unit=mmol/l --max_z=12
+#python3 /home/ivm/valid/scripts/step1_clean.py --file_path=/home/ivm/valid/data/processed_data/step0/tsh_2024-10-16.csv --lab_name=tsh --main_unit=mu/l
