@@ -4,6 +4,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 def pretty_int(int_no):
+    """Round a number to a pretty string with K (N>1000), M (N>1000000)."""
     if int_no >= 1000000:
         return(str(round(int_no / 1000000,2)) + "M")
     elif int_no >= 1000:
@@ -12,52 +13,23 @@ def pretty_int(int_no):
         return(str(round(int_no, 0)))
         
 def round_column_min5(data, col):
-        mean_freqs = pd.DataFrame(data[col].round().value_counts()).reset_index()
-        mean_freqs.columns = ["VALUE", "COUNT"]
-        value_map = dict()
-        min_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.min()
-        max_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.max()
-        for row_idx in np.arange(mean_freqs.shape[0]):
-            if mean_freqs.iloc[row_idx].COUNT < 5:
-                low_count_val = mean_freqs.iloc[row_idx].VALUE
-                if abs(min_val-low_count_val) < abs(max_val-low_count_val):
-                    value_map[low_count_val] = min_val
-                else:
-                    value_map[low_count_val] = max_val
-        newcol = round(data[col]).map(value_map)
-        newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
-        return(newcol, min_val, max_val)
-
-def plot_time_score_metrics(time_scores, eval_metrics, N_indv, N_abnorm):
-    min_y = min([min(time_scores.F1), min(time_scores.accuracy), min(time_scores.precision), min(time_scores.recall)])
-    eval_all = eval_metrics.query("SET=='Valid' & SUBSET=='All'")
-    fig, axes = plt.subplots(1, 3, figsize=(20,5))
-
-    if eval_all.N_ABNORM.values[0] > 0:
-        sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET",  "F1", "tweedie", "accuracy"]].reset_index().melt(["index", "SUBSET"]), 
-                     palette=["#D5694F", "#748AAA", "#CCB6AF"],
-                     x="index", y="value", hue="variable", ax=axes[0])
-        axes[0].set_ylim(min_y, 1)
-        axes[0].set_xlabel("Years")
-        axes[0].set_ylabel("")
-        axes[0].set_title("Tweedie: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})  Accuracy: {:.2f} ({:.2f}-{:.2f})".format((round(eval_all.tweedie.values[0], 2)), (round(eval_all.tweedie_CIneg.values[0], 2)), (round(eval_all.tweedie_CIpos.values[0], 2)), (round(eval_all.F1.values[0], 2)), (round(eval_all.F1_CIneg.values[0], 2)), (round(eval_all.F1_CIpos.values[0], 2)), (round(eval_all.accuracy.values[0], 2)), (round(eval_all.accuracy_CIneg.values[0], 2)), (round(eval_all.accuracy_CIpos.values[0], 2)))) 
-    
-        sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET",  "F1", "precision", "recall"]].reset_index().melt(["index", "SUBSET"]), 
-                     palette=["#D5694F", "#748AAA", "#CCB6AF"],
-                     x="index", y="value", hue="variable", ax=axes[1])
-        axes[1].set_ylim(min_y, 1)
-        axes[1].set_xlabel("Years")
-        axes[1].set_label("")
-        axes[1].set_title("Precision: {:.2f} ({:.2f}-{:.2f})  Recall: {:.2f} ({:.2f}-{:.2f})".format((round(eval_all.precision.values[0], 2)), (round(eval_all.precision_CIneg.values[0], 2)), (round(eval_all.precision_CIpos.values[0], 2)), (round(eval_all.recall.values[0], 2)), (round(eval_all.recall_CIneg.values[0], 2)), (round(eval_all.recall_CIpos.values[0], 2)))) 
-
-    sns.lineplot(time_scores.loc[time_scores.SET=="Valid"][["SUBSET", "MSE"]].reset_index().melt(["index", "SUBSET"]), 
-                 palette=["#841C26"], x="index", y="value", 
-                 hue="variable", ax=axes[2])
-    axes[2].set_xlabel("Years")
-    axes[2].set_ylabel("MSE")
-    axes[2].set_title("MSE: {:.2f} ({:.2f}-{:.2f}): ".format((round(eval_all.MSE.values[0], 0)), (round(eval_all.MSE_CIneg.values[0], 0)), (round(eval_all.MSE_CIpos.values[0], 0)))) 
-
-    return(fig)
+    """Rounds a column to the nearest 5 and replaces values with less than 5 counts with the nearest value with 5 counts.
+        Returns the new column and the min and max values of the column."""
+    mean_freqs = pd.DataFrame(data[col].round().value_counts()).reset_index()
+    mean_freqs.columns = ["VALUE", "COUNT"]
+    value_map = dict()
+    min_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.min()
+    max_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.max()
+    for row_idx in np.arange(mean_freqs.shape[0]):
+        if mean_freqs.iloc[row_idx].COUNT < 5:
+            low_count_val = mean_freqs.iloc[row_idx].VALUE
+            if abs(min_val-low_count_val) < abs(max_val-low_count_val):
+                value_map[low_count_val] = min_val
+            else:
+                value_map[low_count_val] = max_val
+    newcol = round(data[col]).map(value_map)
+    newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
+    return(newcol, min_val, max_val)
 
 """Reshapes scores dataframe so that each metric gets its own column and then plots lines based on this."""
 def plot_melt_scores(scores, x_col_name, x_axis_name, metrics, axis, min_y, palette=["#D5694F", "#748AAA", "#CCB6AF"]):
@@ -80,17 +52,20 @@ def plot_scores_metrics(scores, eval_metrics, x_axis_name, x_col_name="AGE_MID",
     ## Making sure there is enough data for the second two plots
     if eval_all.N_ABNORM.values[0] > 0:
         axes[0] = plot_melt_scores(scores, x_col_name, x_axis_name, ["F1", "tweedie", "accuracy"], axes[0], min_y)
-        axes[0].set_title("Tweed: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})  Acc: {:.2f} ({:.2f}-{:.2f})".format(round(eval_all.tweedie.values[0], 2), round(eval_all.tweedie_CIneg.values[0], 2), round(eval_all.tweedie_CIpos.values[0], 2), round(eval_all.F1.values[0], 2), round(eval_all.F1_CIneg.values[0], 2), round(eval_all.F1_CIpos.values[0], 2), round(eval_all.accuracy.values[0], 2), round(eval_all.accuracy_CIneg.values[0], 2), round(eval_all.accuracy_CIpos.values[0], 2)))
+        axes[0].legend(title="Score", loc="lower left")
+        axes[0].text(0.72, 0.05, f'Tweedie = { round(evall_all.tweedie.values[0]) } \n Accuracy = {round(evall_all.accuracy.values[0])} \n F1 = {round(evall_all.F1.values[0])}', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
         
         ## F1 and precision recall
         axes[1] = plot_melt_scores(scores, x_col_name, x_axis_name, ["F1", "precision", "recall"], axes[1], min_y)
-        axes[1].text(55, 0.95, "N = " + pretty_int(eval_all.N_INDV.values[0]) +  "  A = " + pretty_int(eval_all.N_ABNORM.values[0]))
-        axes[1].set_title("Precision: {:.2f} ({:.2f}-{:.2f})  Recall: {:.2f} ({:.2f}-{:.2f})".format(round(eval_all.precision.values[0], 2), round(eval_all.precision_CIneg.values[0], 2), round(eval_all.precision_CIpos.values[0], 2), (round(eval_all.recall.values[0], 2)), (round(eval_all.recall_CIneg.values[0], 2)), (round(eval_all.recall_CIpos.values[0], 2)))) 
+        axes[1].legend(title="Score", loc="lower left")
+        axes[1].text(55, 0.95, "N = " + pretty_int(eval_all.N_INDV.values[0]) +  "  A = " + pretty_int(eval_all.N_ABNORM.values[0]), fontsize=12, bbox=dict(facecolor='red', alpha=0.4, pad=5))
+        axes[1].text(75, 0.05, f'Precision = { round(evall_all.precision.values[0, 2]) } \n Recall = {round(evall_all.recall.values[0], 2)}', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+
 
     # MSE plot
     axes[2] = plot_melt_scores(scores, x_col_name, x_axis_name, ["MSE"], axes[2], min_y=np.nan, palette=["#841C26"])
     axes[2].set_title("MSE: {:.2f} ({:.2f}-{:.2f}): ".format((round(eval_all.MSE.values[0], 0)), (round(eval_all.MSE_CIneg.values[0], 0)), (round(eval_all.MSE_CIpos.values[0], 0)))) 
-    
+    axes[2].legend.set_visible(False)
     return(fig)
     
 def plot_observed_vs_probability_min5(data, col_name_x, col_name_y):
@@ -141,3 +116,98 @@ def plot_observerd_vs_predicted_min5(data, col_name_x, col_name_y):
     # # This is the x=y line using transforms
     g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
     return(g, newcol_x, newcol_y)
+
+###################### Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
+import timeit
+import pickle
+import sys
+from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, precision_recall_curve, roc_curve, accuracy_score
+from sklearn.exceptions import NotFittedError
+
+
+def confusion_plot(matrix, labels=None, ax=None):
+    """ Display binary confusion matrix as a Seaborn heatmap """
+    
+    labels = labels if labels else ['Negative (0)', 'Positive (1)']
+    
+    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
+    sns.heatmap(data=matrix, cmap='Blues', annot=True, fmt='d',
+                xticklabels=labels, yticklabels=labels, ax=axis, square=True)
+    axis.set_xlabel('Predicted')
+    axis.set_ylabel('Actual')
+    axis.set_title('Confusion Matrix')
+    return axis if ax else fig
+
+def roc_plot(y_true, y_probs, label, compare=False, ax=None):
+    """ Plot Receiver Operating Characteristic (ROC) curve 
+        Set `compare=True` to use this function to compare classifiers. """
+    
+    fpr, tpr, thresh = roc_curve(y_true, y_probs, drop_intermediate=False)
+    auc = round(roc_auc_score(y_true, y_probs), 2)
+    
+    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
+    label = ' '.join([label, f'({auc})']) if compare else None
+    sns.lineplot(x=fpr, y=tpr, ax=axis, label=label)
+    
+    if compare:
+        axis.legend(title='Classifier (AUC)', loc='lower right')
+    else:
+        axis.text(0.72, 0.05, f'AUC = { auc }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+            
+        # Plot No-Info classifier
+        axis.fill_between(fpr, fpr, tpr, alpha=0.3, edgecolor='g', linestyle='--', linewidth=2)
+        
+    axis.set_xlim(0, 1)
+    axis.set_ylim(0, 1)
+    axis.set_title('ROC Curve')
+    axis.set_xlabel('False Positive Rate [FPR]\n(1 - Specificity)')
+    axis.set_ylabel('True Positive Rate [TPR]\n(Sensitivity or Recall)')
+    
+    plt.close()
+    
+    return axis if ax else fig
+
+def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
+    """ Plot Precision-Recall curve.
+        Set `compare=True` to use this function to compare classifiers. """
+    
+    p, r, thresh = precision_recall_curve(y_true, y_probs)
+    p, r, thresh = list(p), list(r), list(thresh)
+    p.pop()
+    r.pop()
+    
+    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
+    
+    if compare:
+        sns.lineplot(r, p, ax=axis, label=label)
+        axis.set_xlabel('Recall')
+        axis.set_ylabel('Precision')
+        axis.legend(loc='lower left')
+    else:
+        sns.lineplot(thresh, p, label='Precision', ax=axis)
+        axis.set_xlabel('Threshold')
+        axis.set_ylabel('Precision')
+        axis.legend(loc='lower left')
+
+        axis_twin = axis.twinx()
+        sns.lineplot(thresh, r, color='limegreen', label='Recall', ax=axis_twin)
+        axis_twin.set_ylabel('Recall')
+        axis_twin.set_ylim(0, 1)
+        axis_twin.legend(bbox_to_anchor=(0.24, 0.18))
+    
+    axis.set_xlim(0, 1)
+    axis.set_ylim(0, 1)
+    axis.set_title('Precision Vs Recall')
+    
+    plt.close()
+    
+    return axis if ax else fig
+
+def feature_importance_plot(importances, feature_labels, ax=None, n_import):
+    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1, figsize=(5, 10))
+    sns.barplot(x=importances[0:n_import], y=feature_labels[0:n_import], ax=axis)
+    axis.set_title('Feature Importance Measures')
+    axis.set_ylabel("")
+    plt.close()
+    
+    return axis if ax else fig
