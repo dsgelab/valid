@@ -157,10 +157,6 @@ def get_parser_arguments():
     args = parser.parse_args()
     return(args)
 
-def init_logging(log_dir, log_file_name, date_time):
-    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
-    logger.info("Time: " + date_time + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
-    
 if __name__ == "__main__":
     #### Preparations
     timer = Timer()
