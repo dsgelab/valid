@@ -9,16 +9,6 @@ def get_abnorm_func_based_on_name(lab_name):
     if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
     else: raise("Sorry, no function for this lab name.")
 
-def get_abnorm_func_based_on_name(lab_name):
-    if lab_name == "tsh": return(tsh_abnorm)
-    if lab_name == "hba1c": return(hba1c_abnorm)
-    if lab_name == "ldl": return(ldl_abnorm)
-    if lab_name == "egfr" or lab_name == "krea": return(egfr_abnorm)
-    if lab_name == "cyst": return(cystc_abnorm)
-    if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
-    else: raise("Sorry, no function for this lab name.")
-
-
 """Individual ABNORMity with grey area 2.5-4"""
 def tsh_abnorm(data):
     data.loc[data.VALUE < 4,"ABNORM_CUSTOM"] = 0
