@@ -52,7 +52,7 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
     n_indv = set_data.shape[0]
     n_abnorm = set_data.loc[:,y_goal_col].sum()
 
-    if train_type != "binary":
+    if train_type != "bin":
         # Measurement for continuous value
         mse = bootstrap_metric(skm.mean_squared_error, set_data.loc[:,y_cont_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
         tweedie = bootstrap_metric(lambda x, y: skm.d2_tweedie_score(x, y, power=3), set_data.loc[:,y_cont_goal_col], set_data.loc[:,y_cont_pred_col], n_boots=n_boots)
@@ -72,21 +72,21 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
         recall = bootstrap_metric(lambda x, y: skm.recall_score(x, y, zero_division=0), set_data.loc[:,y_goal_col], set_data.loc[:,y_pred_col], n_boots=n_boots)
 
         # Results
-        if train_type!="binary":
+        if train_type!="bin":
             print("{} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
         else:
             print("{} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
 
         ## First row in dataset
         if eval_metrics.shape[0] == 0:
-            if train_type!="binary":
+            if train_type!="bin":
                 eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "tweedie": [tweedie[0]], "tweedie_CIneg": [tweedie[1]], "tweedie_CIpos": [tweedie[2]], "MSE": [mse[0]], "MSE_CIneg": [mse[1]], "MSE_CIpos": [mse[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
             else:
                 eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "AUC": [AUC[0]], "AUC_CIneg": [AUC[1]], "AUC_CIpos": [AUC[2]], "avPRC": [avPRC[0]], "avPRC_CIneg": [avPRC[1]], "avPRC_CIpos": [avPRC[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
 
         ## All other rows
         else:
-            if train_type!="binary":
+            if train_type!="bin":
                 eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
             else:
                 eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC": AUC[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
@@ -94,7 +94,7 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
     ## Only continuous metrics
     else:
         # Results
-        if train_type!="binary":
+        if train_type!="bin":
             print("{} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})".format(set_names[set], tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2]))
             eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name,"GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2]}, ignore_index=True)
         else:
@@ -201,7 +201,7 @@ def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_
             except:
                 tweedie = np.nan
             
-            crnt_age_scores.loc[crnt_age_scores.GROUP == group, "tweedie"] = tweedie
+            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"tweedie"] = tweedie
             crnt_age_scores.loc[crnt_age_scores.GROUP == group,"MSE"] = mse
             crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_INDV"] = group_data.shape[0]
             crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_ABNORM"] = group_data.loc[:,y_goal_col].sum()
@@ -226,14 +226,17 @@ def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_
     
     return(eval_metrics, fig)
     
-def eval_subset(eval_metrics, all_conf_mats, data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="all", n_boots=500, train_type="cont"):
+def eval_subset(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, fig_path, table_path, subset_name="all", n_boots=500, train_type="cont"):
+    eval_metrics = pd.DataFrame()
+    all_conf_mats = pd.DataFrame()
+
     if train_type != "binary":
         N_indv = data.shape[0]
         g, newcol_x, newcol_y = plot_observerd_vs_predicted_min5(data, y_cont_goal_col, y_cont_pred_col)
         g.savefig(fig_path + "_" + subset_name + "_scatter_min5.png", dpi=300)
         g.savefig(fig_path + "_" + subset_name + "_scatter_min5.pdf")
-        newcol_x.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_x.csv", sep=",")
-        newcol_y.value_counts().to_csv(table_path + "_" + subset_name + "_indv_counts_y.csv", sep=",")
+        newcol_x.value_counts().to_csv(table_path + "/extra_counts/_" + subset_name + "_indv_counts_x.csv", sep=",")
+        newcol_y.value_counts().to_csv(table_path + "/extra_counts/_" + subset_name + "_indv_counts_y.csv", sep=",")
         
         g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col)
         g.savefig(fig_path + "_" + subset_name + "_scatter.png", dpi=300)
@@ -269,11 +272,6 @@ def eval_preds(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_c
     all_conf_mats = pd.DataFrame()
 
     eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, n_boots=n_boots, train_type=train_type)
-    # Testing on subset of undiagnosed
-    print("No diag-------------------------------------------------------------------------------------------------------------------------------")
-    subset_data = data.loc[np.logical_or(data.DIAG_DATE.isnull(), data.DIAG_DATE>=data.START_DATE)]
-    eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="nodiag", n_boots=n_boots, train_type=train_type)
-
     # Data diag
     print("No data diag-------------------------------------------------------------------------------------------------------------------------------")
     subset_data = data.loc[np.logical_or(data.DATA_DIAG_CUSTOM_DATE.isnull(), data.DATA_DIAG_CUSTOM_DATE>=data.START_DATE)]
@@ -290,17 +288,6 @@ def eval_preds(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_c
     eval_metrics, all_conf_mats = eval_subset(eval_metrics, all_conf_mats, subset_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, subset_name="nofgabnorm", n_boots=n_boots, train_type=train_type)
     
     return(eval_metrics, all_conf_mats)
-
-def merge_preds_and_labels(data, labels):
-    data = pd.merge(data, labels.rename(columns={"EVENT_AGE": "y_EVENT_AGE"}), on="FINNGENID", how="inner")
-    data.START_DATE = data.START_DATE.astype("datetime64[ns]")
-    if "DATE" in data.columns:
-        data.DATE = data.DATE.astype("datetime64[ns]")
-        time_last = data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).START_DATE - data.sort_values(["FINNGENID", "DATE"]).groupby("FINNGENID").tail(1).DATE 
-        time_last = pd.merge(data[["FINNGENID"]], time_last.rename("TIME_LAST"), left_index=True, right_index=True, how="inner")
-        time_last.TIME_LAST = time_last.TIME_LAST.dt.days
-        data = pd.merge(data, time_last, on="FINNGENID", how="inner")
-    return(data)
 
 def get_parser_arguments():
     #### Parsing and logging
