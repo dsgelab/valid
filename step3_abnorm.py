@@ -17,7 +17,8 @@ def egfr_transform(data):
     data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "VALUE"]/61.9 )**(-1.209))*(0.993**data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "EVENT_AGE"])*144
     data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "VALUE"]/79.6 )**(-0.411))*(0.993**data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "EVENT_AGE"])*141
     data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "VALUE"]/79.6 )**(-1.209))*(0.993**data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "EVENT_AGE"])*141
-    data.VALUE = data.VALUE_TRANSFORM
+    data = data.assign(VALUE = data["VALUE_TRANSFORM"])
+    data = data.drop("VALUE_TRANSFORM", axis=1)
     return(data)
     
 """First Abnormality"""
@@ -73,25 +74,19 @@ if __name__ == "__main__":
     # ABNORMity
     if args.lab_name == "tsh":
         data = three_level_abnorm(data)
-        data = tsh_abnorm(data)
     if args.lab_name == "hba1c": 
         data = simple_abnorm(data)
-        data = hba1c_abnorm(data)
     if args.lab_name == "ldl":
         data = simple_abnorm(data)
-        data = ldl_abnorm(data)
     if args.lab_name == "egfr" or args.lab_name == "krea": 
         data = egfr_transform(data)
         data = simple_abnorm(data)
-        data = egfr_abnorm(data)
     if args.lab_name == "cyst":
-        data = cystc_abnorm(data)
         data = simple_abnorm(data)
     if args.lab_name == "gluc" or args.lab_name=="fgluc":
-        data = gluc_abnorm(data)
-        data = three_level_abnorm(data)
-        
+        data = three_level_abnorm(data)  
     else: data = three_level_abnorm(data)
+    data = get_abnorm_func_based_on_name(args.lab_name)(data, "VALUE")
     # Metadata
     data = add_first_abnorm_info(data)
     # Saving
@@ -103,6 +98,3 @@ if __name__ == "__main__":
     
     #Final logging
     logger.info("Time total: "+timer.get_elapsed())
-
-#python3 /home/ivm/valid/scripts/step3_abnorm.py --source_file_date=2024-10-16 --lab_name=krea
-#python3 /home/ivm/valid/scripts/step3_abnorm.py --source_file_date=2024-10-17 --lab_name=krea
