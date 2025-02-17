@@ -17,8 +17,8 @@ sns.set_style("whitegrid")
 import scipy.stats as st
 from processing_utils import *
 
-"""Get main"""
 def get_main_unit_data(data, n_indvs_stats, main_unit):
+    """Get rows where unit is the main unit. Add info to statistics df with STEP 'Unit'."""
     # Stats
     n_indv = len(set(data.FINNGENID))
     n_row_remove = data.loc[data.UNIT != main_unit].shape[0]
@@ -33,10 +33,8 @@ def get_main_unit_data(data, n_indvs_stats, main_unit):
        
     return(data, n_indvs_stats)
     
-"""Converting % to mmol/mol, assuming all missing now is mmol/mol and rounding values."""
-def get_hba1c_data(data, n_indvs_stats, main_unit):
-    # Stats
-    n_indv = len(set(data.FINNGENID))
+def convert_hba1c_data(data, n_indvs_stats, main_unit):
+    """Converting % to mmol/mol, assuming all missing now is mmol/mol and rounding values."""
     data.loc[data.UNIT=="%","VALUE"] = 10.93*data.loc[data.UNIT=="%","VALUE"]-23.50
     data.loc[data.UNIT=="%","UNIT"] = "mmol/mol"
     data.loc[data.UNIT.isnull(),"UNIT"] = "mmol/mol"
@@ -45,8 +43,10 @@ def get_hba1c_data(data, n_indvs_stats, main_unit):
     return(data, n_indvs_stats)
 
     
-"""Removes rows without any measurement value. Records number of rows and individuals in statistics df n_indvs_stats."""
 def handle_missing_values(data, n_indvs_stats, fill_missing, dummies, dummy_unit):
+    """Removes rows without any measurement value. Optionally, fills missing values with dummy
+       based on not-missing abnormality.
+       Records number of rows and individuals in statistics df n_indvs_stats with STEP 'Values'."""
     # Stats
     n_indv = len(set(data.FINNGENID))
     if fill_missing:
@@ -70,12 +70,13 @@ def handle_missing_values(data, n_indvs_stats, fill_missing, dummies, dummy_unit
        
     return(data, n_indvs_stats)
     
-"""Duplicates are measurements at exact same time. Handling so that same value measurements, only
+
+def handle_duplicates(data, n_indvs_stats):
+    """Duplicates are measurements at exact same time. Handling so that same value measurements, only
     one is kept. For measurements with different values, removing all measurements at the same
     time where the difference between min and max > 10%IQR of all measurements. As it is not
     possible to know what is causing this extreme difference. 
     Averaging the rest and recording the max-flux value for this test."""
-def handle_duplicates(data, n_indvs_stats):
     # Stats
     n_indv = len(set(data.FINNGENID))
     n_rows = data.shape[0]
@@ -104,7 +105,11 @@ def handle_duplicates(data, n_indvs_stats):
 
     return(data, n_indvs_stats)
 
-def handle_different_units(data, n_indvs_stats):
+def handle_different_units(data, n_indvs_stats, unit_priority=["mmol/mol", "%"]):
+    """This approach to duplicate data, handles the duplicataes based on the unit. If there are
+    multiple units for the same individual at the same time, the one with the priority unit is kept.
+    If there are multiple units with the same priority, the one with the lowest value is kept.
+    Removing exact duplicates with the same unit, value, and abnormality. """
     # Stats
     n_indv = len(set(data.FINNGENID))
     n_rows = data.shape[0]
@@ -123,11 +128,10 @@ def handle_different_units(data, n_indvs_stats):
     logging_print("After temporarily removing date duplicates")
     logging_print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
 
-    # Keeping mmol/mol if available, otherwise %, otherwise no unit
-    dups.UNIT = pd.Categorical(dups.UNIT, ["mmol/mol", "%"])
-    print(dups)
+    # Keeping mmol/mol if available, otherwise %, otherwise no unit made to priority
+    dups.UNIT = pd.Categorical(dups.UNIT, unit_priority, ordered=True)
     dups = dups.sort_values(["FINNGENID", "EVENT_AGE", "UNIT", "VALUE"]).groupby(["FINNGENID", "DATE"]).head(1).reset_index(drop=True)
-    dups.loc[dups.UNIT.isnull(),"UNIT"] = "mmol/mol"
+    dups.loc[dups.UNIT.isnull(),"UNIT"] = unit_priority[0]
 
     ## Adding back top unit dups
     data = pd.concat([data, dups]).reset_index(drop=True)
@@ -142,8 +146,9 @@ def handle_different_units(data, n_indvs_stats):
 
     return(data, n_indvs_stats)
 
-"""Removes severe outliers based on the z-scores >= 10. Saving plots before and after."""
 def remove_severe_value_outliers(data, max_z, n_indvs_stats, res_dir, file_name):
+    """Removes severe outliers based on the z-scores >= 10. Saving plots before and after."""
+
     out_dir = res_dir + "plots/"; make_dir(out_dir)
     ### Severe z-score outliers
     data = data.assign(Z=st.zscore(data.VALUE))
@@ -157,9 +162,6 @@ def remove_severe_value_outliers(data, max_z, n_indvs_stats, res_dir, file_name)
     plt.figure()
     fig, ax = plt.subplots(1,2, figsize=(5,5))
     sns.boxplot(data, y="VALUE_QUANT",ax=ax[0])
-
-    print(data.loc[np.abs(data.Z)<max_z].groupby("VALUE_QUANT").agg({"FINNGENID": lambda x: len(set(x))}).reset_index().rename(columns={"FINNGENID": "N_INDVS"}))
-    print(data.loc[np.abs(data.Z)>=max_z].groupby("VALUE_QUANT").agg({"FINNGENID": lambda x: len(set(x))}).reset_index().rename(columns={"FINNGENID": "N_INDVS"}))
     sns.boxplot(data.loc[np.abs(data.Z)<max_z], y="VALUE_QUANT", ax=ax[1])
     ax[0].set_ylabel("Value")
     ax[1].set_ylabel("")
@@ -289,7 +291,7 @@ if __name__ == "__main__":
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_INDVS_NOW"] = n_indv
     # Cleaning
     if args.lab_name == "hba1c": 
-        data, n_indvs_stats = handle_different_units(data, n_indvs_stats)
+        data, n_indvs_stats = handle_different_units(data, n_indvs_stats, unit_priority=["mmol/mol", "%"])
         data.loc[data.ABNORM=="A","ABNORM"] = "H"
     data, n_indvs_stats = handle_missing_values(data, n_indvs_stats, args.fill_missing, args.dummies, args.main_unit)
 
@@ -297,11 +299,11 @@ if __name__ == "__main__":
         data = data.drop(columns={"VALUE", "UNIT", "ABNORM"})
         data = data.rename({"VALUE_FG": "VALUE", "UNIT_FG": "UNIT", "ABNORM_FG": "ABNORM"})
         data, n_indvs_stats = get_main_unit_data(data, n_indvs_stats, args.main_unit)
+        data, n_indvs_stats = handle_duplicates(data, n_indvs_stats)
     else:
         data = data.drop(columns={"VALUE_FG", "UNIT_FG", "ABNORM_FG"})
-        data, n_indvs_stats = get_hba1c_data(data, n_indvs_stats, args.main_unit)
+        data, n_indvs_stats = convert_hba1c_data(data, n_indvs_stats, args.main_unit)
 
-    data, n_indvs_stats = handle_duplicates(data, n_indvs_stats)
     data, n_indvs_stats = remove_known_outliers(data, n_indvs_stats, args.ref_min, args.ref_max)
     print(n_indvs_stats)
     data, n_indvs_stats = remove_severe_value_outliers(data, args.max_z, n_indvs_stats, args.res_dir, file_name)
