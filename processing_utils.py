@@ -79,3 +79,10 @@ def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
     data.loc[np.logical_and(data[value_col_name] < 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data[value_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
     return(data)
+
+def add_measure_counts(data):
+    data.DATE = data.DATE.astype("datetime64[ns]")
+    n_measures = data.groupby("FINNGENID").agg({"DATE": [("N_YEAR", lambda x: len(set(x.dt.year)))], "VALUE": len}).reset_index()
+    n_measures.columns = ["FINNGENID", "N_YEAR", "N_MEASURE"]
+    data = pd.merge(data, n_measures, on="FINNGENID", how="left")
+    return(data)
