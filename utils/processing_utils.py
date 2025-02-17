@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 def get_abnorm_func_based_on_name(lab_name):
     if lab_name == "tsh": return(tsh_abnorm)

@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("/home/ivm/valid/scripts/"))
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from utils import *
 # Standard stuff
 import pandas as pd

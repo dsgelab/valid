@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("/home/ivm/valid/scripts/"))
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from processing_utils import get_abnorm_func_based_on_name
 from utils import *
 # Standard stuff

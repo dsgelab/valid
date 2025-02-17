@@ -5,7 +5,7 @@ import pandas as pd
 from plot_utils import *
 from utils import logging_print, make_dir
 import sklearn.metrics as skm
-sys.path.append(("/home/ivm/valid/scripts/"))
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
 
 def model_memory_size(clf):
     return sys.getsizeof(pickle.dumps(clf))
