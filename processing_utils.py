@@ -10,31 +10,32 @@ def get_abnorm_func_based_on_name(lab_name):
     else: raise("Sorry, no function for this lab name.")
 
 """Individual ABNORMity with grey area 2.5-4"""
-def tsh_abnorm(data):
-    data.loc[data.VALUE < 4,"ABNORM_CUSTOM"] = 0
-    data.loc[data.VALUE > 2.5,"ABNORM_CUSTOM"] = 0.5
-    data.loc[data.VALUE >= 4,"ABNORM_CUSTOM"] = 1
-    data.loc[data.VALUE < 0.4,"ABNORM_CUSTOM"] = -1
+def tsh_abnorm(data, value_col_name="VALUE"):
+    data.loc[data[value_col_name] < 4,"ABNORM_CUSTOM"] = 0
+    data.loc[data[value_col_name] > 2.5,"ABNORM_CUSTOM"] = 0.5
+    data.loc[data[value_col_name] >= 4,"ABNORM_CUSTOM"] = 1
+    data.loc[data[value_col_name] < 0.4,"ABNORM_CUSTOM"] = -1
     return(data)
 
-def gluc_abnorm(data):
+def gluc_abnorm(data, value_col_name="VALUE"):
     data.loc[:,"ABNORM_CUSTOM"] = 0
-    data.loc[data.VALUE > 6, "ABNORM_CUSTOM"] = 1
-    data.loc[data.VALUE < 4, "ABNORM_CUSTOM"] = -1
+    data.loc[data[value_col_name] > 6, "ABNORM_CUSTOM"] = 1
+    data.loc[data[value_col_name] < 4, "ABNORM_CUSTOM"] = -1
     return(data)
 
 """Abnormality for cystatin c"""
-def cystc_abnorm(data):
-    data.loc[data.VALUE <= 1.2,"ABNORM_CUSTOM"] = 0
-    data.loc[data.VALUE > 1.2,"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data.VALUE > 1, data.EVENT_AGE<=50),"ABNORM_CUSTOM"] = 1
+def cystc_abnorm(data, value_col_name):
+    data.loc[data[value_col_name] <= 1.2,"ABNORM_CUSTOM"] = 0
+    data.loc[data[value_col_name] > 1.2,"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] > 1, data.EVENT_AGE<=50),"ABNORM_CUSTOM"] = 1
     return(data)   
     
 """Individual ABNORMity >42mmol/l also theoretically should be at least 20 but this does not have a 
    diagnostic value aparently"""
-def hba1c_abnorm(data):
-    data.loc[data.VALUE > 42,"ABNORM_CUSTOM"] = 1
-    data.loc[data.VALUE <= 42,"ABNORM_CUSTOM"] = 0
+def hba1c_abnorm(data, value_col_name="VALUE"):
+    data.loc[data[value_col_name] > 42,"ABNORM_CUSTOM"] = 1
+    data.loc[data[value_col_name] > 47,"ABNORM_CUSTOM"] = 2
+    data.loc[data[value_col_name] <= 42,"ABNORM_CUSTOM"] = 0
     return(data)
 
 """Based on FinnGen ABNORMity column have only normal and ABNORM."""
@@ -61,20 +62,20 @@ def ldl_abnorm(data):
     return(data)
 
 """Based on transformed kreatinine to eGFR."""
-def egfr_abnorm(data, valu_col_name="VALUE_TRANSFORM"):
+def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
     # 0-39 -> >88
-    data.loc[np.logical_and(data[valu_col_name] < 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data[valu_col_name] >= 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 0
+    data.loc[np.logical_and(data[value_col_name] < 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] >= 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 0
     # 40-49 -> >82
-    data.loc[np.logical_and(data[valu_col_name] < 83, np.logical_and(round(data.EVENT_AGE) >= 40, round(data.EVENT_AGE) <=49)),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data[valu_col_name] >= 83, np.logical_and(round(data.EVENT_AGE) >= 40, round(data.EVENT_AGE) <=49)),"ABNORM_CUSTOM"] = 0
+    data.loc[np.logical_and(data[value_col_name] < 83, np.logical_and(round(data.EVENT_AGE) >= 40, round(data.EVENT_AGE) <=49)),"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] >= 83, np.logical_and(round(data.EVENT_AGE) >= 40, round(data.EVENT_AGE) <=49)),"ABNORM_CUSTOM"] = 0
     # 50-59 -> >76
-    data.loc[np.logical_and(data[valu_col_name] < 77, np.logical_and(round(data.EVENT_AGE) >= 50, round(data.EVENT_AGE) <=59)),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data[valu_col_name] >= 77, np.logical_and(round(data.EVENT_AGE) >= 50, round(data.EVENT_AGE) <=59)),"ABNORM_CUSTOM"] = 0
+    data.loc[np.logical_and(data[value_col_name] < 77, np.logical_and(round(data.EVENT_AGE) >= 50, round(data.EVENT_AGE) <=59)),"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] >= 77, np.logical_and(round(data.EVENT_AGE) >= 50, round(data.EVENT_AGE) <=59)),"ABNORM_CUSTOM"] = 0
     # 60-69 -> >68
-    data.loc[np.logical_and(data[valu_col_name] < 69, np.logical_and(round(data.EVENT_AGE) >= 60, round(data.EVENT_AGE) <=69)),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data[valu_col_name] >= 69, np.logical_and(round(data.EVENT_AGE) >= 60, round(data.EVENT_AGE) <=69)),"ABNORM_CUSTOM"] = 0
-    # 59-70 -> >58
-    data.loc[np.logical_and(data[valu_col_name] < 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data[valu_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
+    data.loc[np.logical_and(data[value_col_name] < 69, np.logical_and(round(data.EVENT_AGE) >= 60, round(data.EVENT_AGE) <=69)),"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] >= 69, np.logical_and(round(data.EVENT_AGE) >= 60, round(data.EVENT_AGE) <=69)),"ABNORM_CUSTOM"] = 0
+    # 70+ -> >58
+    data.loc[np.logical_and(data[value_col_name] < 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 1
+    data.loc[np.logical_and(data[value_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
     return(data)

@@ -13,10 +13,6 @@ def init_logging(out_dir, log_file_name, logger, args):
     logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
     logger.info("Time: " + get_datetime() + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
 
-def logging_print(text):
-    print(text)
-    logging.info(text)
-
 from datetime import datetime
 def get_date():
     return datetime.today().strftime("%Y-%m-%d")
@@ -26,12 +22,17 @@ def get_datetime():
 ######### Printing and Plotting #########
 def print_count(data):
     print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
-
+    
+def logging_print(text):
+    print(text)
+    logging.info(text)
+    
 import matplotlib.pyplot as plt
 import seaborn as sns
 """Plots trajectory of lab values for a specific individual. (x=DATE, y=VALUE)"""
 def plot_data(data, fg_id):
     crnt_data = data.loc[data.FINNGENID == fg_id]
+    crnt_data = crnt_data.sort_values("DATE", ascending=True)
     fig, ax = plt.subplots()
     if "ABNORM_CUSTOM" in data.columns:
         sns.scatterplot(crnt_data, x="DATE", y="VALUE", hue="ABNORM_CUSTOM", ax=ax)
@@ -59,7 +60,7 @@ def query_to_df(query, **job_config_kwargs):
     return(df)
 def parse_dates(df):
     for col in df.columns:
-        if cols.endswith("_DATETIME"): df[col] = pd.to_datetime(df[col])
+        if col.endswith("_DATETIME"): df[col] = pd.to_datetime(df[col])
     return df
 
 # https://stackoverflow.com/questions/7370801/how-do-i-measure-elapsed-time-in-python
