@@ -66,23 +66,23 @@ if __name__ == "__main__":
     args = get_parser_arguments()
 
     make_dir(args.res_dir);
-    init_logging(args.res_dir, args.file_name, logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
 
     #### Data processing
     # Raw dat
     if args.diag_excl_regex != "" or args.med_excl_regex != "": 
         diags = get_diag_med_data(args.diag_excl_regex)
         excls = get_codes_first(diags, args.diag_excl_regex).rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"})
-        excls.to_csv(args.res_dir + args.lab_name + "_excls_" + get_date() + ".csv", sep=",", index=False)
+        excls.to_csv(args.res_dir + args.lab_name + "_excls.csv", sep=",", index=False)
 
-    if args.diag_regex != "" and args.med_regex != "":
+    if args.diag_regex != "" or args.med_regex != "":
         all_diags = get_diag_med_data(args.diag_regex, args.med_regex)
         if args.diag_regex != "": 
             icd_diags = get_codes_first(all_diags, args.diag_regex).rename({"APPROX_EVENT_DAY": "DIAG_DATE", "CODE":"DIAG"})
-            icd_diags.to_csv(args.res_dir + args.lab_name + "_diags_" + get_date() + ".csv", sep=",", index=False)
-        if args.diag_regex != "": 
+            icd_diags.to_csv(args.res_dir + args.lab_name + "_diags.csv", sep=",", index=False)
+        if args.med_regex != "": 
             med_diags = get_codes_first(all_diags, args.med_regex).rename({"APPROX_EVENT_DAY": "MED_DATE", "CODE":"MED"})
-            med_diags.to_csv(args.res_dir + args.lab_name + "_meds_" + get_date() + ".csv", sep=",", index=False)
+            med_diags.to_csv(args.res_dir + args.lab_name + "_meds.csv", sep=",", index=False)
 
     #Final logging
     logger.info("Time total: "+timer.get_elapsed())
