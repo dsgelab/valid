@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 def get_abnorm_func_based_on_name(lab_name):
     if lab_name == "tsh": return(tsh_abnorm)
@@ -87,3 +88,20 @@ def add_measure_counts(data):
     n_measures.columns = ["FINNGENID", "N_YEAR", "N_MEASURE"]
     data = pd.merge(data, n_measures, on="FINNGENID", how="left")
     return(data)
+
+def add_set(unique_data, test_pct=0.1, valid_pct=0.1):
+    """Adds SET column to data based on random split of individuals.
+       Data passed must be unique data with only one row per individual."""
+    data_train, data_rest = train_test_split(unique_data, shuffle=True, random_state=3291, test_size=(valid_pct+test_pct), train_size=1-(valid_pct+test_pct), stratify=unique_data.y_DIAG)
+    print(f"N rows {len(data_train)}   N indvs {len(set(data_train.FINNGENID))}  N cases {sum(data_train.y_DIAG)} pct cases {round(sum(data_train.y_DIAG)/len(data_train), 2)}")
+    print(f"N rows {len(data_rest)}   N indvs {len(set(data_rest.FINNGENID))}  N cases {sum(data_rest.y_DIAG)} pct cases {round(sum(data_rest.y_DIAG)/len(data_rest), 2)}")
+
+    data_valid, data_test = train_test_split(data_rest, shuffle=True, random_state=391, test_size=test_pct/(test_pct+valid_pct), train_size=valid_pct/(test_pct+valid_pct), stratify=data_rest.y_DIAG)
+    print(f"N rows {len(data_valid)}   N indvs {len(set(data_valid.FINNGENID))}  N cases {sum(data_valid.y_DIAG)} pct cases {round(sum(data_valid.y_DIAG)/len(data_valid), 2)}")
+    print(f"N rows {len(data_test)}   N indvs {len(set(data_test.FINNGENID))}  N cases {sum(data_test.y_DIAG)} pct cases {round(sum(data_test.y_DIAG)/len(data_test), 2)}")
+
+    unique_data.loc[unique_data.FINNGENID.isin(data_train.FINNGENID),"SET"] = 0
+    unique_data.loc[unique_data.FINNGENID.isin(data_valid.FINNGENID),"SET"] = 1
+    unique_data.loc[unique_data.FINNGENID.isin(data_test.FINNGENID),"SET"] = 2
+    print(unique_data.SET.value_counts(dropna=False))
+    return(unique_data)
