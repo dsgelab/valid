@@ -9,8 +9,7 @@ args_list <- list(
   make_option(c("--res_dir"), action="store", type="character", default="/home/ivm/valid/data/processed_data/step5_data/data-diag/", help="Path to results directory."),
   make_option(c("--out_file_name"), action="store", type="character", default="",help="Identifer for out file name."),
   make_option(c("--col_name"), action="store", type="character", default="ICD_THREE",help="Name of column of predictor.")
-  make_option(c("--file_path_preds"), action="store", type="character", default="/home/ivm/valid/data/extra_data/data/processed_data/step1/atcs_r12_2025-02-04_min1pct_sum_onttop_2025-02-18.csv",
-              help="Full path to data."),
+  make_option(c("--file_path_preds"), action="store", type="character", default="/home/ivm/valid/data/extra_data/data/processed_data/step1/atcs_r12_2025-02-04_min1pct_sum_onttop_2025-02-18.csv", help="Full path to data."),
   make_option(c("--dir_path_labels"), type="character", action="store", help="Path to directory containing the label data."),
   make_option(c("--file_name_labels"), action="store", type="character", default="hba1c_d1_2025-02-10_data-diag_2025-02-17",help="File name of label file, without the '.csv'"),
   make_option(c("--time"), action="store", type="integer", default=0,help="Whether to filter for current and not historical data. -1 = historical, 0 = all, 1 = current"),
