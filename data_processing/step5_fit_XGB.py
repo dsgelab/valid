@@ -50,8 +50,8 @@ def optuna_objective(trial, base_params, dtrain, dvalid, eval_metric="tweedie", 
         'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
         'subsample': trial.suggest_float('subsample', 0.5, 0.8),
         'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
-        'reg_lambda': trial.suggest_float('reg_lambda', 1, 10, log=True),
-        'gamma': trial.suggest_float('gamma', 1, 10, log=True),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1, 15, log=True),
+        'gamma': trial.suggest_float('gamma', 1, 15, log=True),
     }
     params.update(base_params)
     pruning_callback = optuna.integration.XGBoostPruningCallback(trial, f'valid-{eval_metric}')
@@ -69,49 +69,68 @@ def optuna_objective(trial, base_params, dtrain, dvalid, eval_metric="tweedie", 
     trial.set_user_attr("best_iteration", int(model.best_iteration))
     return evals_result["valid"][eval_metric][-1]
 
-def get_data(goal, preds, file_path_data, file_path_labels, file_path_icds, file_path_sumstats, file_path_atcs):
+def get_data(args):
+    
     ### Getting Data
-    data = pd.read_csv(file_path_data, sep=",").drop(columns=["EVENT_AGE"])
-    labels = pd.read_csv(file_path_labels, sep=",")
-    if file_path_icds != "": 
-        icds = pd.read_csv(file_path_icds, sep=",")
-        data = pd.merge(data, icds, on="FINNGENID")
-    if file_path_atcs != "": 
-        atcs = pd.read_csv(file_path_atcs, sep=",")
-        data = pd.merge(data, atcs, on="FINNGENID")
-    if file_path_sumstats != "": 
-        sumstats = pd.read_csv(file_path_sumstats, sep=",")
-        data = pd.merge(data, sumstats, on="FINNGENID")
-
-    data = data.assign(SEX=data.SEX.map({"female": 0, "male": 1}))
-    #age_last = data.groupby("FINNGENID").agg({"EVENT_AGE":"max"}).reset_index()
-
-    #data = pd.merge(data, age_last, on="FINNGENID")
+    #data = pd.read_csv(args.file_path, sep=",").drop(columns=["EVENT_AGE"])
+    data = pd.read_csv(args.file_path_labels, sep=",")
+    # Merging data
     # keeping also continuous goal col in case of binary predictions
-    goal_split = goal.split("_")
-    if goal_split[-1] == "ABNORM" or goal == "y_DIAG":
+    goal_split = args.goal.split("_")
+    if goal_split[-1] == "ABNORM" or args.goal == "y_DIAG":
         new_goal = "_".join(goal_split[0:len(goal_split)-1])
         if not new_goal in data.columns: new_goal = "y_MEAN"
         # Merging
-        data = pd.merge(data, labels[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE"], goal, new_goal]], on="FINNGENID")
+        data = data[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE", "SEX"], args.goal, new_goal]].copy()
+        #data = pd.merge(data, labels[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE"], args.goal, new_goal]], on="FINNGENID", how="outer")
     else:
-        data = pd.merge(data, labels[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE"], goal]], on="FINNGENID")
-    if "LAST_ICD_DATE" in data.columns:
-        data["TIME_LAST_ICD"] = (data.START_DATE.astype("datetime64[ns]") - data.LAST_ICD_DATE.astype("datetime64[ns]")).dt.days.astype(int)
-    if "LAST_ATC_DATE" in data.columns:
-        data["LAST_ATC_DATE"] = (data.START_DATE.astype("datetime64[ns]") - data.LAST_ICD_DATE.astype("datetime64[ns]")).dt.days.astype(int)
+        data = data[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE", "SEX"], args.goal]].copy()
+        #data = pd.merge(data, labels[[*["FINNGENID", "SET", "START_DATE", "EVENT_AGE"], args.goal]], on="FINNGENID", how="outer")
+
+    # Adding other data modalities
+    if args.file_path_icds != "": 
+        icds = pd.read_csv(args.file_path_icds, sep=",")
+        data = pd.merge(data, icds, on="FINNGENID", how="left")
+    if args.file_path_atcs != "": 
+        atcs = pd.read_csv(args.file_path_atcs, sep=",")
+        data = pd.merge(data, atcs, on="FINNGENID", how="left")
+    if args.file_path_sumstats != "": 
+        sumstats = pd.read_csv(args.file_path_sumstats, sep=",")
+        if "SET" in sumstats.columns: sumstats = sumstats.drop(columns="SET")
+        data = pd.merge(data, sumstats, on="FINNGENID", how="left")
+    if args.file_path_second_sumstats != "": 
+        second_sumstats = pd.read_csv(args.file_path_second_sumstats, sep=",")
+        if "SET" in second_sumstats.columns: second_sumstats = second_sumstats.drop(columns="SET")
+        second_sumstats = second_sumstats.add_prefix("S_")
+        second_sumstats = second_sumstats.rename(columns={"S_FINNGENID": "FINNGENID"})
+        data = pd.merge(data, second_sumstats, on="FINNGENID", how="left")
+    if args.file_path_labs != "": 
+        labs = pd.read_csv(args.file_path_labs, sep=",")
+        data = pd.merge(data, labs, on="FINNGENID", how="left")
+    data = data.assign(SEX=data.SEX.map({"female": 0, "male": 1}))
+
+    # # Time
+    # if "LAST_ICD_DATE" in data.columns:
+    #     data.loc[data.LAST_ICD_DATE.notnull(), "TIME_LAST_ICD"] = (data.loc[data.LAST_ICD_DATE.notnull(),"START_DATE"].astype("datetime64[ns]") - data.loc[data.LAST_ICD_DATE.notnull(), "LAST_ICD_DATE"].astype("datetime64[ns]")).dt.days.astype(int)
+    # if "LAST_ATC_DATE" in data.columns:
+    #     data.loc[data.LAST_ATC_DATE.notnull(), "TIME_LAST_ATC"] = (data.loc[data.LAST_ATC_DATE.notnull(),"START_DATE"].astype("datetime64[ns]") - data.loc[data.LAST_ATC_DATE.notnull(), "LAST_ATC_DATE"].astype("datetime64[ns]")).dt.days.astype(int)
 
     ## Predictors and outcome
     X_cols = []
-    for pred in preds:
+    for pred in args.preds:
         if pred == "ICD_MAT":
             [X_cols.append(ICD_CODE) for ICD_CODE in icds.columns[np.logical_and(icds.columns != "FINNGENID", icds.columns != "LAST_ICD_DATE")]]
         elif pred == "ATC_MAT":
             [X_cols.append(ATC_CODE) for ATC_CODE in atcs.columns[np.logical_and(atcs.columns != "FINNGENID", atcs.columns != "LAST_ATC_DATE")]]
         elif pred == "SUMSTATS":
             [X_cols.append(SUMSTAT) for SUMSTAT in sumstats.columns[np.logical_and(sumstats.columns != "FINNGENID", sumstats.columns != "LAST_VAL_DATE")]]
+        elif pred == "SECOND_SUMSTATS":
+            [X_cols.append(SUMSTAT) for SUMSTAT in second_sumstats.columns[np.logical_and(second_sumstats.columns != "FINNGENID", second_sumstats.columns != "S_LAST_VAL_DATE")]]
+        elif pred == "LAB_MAT":
+            [X_cols.append(LAB_MAT) for LAB_MAT in labs.columns[labs.columns != "FINNGENID"]]
         else:
             X_cols.append(pred)
+
     return(data, X_cols)
 
 def create_xgb_dts(data, X_cols, y_goal, reweight):
@@ -119,9 +138,7 @@ def create_xgb_dts(data, X_cols, y_goal, reweight):
     for col in data: 
         if data[col].dtype == "int64": data[col] = data[col].astype("float64")
 
-    #X_train, X_rest, y_train, y_rest = train_test_split(data[X_cols], data[y_goal], shuffle=True, random_state=3291, test_size=0.4, train_size=0.6, stratify=data[y_goal])
-    #X_valid, X_test, y_valid, y_test = train_test_split(X_rest, y_rest, shuffle=True, random_state=391, test_size=0.5, train_size=0.5, stratify=y_rest)
-
+    #data = data[["FINNGENID", *X_cols, y_goal, "SET"]].drop_duplicates().copy()
     # # Split data
     train_data = data.loc[data.SET == 0].drop(columns="SET")
     valid_data = data.loc[data.SET == 1].drop(columns="SET")
@@ -192,7 +209,11 @@ def run_step1(dtrain, dvalid, args, study_name):
     base_params = get_base_params(args.metric, args.lr)
 
     sampler = optuna.samplers.TPESampler(seed=429)
-    if args.refit: optuna.delete_study(study_name=study_name, storage="sqlite:///" + args.lab_name + "_optuna.db")
+    if args.refit: 
+        try:
+            optuna.delete_study(study_name=study_name, storage="sqlite:///" + args.lab_name + "_optuna.db")
+        except KeyError:
+            print("Record not found, have to create new anyways.")
     study = optuna.create_study(direction='minimize', sampler=sampler, study_name=study_name, storage="sqlite:///" + args.lab_name + "_optuna.db", load_if_exists=True)
     tic = time.time()
     timer = Timer()
@@ -246,18 +267,12 @@ def save_importances(labels, model_final, out_dir, args):
     top_gain.to_csv(out_dir + args.lab_name + "_importance_" + get_date() + ".csv")
         
 def get_out_data(data, model_final, X_all, y_all, args):
-    out_data = data[["FINNGENID", "EVENT_AGE", "LAST_VAL_DATE", "SET", "ABNORM"]].rename(columns={"DATE": "LAST_VAL_DATE", "ABNORM": "N_PRIOR_ABNORMS"})
+    out_data = data[["FINNGENID", "EVENT_AGE", "LAST_VAL_DATE", "SET", "ABNORM"]].rename(columns={"DATE": "LAST_VAL_DATE", "ABNORM": "N_PRIOR_ABNORMS"}).drop_duplicates()
 
     if get_train_type(args.metric) == "cont":    
         y_pred = model_final.predict(X_all)
         out_data = out_data.assign(VALUE = y_pred)
         out_data = get_abnorm_func_based_on_name(args.lab_name)(out_data, "VALUE").rename(columns={"ABNORM_CUSTOM": "ABNORM_PREDS"})
-    else:
-        y_pred = model_final.predict_proba(X_all)[:,1]
-        out_data = out_data.assign(ABNORM_PROBS = y_pred)
-        out_data = out_data.assign(ABNORM_PREDS = (out_data.ABNORM_PROBS>0.5).astype("int64"))
-
-    if get_train_type(args.metric) == "cont":
         out_data = out_data.assign(TRUE_VALUE = y_all)
         out_data = get_abnorm_func_based_on_name(args.lab_name)(out_data, "TRUE_VALUE").rename(columns={"ABNORM_CUSTOM": "TRUE_ABNORM"})
     else:
@@ -266,22 +281,31 @@ def get_out_data(data, model_final, X_all, y_all, args):
         if not new_goal in data.columns: new_goal = "y_MEAN"
 
         y_cont_all = data[new_goal]
+        print(y_cont_all)
         out_data = out_data.assign(TRUE_VALUE = y_cont_all)
         out_data = out_data.assign(TRUE_ABNORM = y_all)
-    return(out_data)
+
+        y_pred = model_final.predict_proba(X_all)[:,1]
+        out_data = out_data.assign(ABNORM_PROBS = y_pred)
+        precision_, recall_, proba = precision_recall_curve(out_data.TRUE_ABNORM, out_data.ABNORM_PROBS)
+        optimal_proba_cutoff = sorted(list(zip(np.abs(precision_ - recall_), proba)), key=lambda i: i[0], reverse=False)[0][1]
+        logging.info(f"Optimal cut-off for prediction based on PR {optimal_proba_cutoff}")
+        out_data = out_data.assign(ABNORM_PREDS = (out_data.ABNORM_PROBS>optimal_proba_cutoff).astype("int64"))
+    return(out_data.drop_duplicates())
 
 def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
     parser.add_argument("--res_dir", help="Path to the results directory", default="/home/ivm/valid/data/processed_data/step5_predict/1_year_buffer/")
-    parser.add_argument("--file_path", type=str, help="Path to data. Needs to contain both data and metadata (same name with _name.csv) at the end", default="/home/ivm/valid/data/processed_data/step3_abnorm/")
+    parser.add_argument("--file_path", type=str, help="Path to data. Needs to contain both data and metadata (same name with _name.csv) at the end", default="")
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value.", required=True)
     parser.add_argument("--file_path_labels", type=str, help="Path to outcome label data.", default="")
     parser.add_argument("--file_path_icds", type=str, default="")
     parser.add_argument("--file_path_atcs", type=str, default="")
     parser.add_argument("--file_path_sumstats", type=str, default="")
+    parser.add_argument("--file_path_second_sumstats", type=str, default="")
+    parser.add_argument("--file_path_labs", type=str, default="")
     parser.add_argument("--source_file_date", type=str, default="")
-
     parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
     parser.add_argument("--preds", type=str, help="List of predictors. ICD_MAT takes all ICD-codes in the ICD-code file. SUMSTATS takes all summary statistics in the sumstats file.", default=["SUMSTATS", "EVENT_AGE", "SEX"], nargs="+")
     parser.add_argument("--pred_descriptor", type=str, help="Description of model predictors short.", required=True)
@@ -317,7 +341,8 @@ if __name__ == "__main__":
     init_logging(out_dir, log_file_name, logger, args)
     print(args)
 
-    data, X_cols = get_data(args.goal, args.preds, args.file_path, args.file_path_labels, args.file_path_icds, args.file_path_sumstats, args.file_path_atcs)
+    data, X_cols = get_data(args)
+
     X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, dtrain, dvalid, scaler_base, transform_cols = create_xgb_dts(data, X_cols, args.goal, args.reweight)
 
     if args.run_step0 == 1: run_speed_test(dtrain, dvalid, args)
@@ -335,22 +360,13 @@ if __name__ == "__main__":
         out_data = get_out_data(data, model_final, X_all, y_all, args)
         out_data.to_csv(out_dir + out_name + "_preds_" + get_date() + ".csv", index=False)   
         ## Report on all data
-        crnt_report, fig = create_report(model_final, out_data, feature_labels=X_cols, display_scores=[args.metric], metric=args.metric, importance_plot=True)
+        crnt_report, fig = create_report(model_final, out_data, feature_labels=X_cols, display_scores=[args.metric, "aucpr"], metric=args.metric, importance_plot=True)
         fig.savefig(out_dir + "plots/" + out_name + "_report_" + get_date() + ".png")   
         fig.savefig(out_dir + "plots/" + out_name + "_report_" + get_date() + ".pdf")   
         pickle.dump(crnt_report, open(out_dir + args.lab_name + "_report_" + get_date() + ".pkl", "wb"))  
         
         eval_metrics, all_conf_mats = eval_subset(out_data, "ABNORM_PREDS", "ABNORM_PROBS", "TRUE_ABNORM", "TRUE_VALUE", out_dir + "plots/" + out_name, out_dir, "all", args.n_boots, get_train_type(args.metric))
 
-        ## Report on individuals without prior abnorm
-        crnt_report, fig = create_report(model_final, out_data.query("N_PRIOR_ABNORMS==0"), feature_labels=X_cols, display_scores=[args.metric], metric=args.metric)
-        fig.savefig(out_dir + "plots/" + out_name + "_report_noabnorm_" + get_date() + ".png")   
-        fig.savefig(out_dir + "plots/" + out_name + "_report_noabnorm_" + get_date() + ".pdf")   
-        pickle.dump(crnt_report, open(out_dir + out_name + "_report_noabnorm_" + get_date() + ".pkl", "wb"))  
-
-        eval_metrics_2, all_conf_mats_2 = eval_subset(out_data.query("N_PRIOR_ABNORMS==0"), "ABNORM_PREDS", "ABNORM_PROBS", "TRUE_ABNORM", "TRUE_VALUE", out_dir + "plots/" + out_name, out_dir, "noabnorm", args.n_boots, get_train_type(args.metric))
-        eval_metrics = pd.concat([eval_metrics, eval_metrics_2])
-        all_conf_mats = pd.concat([all_conf_mats, all_conf_mats_2])
         if args.save_csv == 1:
             eval_metrics.loc[eval_metrics.F1.notnull()].to_csv(out_dir + out_name + "_evals_" + get_date() + ".csv", sep=",", index=False)
             all_conf_mats.to_csv(out_dir + out_name + "_confmats_" + get_date() + ".csv", sep=",", index=False)
