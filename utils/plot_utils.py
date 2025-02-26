@@ -33,6 +33,33 @@ def round_column_min5(data, col):
     newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
     return(newcol, min_val, max_val)
 
+def plot_box_probs(evals=[], labels=[], ax1=None, ax2=None, ax_labels=["Controls", "Cases"]):
+    axes = [ax1, ax2]
+    for group in [0,1]:
+        all_evals = pd.DataFrame()
+        for idx, eval_x in enumerate(evals):
+            eval_x=pd.DataFrame({"valid_probs": eval_x["valid_probs"], "y_valid": eval_x["y_valid"]})
+            eval_crnt = eval_x.loc[eval_x.y_valid==group]
+            safe = {"valid_probs": eval_crnt["valid_probs"].copy()*100}
+            safe["valid_probs"], min_val, max_val = round_column_min5(safe, "valid_probs")
+            safe["group"] = eval_crnt["y_valid"]
+            safe["label"] = labels[idx]
+            all_evals = pd.concat([all_evals, pd.DataFrame(safe)])
+        sns.boxplot(x=all_evals.valid_probs/100, y=all_evals.label, ax=axes[group], vert=False, width=.5, whis=(5,95), hue=all_evals.label, fill=False, flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
+    try:
+        ax1.set_title(ax_labels[0])
+        ax1.set_xlabel('Predicted Probability')
+        ax1.set_ylabel('')
+    except:
+        pass
+    try:
+        ax2.set_yticks([])
+        ax2.set_title(ax_labels[1])
+        ax2.set_xlabel('Predicted Probability')
+        ax2.set_ylabel('')
+    except:
+        pass
+
 """Reshapes scores dataframe so that each metric gets its own column and then plots lines based on this."""
 def plot_melt_scores(scores, x_col_name, x_axis_name, metrics, axis, min_y, palette=["#D5694F", "#748AAA", "#CCB6AF"]):
     plt_data = scores.loc[scores.SET=="Valid"][[x_col_name, *metrics]].reset_index(names="YEAR").melt(["YEAR", x_col_name])
@@ -79,27 +106,32 @@ def plot_observed_vs_probability_min5(data, col_name_x, col_name_y):
 
     # Show the joint distribution using kernel density estimation
     g = sns.jointplot(x=newcol_x, y=newcol_y, kind="hex", mincnt=5, cmap="twilight_shifted", marginal_kws=dict(stat="density", kde=True, discrete=True, color="#564D65"))
+    g.ax_joint.text(max_val_x-(0.2*max_val_x), 90, "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
     g.ax_marg_y.set_ylim(0, 100)
-    g.ax_joint.text(max(newcol_y)-(0.05*max(newcol_y)), 90, "N = " + pretty_int(data.shape[0]))
-
     g.ax_joint.set_xlabel("Observed Value")
     g.ax_joint.set_ylabel("Predicted Probability")
     return(g, newcol_x, newcol_y)
-    
-def plot_observerd_vs_predicted(data, col_name_x, col_name_y, col_name_x_abnorm):
+
+def plot_observerd_vs_predicted(data, col_name_x, col_name_y, col_name_x_abnorm, prob=True):
     sns.set_style('whitegrid')
     axis_limits = [min(min(data[col_name_x]), min(data[col_name_y])), max(max(data[col_name_x]), max(data[col_name_y]))]
     
     # Show the joint distribution using kernel density estimation
-    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y], kind="scatter", hue=data[col_name_x_abnorm])
+    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y]*100, kind="scatter", hue=data[col_name_x_abnorm])
     g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
-    g.ax_marg_y.set_ylim(axis_limits[0], axis_limits[1])
     g.ax_joint.set_xlabel("Observed Value")
-    g.ax_joint.set_ylabel("Predicted Probability")
-    g.ax_joint.text(axis_limits[1]//4, axis_limits[1]-(0.2*axis_limits[1]), "N = " + pretty_int(data.shape[0]) +  "  A = " + pretty_int(data[col_name_x_abnorm].sum()), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+    if prob: 
+        g.ax_joint.set_ylabel("Predicted Probability")
+        g.ax_marg_y.set_ylim(0, 100)
+        g.ax_joint.text(axis_limits[1]//2, 75, "N = " + pretty_int(data.shape[0]) +  "  A = " + pretty_int(data[col_name_x_abnorm].sum()), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
 
-    # # This is the x=y line using transforms
-    g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
+    else: 
+        g.ax_joint.set_ylabel("Predicted Value")
+        g.ax_marg_y.set_ylim(axis_limits[0], axis_limits[1]) 
+        # # This is the x=y line using transforms
+        g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
+        g.ax_joint.text(axis_limits[1]//4, axis_limits[1]-(0.2*axis_limits[1]), "N = " + pretty_int(data.shape[0]) +  "  A = " + pretty_int(data[col_name_x_abnorm].sum()), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+
     return(g)
     
 def plot_observerd_vs_predicted_min5(data, col_name_x, col_name_y):
@@ -114,7 +146,7 @@ def plot_observerd_vs_predicted_min5(data, col_name_x, col_name_y):
     g.ax_marg_y.set_ylim(axis_limits[0], axis_limits[1])
     g.ax_joint.set_xlabel("observed value")
     g.ax_joint.set_ylabel("predicted value")
-    g.ax_joint.text(axis_limits[1]//4, axis_limits[1]-(0.1*axis_limits[1]), "N = " + pretty_int(data.shape[0]))
+    g.ax_joint.text(3*axis_limits[1]//4, axis_limits[1]-(0.1*axis_limits[1]), "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
     
     # # This is the x=y line using transforms
     g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
@@ -153,7 +185,7 @@ def roc_plot(y_true, y_probs, label, compare=False, ax=None):
         axis.legend(title='Classifier (AUC)', loc='lower right')
         axis.plot([0,1], [0,1], linestyle='--', color='black')
     else:
-        axis.text(0.72, 0.05, f'AUC = { auc }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+        axis.text(0.70, 0.1, f'AUC = { auc }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
         # Plot No-Info classifier
         axis.fill_between(fpr, fpr, tpr, alpha=0.3, edgecolor='g', linestyle='--', linewidth=2)
         
@@ -168,66 +200,106 @@ def roc_plot(y_true, y_probs, label, compare=False, ax=None):
     return axis if ax else fig
 
 import scipy
+def round_column_min5(data, col):
+    """Rounds a column to the nearest 5 and replaces values with less than 5 counts with the nearest value with 5 counts.
+        Returns the new column and the min and max values of the column."""
+    mean_freqs = pd.DataFrame(data[col].round().value_counts()).reset_index()
+    mean_freqs.columns = ["VALUE", "COUNT"]
+    value_map = dict()
+    min_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.min()
+    max_val = mean_freqs[mean_freqs.COUNT >= 5].VALUE.max()
+    for row_idx in np.arange(mean_freqs.shape[0]):
+        if mean_freqs.iloc[row_idx].COUNT < 5:
+            low_count_val = mean_freqs.iloc[row_idx].VALUE
+            if abs(min_val-low_count_val) < abs(max_val-low_count_val):
+                value_map[low_count_val] = min_val
+            else:
+                value_map[low_count_val] = max_val
+    newcol = round(data[col]).map(value_map)
+    newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
+    return(newcol, min_val, max_val)
+    
 def plot_calibration(y_true, y_probs, ax1=None, ax2=None, bin_type="equal", compare=False, label="Calibration"):
     if ax1 is None:  fig, (ax1,ax2) = plt.subplots(2,figsize=(15,7), sharex=True, sharey=False, height_ratios=[1, .5])
     if bin_type != "equal": bins = np.quantile(y_probs, np.arange(0,1.1,0.1))
     else: bins=np.arange(0, 1, 0.1)
+        
     pred = np.array([y_probs[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean() for b in range(1,len(bins))])
     obs = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean()  for b in range(1,len(bins))])
     ci = np.array([scipy.stats.beta(0.1 + y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].sum(), 0.1 + (1-y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]).sum()).ppf([0.025,0.975]) for b in range(1,len(bins))])
 
+    # Making sure at least 5 individuals in groups
+    sizes = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].shape[0] for b in range(1,len(bins))])
+    n_cases = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].sum() for b in range(1,len(bins))])
+    n_cntrls = np.array([(y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]==0).sum() for b in range(1,len(bins))])
+    pred = pred[np.logical_and(n_cases>=5, n_cntrls>=5)]
+    obs = obs[np.logical_and(n_cases>=5, n_cntrls>=5)]
+    ci = ci[np.logical_and(n_cases>=5, n_cntrls>=5)]
+    sizes = sizes[np.logical_and(n_cases>=5, n_cntrls>=5)]
     if not compare:
         sns.lineplot(x=pred, y=obs, ax=ax1, c="k", label=label)
-        ax1.scatter(y_probs.mean(), y_true.mean(), c='r', ec='w',  s=80)
+        ax1.scatter(y_probs.mean(), y_true.mean(), c='r', ec='w', s=80)
     else:
         sns.lineplot(x=pred, y=obs, ax=ax1,label=label)
     
     for j,pr in enumerate(pred):
         if not np.isnan(obs[j]):
             ax1.plot(np.repeat(pr,2),ci[j], lw=1.5, ls=":", c="k")
-    sns.scatterplot(x=pred, y=obs, ax=ax1,s=40,c="k")
+    sns.scatterplot(x=pred, y=obs, ax=ax1, size=sizes, c="k")
+    if compare: ax1.get_legend().remove()
 
     ax1.plot([0, 1], [0, 1], transform=ax1.transAxes, lw=1, c='k', ls="--")
     ax1.set_title('Calibration')
-    ax1.set_ylim((0, 1))
     ax1.set_xlim((0, 1))
+    ax1.set_ylim((0, 1))
+
     ax1.set_xlabel('Predicted Probability')
     ax1.set_ylabel('Observed Probability')
 
     if not ax2 is None:
-        safe = {"valid_probs": y_probs.copy()*100}
-        safe, min_val, max_val = round_column_min5(safe, "valid_probs")
-        sns.boxplot(x=safe/100, y=pd.Categorical(y_true.map({0: "Control", 1: "Case"}), categories=["Control", "Case"]), ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
+        safe_cases = {"valid_probs": y_probs[y_true==1].copy()*100}
+        safe_cases, min_val, max_val = round_column_min5(safe_cases, "valid_probs")
+        safe_controls = {"valid_probs": y_probs[y_true==0].copy()*100}
+        safe_controls, min_val, max_val = round_column_min5(safe_controls, "valid_probs")
+        safe = pd.concat([safe_cases, safe_controls])
+        labels = pd.concat([y_true[y_true==1], y_true[y_true==0]])
+        sns.boxplot(x=safe/100, y=pd.Categorical(labels.map({0: "Control", 1: "Case"}), categories=["Control", "Case"]), ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
         ax2.set_xlabel('Predicted Probability')
         ax2.set_ylabel('')
-
+        
+import sklearn.metrics as skm   
 def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
     """ Plot Precision-Recall curve.
         Set `compare=True` to use this function to compare classifiers. """
-    
+
     p, r, thresh = precision_recall_curve(y_true, y_probs)
     p, r, thresh = list(p), list(r), list(thresh)
     p.pop()
     r.pop()
     
     fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
-    
+
+    aucpr = np.round(skm.average_precision_score(y_true, y_probs),2)
+    label = ' '.join([label, f'({aucpr})']) if compare else None
+
     if compare:
         sns.lineplot(x=r, y=p, ax=axis, label=label)
         axis.set_xlabel('Recall')
         axis.set_ylabel('Precision')
         axis.legend(loc='upper right')
     else:
+
         sns.lineplot(x=thresh, y=p, label='Precision', ax=axis)
         axis.set_xlabel('Threshold')
         axis.set_ylabel('Precision')
         axis.legend(loc='upper right')
 
         axis_twin = axis.twinx()
+        axis_twin.text(0.70, 0.1, f'avgPrec = { aucpr }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
         sns.lineplot(x=thresh, y=r, color='limegreen', label='Recall', ax=axis_twin)
         axis_twin.set_ylabel('Recall')
         axis_twin.set_ylim(0, 1)
-        axis_twin.legend(bbox_to_anchor=(0.75, 0.75))
+        axis_twin.legend(bbox_to_anchor=(0.95, 0.9))
     
     axis.set_xlim(0, 1)
     axis.set_ylim(0, 1)

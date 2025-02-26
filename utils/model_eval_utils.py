@@ -1,11 +1,12 @@
 import matplotlib
 matplotlib.use("Agg")
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
 import matplotlib.pyplot as plt
 import pandas as pd
 from plot_utils import *
-from utils import logging_print, make_dir
+from utils import *
 import sklearn.metrics as skm
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
 
 def model_memory_size(clf):
     return sys.getsizeof(pickle.dumps(clf))
@@ -115,29 +116,27 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
 def eval_subset(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, fig_path=None, table_path=None, subset_name="all", n_boots=500, train_type="cont"):
     eval_metrics = pd.DataFrame()
     all_conf_mats = pd.DataFrame()
+    g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col, train_type == "bin")
+    if fig_path: g.savefig(fig_path + "_" + subset_name + "_" + get_date() + "_scatter.png", dpi=300)
     if train_type != "bin":
         N_indv = data.shape[0]
         g, newcol_x, newcol_y = plot_observerd_vs_predicted_min5(data, y_cont_goal_col, y_cont_pred_col)
         if fig_path:
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5.png", dpi=300)
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5.pdf")
+            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
+            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".pdf")
         if table_path:
             make_dir(table_path + "/extra_counts/")
-            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x.csv", sep=",")
-            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y.csv", sep=",")
-        
-        g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col)
-        if fig_path:
-            g.savefig(fig_path + "_" + subset_name + "_scatter.png", dpi=300)
+            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x_" +get_date() +".csv", sep=",")
+            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y_" + get_date() + ".csv", sep=",")
     else:
         g, newcol_x, newcol_y = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
         if fig_path:
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5.png", dpi=300)
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5.pdf")
+            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
+            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".pdf")
         if table_path:
             make_dir(table_path + "/extra_counts/")
-            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x.csv", sep=",")
-            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y.csv", sep=",")
+            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x_" + get_date() + ".csv", sep=",")
+            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y_" + get_date() + ".csv", sep=",")
 
     all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
     # Metrics with bootstrap for different sets
@@ -293,12 +292,11 @@ def create_report(mdl, out_data, display_scores=[],
     """ Reports various metrics of the trained classifier """
     
     dump = dict()
-
-    train_preds = out_data.query("SET==0")["ABNORM_PREDS"]
-    valid_preds = out_data.query("SET==1")["ABNORM_PREDS"]
     y_train = out_data.query("SET==0")["TRUE_ABNORM"]
     y_valid = out_data.query("SET==1")["TRUE_ABNORM"]
-    
+    train_preds = out_data.query("SET==0")["ABNORM_PREDS"]
+    valid_preds = out_data.query("SET==1")["ABNORM_PREDS"]
+
     if get_train_type(metric) == "bin":
         y_probs = out_data.query("SET==1")["ABNORM_PROBS"]
         print(y_probs.min())
@@ -311,8 +309,8 @@ def create_report(mdl, out_data, display_scores=[],
     ## Additional scores
     scores_dict = dict()
     for score_name in display_scores:
-        func = get_score_func_based_on_metric(metric)
-        scores_dict[metric] = [func(y_train, train_preds), func(y_valid, valid_preds)]
+        func = get_score_func_based_on_metric(score_name)
+        scores_dict[score_name] = [func(y_train, train_preds), func(y_valid, valid_preds)]
         
     ## Model Memory
     model_mem = round(model_memory_size(mdl) / 1024, 2)
@@ -383,13 +381,6 @@ def create_report(mdl, out_data, display_scores=[],
                 cal_ax1, pr_axes = row_2[0], row_2[1]
                 cal_ax2, conf_axes = row_3[0], row_3[1]
                 cal_ax1.sharex(cal_ax2)
-                # fig = plt.figure(figsize=(14, 10))
-                # imp_ax = fig.add_subplot(321)
-                # roc_axes = fig.add_subplot(322)
-                # cal_ax1 = fig.add_subplot(323)
-                # pr_axes = fig.add_subplot(324)
-                # cal_ax2 = fig.add_subplot(325, sharex=cal_ax1)
-                # conf_axes = fig.add_subplot(326)
 
                 # Plot importance curve
                 feature_importance_plot(importances=importances.values,feature_labels=importances.index, ax=imp_ax)
@@ -400,11 +391,6 @@ def create_report(mdl, out_data, display_scores=[],
             cal_ax2, delete_axes = row_3[0], row_3[1]
             delete_axes.remove()
             cal_ax1.sharex(cal_ax2)
-            
-            # fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 10))
-            # conf_axes = axes[0, 0]
-            # roc_axes = axes[0, 1]
-            # pr_axes = axes[1, 1]
             
         confusion_plot(confusion_matrix(y_valid, valid_preds), labels=confusion_labels, ax=conf_axes)
         if get_train_type(metric) == "bin":
@@ -420,12 +406,16 @@ def create_report(mdl, out_data, display_scores=[],
     dump = dict(mdl=mdl, 
                 accuracy=[train_acc, valid_acc], 
                 **scores_dict,
+                fids=out_data.FINNGENID,
                 y_valid=y_valid,
                 train_preds=train_preds,
                 valid_preds=valid_preds,
-                valid_probs=y_probs, report=mdl_rep, 
-                roc_auc=roc_auc, model_memory=model_mem)
+                valid_probs=y_probs, 
+                report=mdl_rep, 
+                roc_auc=roc_auc, 
+                model_memory=model_mem)
     return dump, fig
+
 
 def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0"):
     """ Compare evaluation metrics for the True Positive class [1] of 
@@ -462,17 +452,22 @@ def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0")
     
     
     ## Compare Plots
-    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(15, 5))
-    
-    
+    fig = plt.figure(figsize=(15, 10))
+    ax1 = fig.add_subplot(231)
+    ax2 = fig.add_subplot(232)
+    ax3 = fig.add_subplot(233)
+
     # ROC and Precision-Recall
     for i in range(len(mdl_reports)):
         mdl_probs = mdl_reports[i]['valid_probs']
         y_valid = mdl_reports[i]['y_valid']
-        roc_plot(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax=axes[0])
-        plot_calibration(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax1=axes[2])
-        precision_recall_plot(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax=axes[1])
-
+        roc_plot(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax=ax1)
+        plot_calibration(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax1=ax3)
+        precision_recall_plot(y_valid, mdl_probs, label=mdl_names[i], compare=True, ax=ax2)
+    ax4 = fig.add_subplot(223)
+    ax5 = fig.add_subplot(224)
+    #ax4.sharey(ax5)
+    plot_box_probs(mdl_reports, mdl_names, ax4, ax5)
     fig.tight_layout()
     plt.close()
     

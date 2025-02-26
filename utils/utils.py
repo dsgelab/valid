@@ -10,7 +10,7 @@ import logging
 def init_logging(out_dir, log_file_name, logger, args):
     log_dir = out_dir + "logs/"
     make_dir(log_dir)
-    logging.basicConfig(filename=log_dir+log_file_name".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
+    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
     logger.info("Time: " + get_datetime() + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
 
 from datetime import datetime
