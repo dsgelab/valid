@@ -223,21 +223,6 @@ def remove_known_outliers(data, n_indvs_stats, ref_min, ref_max):
 
     return(data, n_indvs_stats)
 
-def get_parser_arguments():
-    #### Parsing and logging
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--file_path", help="Path to extracted file (step0)", required=True)
-    parser.add_argument("--res_dir", help="Path to the results directory (step1)", default="/home/ivm/valid/data/processed_data/step1/")
-    parser.add_argument("--lab_name", help="Readable name of the measurement value.", required=True)
-    parser.add_argument("--fill_missing", type=int, help="Whether to remove missing vlaues or set them to a dummies. [deafult remove: 0]", default=0)
-    parser.add_argument("--dummies", type=float, nargs="+", help="List with values for low, normal, high missing value abnormal")
-    parser.add_argument("--main_unit", help="Unit that will be filtered out as the main unit.")
-    parser.add_argument("--max_z", type=int, help="Maximum z-score among all measurements. [dafult: 10]", default=10)
-    parser.add_argument("--ref_min", type=float, help="Minimum reasonable value [dafult: None]", default=None)
-    parser.add_argument("--ref_max", type=float, help="Minimum reasonable value [dafult: None]", default=None)
-
-    args = parser.parse_args()
-    return(args)
 
 def egfr_transform(data):
     data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE"]/61.9 )**(-0.329))*(0.993**data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "EVENT_AGE"])*144
@@ -268,6 +253,23 @@ def custom_abnorm(data, lab_name):
     data = get_abnorm_func_based_on_name(args.lab_name)(data, "VALUE")
     return(data)
     
+def get_parser_arguments():
+    #### Parsing and logging
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file_path", help="Path to extracted file (step0)", required=True)
+    parser.add_argument("--res_dir", help="Path to the results directory (step1)", default="/home/ivm/valid/data/processed_data/step1/")
+    parser.add_argument("--lab_name", help="Readable name of the measurement value.", required=True)
+    parser.add_argument("--fill_missing", type=int, help="Whether to remove missing vlaues or set them to a dummies. [deafult remove: 0]", default=0)
+    parser.add_argument("--dummies", type=float, nargs="+", help="List with values for low, normal, high missing value abnormal")
+    parser.add_argument("--priority_units", type=str, default=["mmol/mol", "%"], nargs="+", help="List with values for low, normal, high missing value abnormal")
+    parser.add_argument("--main_unit", help="Unit that will be filtered out as the main unit.")
+    parser.add_argument("--max_z", type=int, help="Maximum z-score among all measurements. [dafult: 10]", default=10)
+    parser.add_argument("--ref_min", type=float, help="Minimum reasonable value [dafult: None]", default=None)
+    parser.add_argument("--ref_max", type=float, help="Minimum reasonable value [dafult: None]", default=None)
+
+    args = parser.parse_args()
+    return(args)
+
 if __name__ == "__main__":
     #### Preparations
     timer = Timer()
@@ -289,19 +291,20 @@ if __name__ == "__main__":
 
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_ROWS_NOW"] = data.shape[0]
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_INDVS_NOW"] = n_indv
-    # Cleaning
-    if args.lab_name == "hba1c": 
-        data, n_indvs_stats = handle_different_units(data, n_indvs_stats, unit_priority=["mmol/mol", "%"])
-        data.loc[data.ABNORM=="A","ABNORM"] = "H"
-    data, n_indvs_stats = handle_missing_values(data, n_indvs_stats, args.fill_missing, args.dummies, args.main_unit)
 
     if args.lab_name != "hba1c":
         data = data.drop(columns={"VALUE", "UNIT", "ABNORM"})
-        data = data.rename({"VALUE_FG": "VALUE", "UNIT_FG": "UNIT", "ABNORM_FG": "ABNORM"})
+        data = data.rename(columns={"VALUE_FG": "VALUE", "UNIT_FG": "UNIT", "ABNORM_FG": "ABNORM"})
+    if args.lab_name == "hba1c": 
+        data = data.drop(columns={"VALUE_FG", "UNIT_FG", "ABNORM_FG"})
+        data.loc[data.ABNORM=="A","ABNORM"] = "H"
+    data, n_indvs_stats = handle_different_units(data, n_indvs_stats, unit_priority=args.priority_units)
+    data, n_indvs_stats = handle_missing_values(data, n_indvs_stats, args.fill_missing, args.dummies, args.main_unit)
+
+    if args.lab_name != "hba1c":
         data, n_indvs_stats = get_main_unit_data(data, n_indvs_stats, args.main_unit)
         data, n_indvs_stats = handle_duplicates(data, n_indvs_stats)
     else:
-        data = data.drop(columns={"VALUE_FG", "UNIT_FG", "ABNORM_FG"})
         data, n_indvs_stats = convert_hba1c_data(data, n_indvs_stats, args.main_unit)
 
     data, n_indvs_stats = remove_known_outliers(data, n_indvs_stats, args.ref_min, args.ref_max)
