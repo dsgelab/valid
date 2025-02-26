@@ -50,6 +50,7 @@ def handle_missing_values(data, n_indvs_stats, fill_missing, dummies, dummy_unit
     # Stats
     n_indv = len(set(data.FINNGENID))
     if fill_missing:
+        logging_print(f"Number of missing rows with abnorm being filled: {data.loc[np.logical_and(data.VALUE.isnull(), data.ABNORM.notnull())].shape[0]}")
         # Replacing missing values with averages for area
         data.loc[np.logical_and(data.VALUE.isnull(), data.ABNORM == "L"),"UNIT"] = dummy_unit if dummies[0] != -1 else np.nan
         data.loc[np.logical_and(data.VALUE.isnull(), data.ABNORM == "L"),"VALUE"] = dummies[0] if dummies[0] != -1 else np.nan
@@ -114,11 +115,11 @@ def handle_different_units(data, n_indvs_stats, unit_priority=["mmol/mol", "%"])
     n_indv = len(set(data.FINNGENID))
     n_rows = data.shape[0]
 
-    dups = data[data.duplicated(subset=["FINNGENID", "DATE", "VALUE", "UNIT", "ABNORM"], keep="first")].reset_index(drop=True)
+    dups = data[data.duplicated(subset=["FINNGENID", "DATE", "VALUE", "UNIT"], keep="first")].reset_index(drop=True)
     logger.info("{:,} measurements at the exact same time".format(len(dups)))
         
     # Keeping first of exact duplicates
-    data = data.drop_duplicates(subset=["FINNGENID", "DATE", "VALUE", "UNIT", "ABNORM"], keep="first").reset_index(drop=True).copy()
+    data = data.drop_duplicates(subset=["FINNGENID", "DATE", "VALUE", "UNIT"], keep="first").reset_index(drop=True).copy()
     logging_print("After removing exact duplicates")
     logging_print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
 
@@ -146,7 +147,8 @@ def handle_different_units(data, n_indvs_stats, unit_priority=["mmol/mol", "%"])
 
     return(data, n_indvs_stats)
 
-def remove_severe_value_outliers(data, max_z, n_indvs_stats, res_dir, file_name):
+
+def remove_severe_value_outliers(data, max_z, n_indvs_stats, res_dir, file_name, plot=True):
     """Removes severe outliers based on the z-scores >= 10. Saving plots before and after."""
 
     out_dir = res_dir + "plots/"; make_dir(out_dir)
@@ -154,27 +156,29 @@ def remove_severe_value_outliers(data, max_z, n_indvs_stats, res_dir, file_name)
     data = data.assign(Z=st.zscore(data.VALUE))
 
     # Make sure not to include single extreme outliers with the value quant. I.e. LDL had one such individual completely skewing the upper box.
-    data = data.assign(VALUE_QUANT=pd.qcut(data.loc[np.abs(data.Z) < 100].VALUE + (data.loc[np.abs(data.Z) < 100].VALUE+0.01*(np.random.rand(data.shape[0])-0.5)), 100000).apply(lambda x: x.mid))
+    data = data.assign(VALUE_QUANT=pd.qcut(data.loc[np.abs(data.Z) < 100].VALUE + (data.loc[np.abs(data.Z) < 100].VALUE+0.01*(np.random.rand(data.loc[np.abs(data.Z)<100].shape[0])-0.5)), 100000).apply(lambda x: x.mid))
     data = data.assign(VALUE_QUANT=data.VALUE_QUANT.astype("float").round())
     stat_value_quants = data.groupby("VALUE_QUANT").agg({"FINNGENID": lambda x: len(set(x))}).reset_index().rename(columns={"FINNGENID": "N_INDVS"}).copy()
     logger.info("Min value quant counts: {}".format(stat_value_quants.N_INDVS.min()))
     # Log with plots
-    plt.figure()
-    fig, ax = plt.subplots(1,2, figsize=(5,5))
-    sns.boxplot(data, y="VALUE_QUANT",ax=ax[0])
-    sns.boxplot(data.loc[np.abs(data.Z)<max_z], y="VALUE_QUANT", ax=ax[1])
-    ax[0].set_ylabel("Value")
-    ax[1].set_ylabel("")
-    plt.savefig(out_dir+file_name+"_valuequants.pdf")
-    plt.savefig(out_dir+file_name+"_valuequants.png")
+    if plot:
+        plt.figure()
+        fig, ax = plt.subplots(1,2, figsize=(5,5))
+        sns.boxplot(data, y="VALUE_QUANT",ax=ax[0])
+        sns.boxplot(data.loc[np.abs(data.Z)<max_z], y="VALUE_QUANT", ax=ax[1])
+        ax[0].set_ylabel("Value")
+        ax[1].set_ylabel("")
+        plt.savefig(out_dir+file_name+"_valuequants.pdf")
+        plt.savefig(out_dir+file_name+"_valuequants.png")
 
-    stat_value_quants.to_csv(out_dir+file_name+"_valuequants.csv", sep=",", index=False)
-    
-    # plt.figure()
-    # fig, ax = plt.subplots(1,2,figsize=(5,5))
-    # sns.scatterplot(data, x="EVENT_AGE", y="VALUE", hue="Z", ax=ax[0])
-    # sns.scatterplot(data.loc[np.abs(data.Z)<max_z], x="EVENT_AGE", y="VALUE", hue="Z", ax=ax[1])
-    # plt.savefig(out_dir+file_name+"_zs.png")
+        stat_value_quants.to_csv(out_dir+file_name+"_valuequants.csv", sep=",", index=False)
+        print("start")
+        plt.figure()
+        fig, ax = plt.subplots(1,2,figsize=(5,5))
+        sns.scatterplot(data, x="EVENT_AGE", y="VALUE", ax=ax[0], hue="Z")
+        sns.scatterplot(data.loc[np.abs(data.Z)<max_z], x="EVENT_AGE", y="VALUE", ax=ax[1], hue="Z")
+        plt.savefig(out_dir+file_name+"_zs.png")
+        print("end")
     # Stats
     n_indv = len(set(data.FINNGENID))
     n_row_remove = data.loc[np.abs(data.Z) >= max_z].shape[0]
@@ -204,6 +208,7 @@ def remove_single_value_outliers(data, n_indvs_stats):
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_single","N_ROWS_NOW"] = data.shape[0]
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_single","N_INDVS_NOW"] =  len(set(data.FINNGENID)) 
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_single","N_ROWS_REMOVED"] = outliers.shape[0]
+    data = data.drop(columns=["Z_indv"])
 
     return(data, n_indvs_stats)
 
@@ -266,6 +271,7 @@ def get_parser_arguments():
     parser.add_argument("--max_z", type=int, help="Maximum z-score among all measurements. [dafult: 10]", default=10)
     parser.add_argument("--ref_min", type=float, help="Minimum reasonable value [dafult: None]", default=None)
     parser.add_argument("--ref_max", type=float, help="Minimum reasonable value [dafult: None]", default=None)
+    parser.add_argument("--plot", type=int, help="Minimum reasonable value [dafult: None]", default=1)
 
     args = parser.parse_args()
     return(args)
@@ -293,14 +299,16 @@ if __name__ == "__main__":
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_INDVS_NOW"] = n_indv
 
     if args.lab_name != "hba1c":
-        data = data.drop(columns={"VALUE", "UNIT", "ABNORM"})
-        data = data.rename(columns={"VALUE_FG": "VALUE", "UNIT_FG": "UNIT", "ABNORM_FG": "ABNORM"})
+        data = data.drop(columns={"VALUE", "UNIT"})
+        data = data.rename(columns={"VALUE_FG": "VALUE", "UNIT_FG": "UNIT"})
     if args.lab_name == "hba1c": 
         data = data.drop(columns={"VALUE_FG", "UNIT_FG", "ABNORM_FG"})
         data.loc[data.ABNORM=="A","ABNORM"] = "H"
     data, n_indvs_stats = handle_different_units(data, n_indvs_stats, unit_priority=args.priority_units)
     data, n_indvs_stats = handle_missing_values(data, n_indvs_stats, args.fill_missing, args.dummies, args.main_unit)
-
+    if "ABNORM_FG" in data.columns:
+        data = data.drop(columns={"ABNORM"})
+        data = data.rename(columns={"ABNORM_FG": "ABNORM"})
     if args.lab_name != "hba1c":
         data, n_indvs_stats = get_main_unit_data(data, n_indvs_stats, args.main_unit)
         data, n_indvs_stats = handle_duplicates(data, n_indvs_stats)
@@ -309,10 +317,12 @@ if __name__ == "__main__":
 
     data, n_indvs_stats = remove_known_outliers(data, n_indvs_stats, args.ref_min, args.ref_max)
     print(n_indvs_stats)
-    data, n_indvs_stats = remove_severe_value_outliers(data, args.max_z, n_indvs_stats, args.res_dir, file_name)
+    data, n_indvs_stats = remove_severe_value_outliers(data, args.max_z, n_indvs_stats, args.res_dir, file_name, args.plot)
+    print(n_indvs_stats)
 
     if args.lab_name == "egfr" or args.lab_name == "krea":
         data, n_indvs_stats = remove_single_value_outliers(data, n_indvs_stats)
+    print(n_indvs_stats)
 
     #### Finishing
     data = custom_abnorm(data, args.lab_name)
