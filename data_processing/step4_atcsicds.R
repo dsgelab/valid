@@ -15,6 +15,7 @@ args_list <- list(
   make_option(c("--time"), action="store", type="integer", default=0,help="Whether to filter for current and not historical data. -1 = historical, 0 = all, 1 = current"),
   make_option(c("--bin_count"), action="store", type="integer", default=0,help="Whether to count number of occurance or stay binary observed/not observed."),
   make_option(c("--months_before"), action="store", type="integer", default=0, help="Months to add before start of measurements for a buffer."),
+  make_option(c("--start_year"), action="store", type="integer", default=0, help="what year to start the data from. Ignored if 0.")
 )
 parser <- OptionParser(option_list=args_list, add_help_option=FALSE)
 args <- parse_args(parser, positional_arguments=0)$options
@@ -53,6 +54,10 @@ end_dates <- end_dates %>% dplyr::select(FINNGENID, START_DATE) %>% dplyr::mutat
 preds_data <- dplyr::left_join(preds_data, end_dates, by="FINNGENID")
 # Filtering out only data before start of prediction period
 preds_data <- dplyr::filter(preds_data, DATE < START_DATE)
+# Filtering out data only after what we set as start year
+if(args$start_year != 0){
+  preds_data <- dplyr::filter(preds_data, lubridate::year(DATE)>=args$start_year)
+}
 
 ####### Counting and getting info in wide data
 # Counting
