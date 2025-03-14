@@ -5,36 +5,36 @@ library(readr)
 library(dplyr)
 library(lubridate)
 
-
+####### Setting up parser
 args_list <- list(
-  make_option(c("-r", "--res_dir"), action="store", type="character", default="/home/ivm/valid/data/processed_data/step3_meta/",help="Path to results directory."),
+  make_option(c("--res_dir"), action="store", type="character", default="/home/ivm/valid/data/processed_data/step5_data/data-diag/", help="Path to results directory."),
   make_option(c("-f", "--file_path"), action="store", type="character", default="/home/ivm/valid/data/processed_data/step1_clean/", help="Path to data. Needs to contain both data and metadata (same name with _name.csv) at the end"),
   make_option(c("-n", "--file_name"), type="character", action="store", default="krea",help="Readable name of the measurement value."),
   make_option(c("-d", "--diags_file_path"), type="character", action="store", default="krea",help="Readable name of the measurement value."),
   make_option(c("-e", "--exclude"), type="integer", action="store", default=0,help="Whether or not to exclude the exclude individuals."),
   make_option(c("-i", "--diff_days"), type="integer", action="store", default=30,help="Min number of abnormality for data-based diag."),
   make_option(c("-a", "--calc_all_times"), type="integer", action="store", default=1,help="whether to do the whole time calc part that takes forever or rerunning different sections and reading in prior file.")
- 
+
 )
-
-
 parser <- OptionParser(option_list=args_list)
 args <- parse_args(parser, positional_arguments=0)$options
 print(args)
+date <- Sys.Date()
+
+#' Adding column START_DATE with dates fille for each row that is the first measurement
+#' In a series of normal or abnormal measurements.
+#' I.e. 0, 0, 0, 1, 1, 0 each first 0 and 1 would get an entry in start_date
 get_abnorm_start_dates <- function(data) {
   data <- data %>% 
-    # No missing abnormality
-    dplyr::filter(!is.na(ABNORM_BIN)) %>% 
-    dplyr::arrange(FINNGENID, DATE) %>% 
-    dplyr::select(FINNGENID, DATE, VALUE, ABNORM_BIN) %>%
-    dplyr::mutate(DATE=as.Date(DATE)) %>%
+    dplyr::filter(!is.na(ABNORM_BIN)) %>%  # No missing abnormality
+    dplyr::arrange(FINNGENID, DATE) %>%  # Ascending by date
+    dplyr::select(FINNGENID, DATE, VALUE, ABNORM_BIN) %>% 
+    dplyr::mutate(DATE=as.Date(DATE)) %>% #
     dplyr::group_by(FINNGENID) %>% 
-    # Cannot define length for single value individuals
-    dplyr::filter(n() > 1) %>%
-    dplyr::mutate(PREV_ABNORM=lag(ABNORM_BIN),
-                  # Very start of the period has an extra value that it is not the same as ABNORM
-                  PREV_ABNORM=ifelse(is.na(PREV_ABNORM), -1, PREV_ABNORM),
-                  START=ifelse(ABNORM_BIN!=PREV_ABNORM, "START", NA),
+    dplyr::filter(n() > 1) %>%  # Cannot define length for single value individuals
+    dplyr::mutate(PREV_ABNORM=lag(ABNORM_BIN), # For each row info of abnormality of prior row
+                  PREV_ABNORM=ifelse(is.na(PREV_ABNORM), -1, PREV_ABNORM), # Very start of the period has an extra value that it is not the same as ABNORM
+                  START=ifelse(ABNORM_BIN!=PREV_ABNORM, "START", NA), 
                   START_DATE=ifelse(!is.na(START), DATE, NA)) 
   # Start filling start date column for first rows for block
   data$START_DATE <- as.Date(NA)
