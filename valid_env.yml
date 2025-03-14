@@ -1,0 +1,27 @@
+name: optuna_python
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pandas
+  - numpy
+  - optuna
+  - xgboost
+  - scikit-learn
+  - ipykernel
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - conda-pack
+  - pip
+  - tqdm
+  - pytorch
+  - plotly
+  - optuna-integration
+  - google-cloud-bigquery
+  - datasets
+  - xformers 
+  - transformers=4.35.2
+  - polars
+  - shap
