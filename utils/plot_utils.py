@@ -3,6 +3,11 @@ import pandas as pd
 import seaborn as sns
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+try:
+    import shap
+except:
+    pass
+
 sns.set_style('whitegrid')
 
 def pretty_int(int_no):
@@ -32,13 +37,54 @@ def round_column_min5(data, col):
     newcol = round(data[col]).map(value_map)
     newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
     return(newcol, min_val, max_val)
+    
+def get_plot_names(col_names, lab_name):
+    kanta_omop_map = pd.read_csv("/home/ivm/valid/data/extra_data/upload/kanta_omop_mappings_counts.csv")
+    kanta_omop_map = dict(zip(kanta_omop_map.measurement_concept_id.astype(str), kanta_omop_map.concept_name))
+    new_names = []
+    if lab_name == "hba1c": lab_name = "HbA1c"
+    if lab_name == "egfr": lab_name == "eGFR"
+        
+    for col_name in col_names:
+        if col_name.split("_")[0] in kanta_omop_map.keys():
+            if len(col_name.split("_")) > 2:
+                new_name = col_name.split("_")[2] + "% " + col_name.split("_")[1].capitalize() + " - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
+            else:
+                new_name = col_name.split("_")[1].capitalize() + " - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
+        else:
+            if col_name.startswith("QUANT"):
+                new_name = col_name.split("_")[1] + "% Quant - " + lab_name
+            elif col_name in ["MIN", "MEAN", "MAX", "MEDIAN", ]:
+                new_name = col_name.capitalize() + " - " + lab_name
+            elif col_name == "IDX_QUANT_100":
+                new_name = "Last value - " + lab_name
+            elif col_name == "IDX_QUANT_50":
+                new_name = "Mid value - " + lab_name
+            elif col_name == "EVENT_AGE":
+                new_name = "Age"
+            elif col_name == "FIRST_LAST":
+                new_name = "Days between first and last - " + lab_name
+            elif col_name == "SEX":
+                new_name = "sex"
+            elif col_name == "MIN_LOC":
+                new_name = "Location of min (-days) - " + lab_name
+            elif col_name == "MAX_LOC":
+                new_name = "Location of max (-days) - " + lab_name
+            elif col_name == "REG_COEF":
+                new_name = "Regression coef - " + lab_name
 
+                new_name = "sex"
+            else:
+                new_name = col_name
+
+        new_names.append(new_name)
+    return(new_names)
 def plot_box_probs(evals=[], labels=[], ax1=None, ax2=None, ax_labels=["Controls", "Cases"]):
     axes = [ax1, ax2]
     for group in [0,1]:
         all_evals = pd.DataFrame()
         for idx, eval_x in enumerate(evals):
-            eval_x=pd.DataFrame({"valid_probs": eval_x["valid_probs"], "y_valid": eval_x["y_valid"]})
+            eval_x = pd.DataFrame({"valid_probs": eval_x["valid_probs"], "y_valid": eval_x["y_valid"]})
             eval_crnt = eval_x.loc[eval_x.y_valid==group]
             safe = {"valid_probs": eval_crnt["valid_probs"].copy()*100}
             safe["valid_probs"], min_val, max_val = round_column_min5(safe, "valid_probs")
@@ -59,6 +105,51 @@ def plot_box_probs(evals=[], labels=[], ax1=None, ax2=None, ax_labels=["Controls
         ax2.set_ylabel('')
     except:
         pass
+
+def create_shap_dir_plot(shap_values, plot_names):
+    shap.summary_plot(shap_values, max_display=20, feature_names=plot_names, show=False)
+    fig = plt.gcf()
+    return fig
+
+def create_report_plot(y_true, y_probs, y_preds, fg_down=False, train_type="bin", importance_plot=True, importances=None, confusion_labels=["Controls", "Cases"]):
+    axes = None
+    conf_axes = None
+    roc_axes = None
+    pr_axes = None
+    cal_ax1 = None
+    cal_ax2 = None
+    imp_ax = None
+
+    ## Variable importance plot
+    axes = None
+    if importance_plot and importances is not None:
+        fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1, 0.5]})
+        imp_ax, roc_axes = row_1[0], row_1[1]
+        cal_ax1, pr_axes = row_2[0], row_2[1]
+        cal_ax2, conf_axes = row_3[0], row_3[1]
+        cal_ax1.sharex(cal_ax2)
+
+        # Plot importance curve
+        feature_importance_plot(importances=importances.feature_importance_vals, feature_labels=importances.feature_name, ax=imp_ax)
+
+    if imp_ax is None: # remove second row axes
+        fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(10, 10), gridspec_kw={'height_ratios': [1, 1, 0.25]})
+        conf_axes, roc_axes = row_1[0], row_1[1]
+        cal_ax1, pr_axes = row_2[0], row_2[1]
+        cal_ax2, delete_axes = row_3[0], row_3[1]
+        delete_axes.remove()
+        cal_ax1.sharex(cal_ax2)
+            
+    confusion_plot(confusion_matrix(y_true, y_preds), labels=confusion_labels, ax=conf_axes)
+    if train_type == "bin":
+        ## ROC and Precision-Recall curves
+        #mdl_name = mdl.__class__.__name__
+        roc_plot(y_true, y_probs, "Test", ax=roc_axes)
+        precision_recall_plot(y_true, y_probs, "Test", ax=pr_axes)
+        plot_calibration(y_true, y_probs, cal_ax1, cal_ax2, fg_down=fg_down)
+        fig.subplots_adjust(wspace=5)
+        fig.tight_layout()
+    return fig
 
 """Reshapes scores dataframe so that each metric gets its own column and then plots lines based on this."""
 def plot_melt_scores(scores, x_col_name, x_axis_name, metrics, axis, min_y, palette=["#D5694F", "#748AAA", "#CCB6AF"]):
@@ -219,23 +310,23 @@ def round_column_min5(data, col):
     newcol[newcol.isnull()] = round(data[col].loc[newcol.isnull()])
     return(newcol, min_val, max_val)
     
-def plot_calibration(y_true, y_probs, ax1=None, ax2=None, bin_type="equal", compare=False, label="Calibration"):
+def plot_calibration(y_true, y_probs, ax1=None, ax2=None, bin_type="equal", compare=False, label="Calibration", fg_down=True):
     if ax1 is None:  fig, (ax1,ax2) = plt.subplots(2,figsize=(15,7), sharex=True, sharey=False, height_ratios=[1, .5])
     if bin_type != "equal": bins = np.quantile(y_probs, np.arange(0,1.1,0.1))
-    else: bins=np.arange(0, 1, 0.1)
-        
+    else: bins=np.arange(0, 1.1, 0.1)
+    print(bins)
     pred = np.array([y_probs[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean() for b in range(1,len(bins))])
     obs = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean()  for b in range(1,len(bins))])
     ci = np.array([scipy.stats.beta(0.1 + y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].sum(), 0.1 + (1-y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]).sum()).ppf([0.025,0.975]) for b in range(1,len(bins))])
-
     # Making sure at least 5 individuals in groups
     sizes = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].shape[0] for b in range(1,len(bins))])
     n_cases = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].sum() for b in range(1,len(bins))])
     n_cntrls = np.array([(y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]==0).sum() for b in range(1,len(bins))])
-    pred = pred[np.logical_and(n_cases>=5, n_cntrls>=5)]
-    obs = obs[np.logical_and(n_cases>=5, n_cntrls>=5)]
-    ci = ci[np.logical_and(n_cases>=5, n_cntrls>=5)]
-    sizes = sizes[np.logical_and(n_cases>=5, n_cntrls>=5)]
+    if fg_down:
+        pred = pred[np.logical_and(n_cases>=5, n_cntrls>=5)]
+        obs = obs[np.logical_and(n_cases>=5, n_cntrls>=5)]
+        ci = ci[np.logical_and(n_cases>=5, n_cntrls>=5)]
+        sizes = sizes[np.logical_and(n_cases>=5, n_cntrls>=5)]
     if not compare:
         sns.lineplot(x=pred, y=obs, ax=ax1, c="k", label=label)
         ax1.scatter(y_probs.mean(), y_true.mean(), c='r', ec='w', s=80)
@@ -257,13 +348,20 @@ def plot_calibration(y_true, y_probs, ax1=None, ax2=None, bin_type="equal", comp
     ax1.set_ylabel('Observed Probability')
 
     if not ax2 is None:
-        safe_cases = {"valid_probs": y_probs[y_true==1].copy()*100}
-        safe_cases, min_val, max_val = round_column_min5(safe_cases, "valid_probs")
-        safe_controls = {"valid_probs": y_probs[y_true==0].copy()*100}
-        safe_controls, min_val, max_val = round_column_min5(safe_controls, "valid_probs")
-        safe = pd.concat([safe_cases, safe_controls])
-        labels = pd.concat([y_true[y_true==1], y_true[y_true==0]])
-        sns.boxplot(x=safe/100, y=pd.Categorical(labels.map({0: "Control", 1: "Case"}), categories=["Control", "Case"]), ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
+        if fg_down:
+            safe_cases = {"valid_probs": y_probs[y_true==1].copy()*100}
+            safe_cases, _, _ = round_column_min5(safe_cases, "valid_probs")
+            safe_controls = {"valid_probs": y_probs[y_true==0].copy()*100}
+            safe_controls, _, _ = round_column_min5(safe_controls, "valid_probs")
+            safe = pd.concat([safe_cases, safe_controls])
+            labels = pd.concat([y_true[y_true==1], y_true[y_true==0]])
+        else:
+            safe = y_probs*100
+            labels = y_true
+        sns.boxplot(x=safe/100, 
+                    y=pd.Categorical(labels.map({0: "Control", 1: "Case"}), categories=["Control", "Case"]), 
+                    ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, 
+                    flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
         ax2.set_xlabel('Predicted Probability')
         ax2.set_ylabel('')
         
@@ -312,8 +410,9 @@ def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
 def feature_importance_plot(importances, feature_labels, ax=None, n_import=10):
     fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1, figsize=(5, 10))
     sns.barplot(x=importances[0:n_import], y=feature_labels[0:n_import], hue=feature_labels[0:n_import], ax=axis)
-    axis.set_title('Feature Importance Measures')
+    axis.set_title('Feature Importances')
     axis.set_ylabel("")
+    axis.set_xlabel("mean(|SHAP value|)")
 
     plt.close()
     

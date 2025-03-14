@@ -9,7 +9,10 @@ from utils import *
 import sklearn.metrics as skm
 
 def model_memory_size(clf):
-    return sys.getsizeof(pickle.dumps(clf))
+    try:
+        return sys.getsizeof(pickle.dumps(clf))
+    except:
+        return 0
     
 def get_train_type(metric):
     if metric == "tweedie": return("cont")
@@ -27,9 +30,6 @@ def get_score_func_based_on_metric(metric):
     if metric == "aucpr" or metric == "AUPRC" or metric == "auprc": return(skm.average_precision_score)
 
 set_names = {1:"Valid", 2: "Test", 0: "Train"}
-
-def model_memory_size(clf):
-    return sys.getsizeof(pickle.dumps(clf))
 
 def bootstrap_metric(func, obs, preds, n_boots=500, rng_seed=42):
     """Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""
@@ -98,7 +98,7 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
             if train_type!="bin":
                 eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
             else:
-                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC": AUC[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
+                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
 
     ## Only continuous metrics
     else:
@@ -108,35 +108,19 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
             eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name,"GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2]}, ignore_index=True)
         else:
             print("{} {} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f}) ".format(set_names[set], group_name, AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2]))
-            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC": AUC_CIpos[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2]}, ignore_index=True)
+            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC_CIpos[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2]}, ignore_index=True)
 
     return(eval_metrics)
 
 
-def eval_subset(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, fig_path=None, table_path=None, subset_name="all", n_boots=500, train_type="cont"):
+def eval_subset(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, out_dir=None, out_name=None, subset_name="all", n_boots=500, train_type="cont"):
     eval_metrics = pd.DataFrame()
     all_conf_mats = pd.DataFrame()
     g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col, train_type == "bin")
-    if fig_path: g.savefig(fig_path + "_" + subset_name + "_" + get_date() + "_scatter.png", dpi=300)
-    if train_type != "bin":
-        N_indv = data.shape[0]
-        g, newcol_x, newcol_y = plot_observerd_vs_predicted_min5(data, y_cont_goal_col, y_cont_pred_col)
-        if fig_path:
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".pdf")
-        if table_path:
-            make_dir(table_path + "/extra_counts/")
-            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x_" +get_date() +".csv", sep=",")
-            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y_" + get_date() + ".csv", sep=",")
-    else:
-        g, newcol_x, newcol_y = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
-        if fig_path:
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
-            g.savefig(fig_path + "_" + subset_name + "_scatter_min5_" + get_date() + ".pdf")
-        if table_path:
-            make_dir(table_path + "/extra_counts/")
-            newcol_x.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_x_" + get_date() + ".csv", sep=",")
-            newcol_y.value_counts().to_csv(table_path + "/extra_counts/" + subset_name + "_indv_counts_y_" + get_date() + ".csv", sep=",")
+    if out_dir: g.savefig(out_dir + "plots/" + out_name + "_" + get_date() + "_scatter.png", dpi=300)
+    g, newcol_x, newcol_y = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
+    if out_dir and out_name:
+        g.savefig(out_dir + "down/" + get_date() + "/" + out_name + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
 
     all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
     # Metrics with bootstrap for different sets
@@ -286,21 +270,18 @@ def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_
     
 #######################################################
 
-def create_report(mdl, out_data, display_scores=[], 
-           importance_plot=False, confusion_labels=None, feature_labels=None, verbose=True,
-           metric="logloss"):
+def create_report(mdl, out_data, display_scores=[], confusion_labels=["Controls", "Cases"], verbose=True, metric="logloss"):
     """ Reports various metrics of the trained classifier """
     
     dump = dict()
     y_train = out_data.query("SET==0")["TRUE_ABNORM"]
     y_valid = out_data.query("SET==1")["TRUE_ABNORM"]
+    print(y_valid.sum())
     train_preds = out_data.query("SET==0")["ABNORM_PREDS"]
     valid_preds = out_data.query("SET==1")["ABNORM_PREDS"]
-
+    print(valid_preds.sum())
     if get_train_type(metric) == "bin":
         y_probs = out_data.query("SET==1")["ABNORM_PROBS"]
-        print(y_probs.min())
-        print(y_probs.max())
         roc_auc = roc_auc_score(y_valid, y_probs)
 
     train_acc = accuracy_score(y_train, train_preds)
@@ -313,7 +294,10 @@ def create_report(mdl, out_data, display_scores=[],
         scores_dict[score_name] = [func(y_train, train_preds), func(y_valid, valid_preds)]
         
     ## Model Memory
-    model_mem = round(model_memory_size(mdl) / 1024, 2)
+    try:
+        model_mem = round(model_memory_size(mdl) / 1024, 2)
+    except:
+        model_mem = np.nan
     
     logging_print(mdl)
     logging_print("\n=============================> TRAIN-TEST DETAILS <======================================")
@@ -344,64 +328,7 @@ def create_report(mdl, out_data, display_scores=[],
     mdl_rep = classification_report(y_valid, valid_preds, output_dict=True)
     
     logging_print(classification_report(y_valid, valid_preds, target_names=confusion_labels))
-    axes = None
-    importances = None
-    conf_axes = None
-    roc_axes = None
-    pr_axes = None
-    cal_ax1 = None
-    cal_ax2 = None
-    imp_ax = None
-    if verbose:
-        # logging_print("\n================================> CONFUSION MATRIX <=====================================")
-    
-        ## Confusion Matrix HeatMap
-        logging_print("\n=======================================> PLOTS <=========================================")
 
-
-        ## Variable importance plot
-        axes = None
-        if importance_plot:
-            if not feature_labels:
-                raise RuntimeError("'feature_labels' argument not passed when 'importance_plot' is True")
-
-            try:
-                importances = pd.Series(mdl.feature_importances_, index=feature_labels).sort_values(ascending=False)
-            except AttributeError:
-                try:
-                    importances = pd.Series(mdl.coef_.ravel(), index=feature_labels).sort_values(ascending=False)
-                except AttributeError:
-                    try:
-                        importances = pd.Series(mdl.get_score(importance_type="weight").values(), index=mdl.get_score(importance_type="weight").keys()).sort_values(ascending=False)
-                    except AttributeError:
-                        pass
-            if importances is not None:
-                fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(10, 10), gridspec_kw={'height_ratios': [1, 1, 0.5]})
-                imp_ax, roc_axes = row_1[0], row_1[1]
-                cal_ax1, pr_axes = row_2[0], row_2[1]
-                cal_ax2, conf_axes = row_3[0], row_3[1]
-                cal_ax1.sharex(cal_ax2)
-
-                # Plot importance curve
-                feature_importance_plot(importances=importances.values,feature_labels=importances.index, ax=imp_ax)
-        if imp_ax is None: # remove second row axes
-            fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(10, 10), gridspec_kw={'height_ratios': [1, 1, 0.25]})
-            conf_axes, roc_axes = row_1[0], row_1[1]
-            cal_ax1, pr_axes = row_2[0], row_2[1]
-            cal_ax2, delete_axes = row_3[0], row_3[1]
-            delete_axes.remove()
-            cal_ax1.sharex(cal_ax2)
-            
-        confusion_plot(confusion_matrix(y_valid, valid_preds), labels=confusion_labels, ax=conf_axes)
-        if get_train_type(metric) == "bin":
-            ## ROC and Precision-Recall curves
-            mdl_name = mdl.__class__.__name__
-            roc_plot(y_valid, y_probs, mdl_name, ax=roc_axes)
-            precision_recall_plot(y_valid, y_probs, mdl_name, ax=pr_axes)
-            plot_calibration(y_valid, y_probs, cal_ax1, cal_ax2)
-            fig.subplots_adjust(wspace=5)
-            fig.tight_layout()
-            
     ## Dump to report_dict
     dump = dict(mdl=mdl, 
                 accuracy=[train_acc, valid_acc], 
@@ -414,7 +341,7 @@ def create_report(mdl, out_data, display_scores=[],
                 report=mdl_rep, 
                 roc_auc=roc_auc, 
                 model_memory=model_mem)
-    return dump, fig
+    return dump
 
 
 def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0"):

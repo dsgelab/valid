@@ -182,7 +182,7 @@ def train_clf(clf, x_train, y_train, sample_weight=None, refit=False):
     
 def report(clf, x_train, y_train, x_test, y_test, display_scores=[],
            sample_weight=None, refit=False, importance_plot=False,
-           confusion_labels=None, feature_labels=None, verbose=True):
+           confusion_labels=None, feature_labels=None, verbose=True, fg_down=True):
     """ Trains the passed classifier if not already trained and reports
         various metrics of the trained classifier """
     
