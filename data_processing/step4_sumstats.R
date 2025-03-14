@@ -45,7 +45,8 @@ if(args$file_path_labels != "") {
 print(labels)
 print(data)
 print(out_file_path)
-data <- left_join(labels %>% select(FINNGENID, START_DATE, SET), data)
+
+data <- left_join(labels %>% select(FINNGENID, START_DATE, SET), data) %>% arrange(FINNGENID) 
 print(data)
 
 mean_val <- mean(data %>% dplyr::filter(SET == 0) %>% pull(VALUE))
@@ -53,7 +54,7 @@ set.seed(10234)
 
 models <- dlply(data  %>% dplyr::filter(DATE < START_DATE, !is.na(VALUE)) %>% dplyr::arrange(desc(DATE)), "FINNGENID", function(df){lm(VALUE~DATE, data=df)})
 coefs <- ldply(models, coef) %>% dplyr::rename(REG_COEF=DATE) %>% dplyr::select(FINNGENID, REG_COEF)
-print(coefs %>%ungroup()%>% arrange(REG_COEF) %>% filter(REG_COEF<(-1)) %>% head(10))
+
 sumstats <- data  %>% group_by(FINNGENID) %>% dplyr::filter(DATE < START_DATE, !is.na(VALUE)) %>% dplyr::arrange(desc(DATE)) %>%
   dplyr::reframe(MIN=min(VALUE), 
                  MAX=max(VALUE), 
@@ -73,29 +74,24 @@ sumstats <- data  %>% group_by(FINNGENID) %>% dplyr::filter(DATE < START_DATE, !
                  SEQ_LEN=length(VALUE),
                  QUANT_25=quantile(VALUE, probs=c(0.25)),
                  QUANT_75=quantile(VALUE, probs=c(0.75)),
-                 IDX_QUANT_0=VALUE[quantile(1:length(VALUE), probs=c(0))],
-                 IDX_QUANT_5=VALUE[quantile(1:length(VALUE), probs=c(0.05))],
-                 IDX_QUANT_25=VALUE[quantile(1:length(VALUE), probs=c(0.25))],
-                 IDX_QUANT_50=VALUE[quantile(1:length(VALUE), probs=c(0.5))],
-                 IDX_QUANT_75=VALUE[quantile(1:length(VALUE), probs=c(0.75))],
-                 IDX_QUANT_95=VALUE[quantile(1:length(VALUE), probs=c(0.95))],
-                 IDX_QUANT_100=VALUE[quantile(1:length(VALUE), probs=c(1))],
-                 UNIQUE_VALS_TO_SEQ_LEN=UNIQUE_VALS/SEQ_LEN,
+                 IDX_QUANT_100=VALUE[quantile(1:n(), probs=c(0))],
+                 IDX_QUANT_50=VALUE[quantile(1:n(), probs=c(0.5))],
+                 IDX_QUANT_0=VALUE[quantile(1:n(), probs=c(1))],
                  ABNORM=sum(ABNORM_CUSTOM),
                  MIN_LOC=lubridate::time_length(DATE[which.min(VALUE)]%--%START_DATE, "days"), 
                  MAX_LOC=lubridate::time_length(DATE[which.max(VALUE)]%--%START_DATE, "days"),
-                 FIRST_LAST=lubridate::time_length(which.max(DATE)%--%START_DATE, "days"),
+                 FIRST_LAST=lubridate::time_length(min(DATE)%--%max(DATE), "days"),
                  LAST_VAL_DATE=max(DATE),
                  SET=SET) %>% distinct() %>% ungroup() 
-sumstats <- dplyr::mutate(sumstats, ABNORM_PCT=ABNORM/SEQ_LEN, MAX_CHANGE=ifelse(is.infinite(MAX_CHANGE), NA, MAX_CHANGE), MAX_ABS_CHANGE=ifelse(is.infinite(MAX_ABS_CHANGE), NA, MAX_ABS_CHANGE))
-sumstats <- dplyr::select(sumstats, -SEQ_LEN, -UNIQUE_VALS)
+sumstats %>%mutate(FIRST_LAST=round(FIRST_LAST/365.25)) %>%pull(FIRST_LAST) %>% round() %>% table()
+sumstats <- dplyr::mutate(sumstats, MAX_CHANGE=ifelse(is.infinite(MAX_CHANGE), NA, MAX_CHANGE), MAX_ABS_CHANGE=ifelse(is.infinite(MAX_ABS_CHANGE), NA, MAX_ABS_CHANGE))
+sumstats <- dplyr::select(sumstats, -UNIQUE_VALS)
 sumstats$LAST_VAL_DATE <- as.Date(sumstats$LAST_VAL_DATE)
 sumstats <- dplyr::left_join(sumstats, coefs)
-print(sumstats)
 
 ## Adding sumstats for missing values
 # Missing data-imputation
-if(args$file_path_labels == "")  {
+if(args$file_path_labels != "")  {
   missing_data <- dplyr::group_by(data, FINNGENID) %>% dplyr::filter(n()==1, is.na(VALUE)) %>% ungroup()
   train_sumstats <- dplyr::filter(sumstats,SET==0)
   
@@ -116,24 +112,20 @@ if(args$file_path_labels == "")  {
                                                           QUANT_25=mean(train_sumstats$QUANT_25, na.rm=TRUE), 
                                                           QUANT_75=mean(train_sumstats$QUANT_75, na.rm=TRUE),
                                                           IDX_QUANT_0=mean(train_sumstats$IDX_QUANT_0, na.rm=TRUE), 
-                                                          IDX_QUANT_5=mean(train_sumstats$IDX_QUANT_5, na.rm=TRUE),
-                                                          IDX_QUANT_25=mean(train_sumstats$IDX_QUANT_25, na.rm=TRUE), 
                                                           IDX_QUANT_50=mean(train_sumstats$IDX_QUANT_50, na.rm=TRUE),
-                                                          IDX_QUANT_75=mean(train_sumstats$IDX_QUANT_75, na.rm=TRUE), 
-                                                          IDX_QUANT_95=mean(train_sumstats$IDX_QUANT_95, na.rm=TRUE),
                                                           IDX_QUANT_100=mean(train_sumstats$IDX_QUANT_100, na.rm=TRUE), 
-                                                          UNIQUE_VALS_TO_SEQ_LEN=mean(train_sumstats$UNIQUE_VALS_TO_SEQ_LEN, na.rm=TRUE),
-                                                          ABNORM=mean(train_sumstats$ABNORM, na.rm=TRUE),
                                                           MIN_LOC=mean(train_sumstats$MIN_LOC, na.rm=TRUE),
                                                           MAX_LOC=mean(train_sumstats$MAX_LOC, na.rm=TRUE),
+                                                          ABNORM=mean(train_sumstats$ABNORM, na.rm=TRUE),
+                                                          SEQ_LEN=mean(train_sumstats$SEQ_LEN, na.rm=TRUE),
                                                           FIRST_LAST=mean(train_sumstats$FIRST_LAST, na.rm=TRUE),
-                                                          ABNORM_PCT=mean(train_sumstats$ABNORM_PCT, na.rm=TRUE),
                                                           REG_COEF=NA,
                                                           LAST_VAL_DATE=NA)
   missing_data_sumstats <- missing_data_sumstats[colnames(sumstats)]
-  
+  print(missing_data_sumstats)
   sumstats <- rbind(sumstats, missing_data_sumstats)
 }
-print(sumstats)
+print(sumstats %>% pull(IDX_QUANT_100) %>% table(useNA="always"))
+
 dir.create(args$res_dir, showWarnings=FALSE)
 readr::write_delim(sumstats, out_file_path, delim=",")
