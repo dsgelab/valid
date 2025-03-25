@@ -12,6 +12,7 @@ import numpy as np
 import xgboost as xgb
 import optuna
 import pickle
+import shap
 # Logging and input
 import argparse
 import logging
@@ -187,12 +188,14 @@ def optuna_objective(trial: optuna.Trial,
         'reg_lambda': trial.suggest_float('reg_lambda', 1, 15, log=True),
         'gamma': trial.suggest_float('gamma', 1, 15, log=True),
     }
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Setting up trial                                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params.update(base_params)
     pruning_callback = optuna.integration.XGBoostPruningCallback(trial, f'valid-{eval_metric}')
     evals_result = dict()
+    
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Train model                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

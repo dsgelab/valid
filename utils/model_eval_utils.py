@@ -1,27 +1,29 @@
-import matplotlib
-matplotlib.use("Agg")
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Model size                                              #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
-import matplotlib.pyplot as plt
-import pandas as pd
-from plot_utils import *
-from valid.utils.general_utils import *
-import sklearn.metrics as skm
-
+import pickle
 def model_memory_size(clf):
+    """Returns the memory size of a model in KB."""
     try:
         return sys.getsizeof(pickle.dumps(clf))
     except:
         return 0
     
-def get_train_type(metric):
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Training type and metric                                #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+def get_train_type(metric: str) -> str:
+    """Returns the training type based on the metric."""
     if metric == "tweedie": return("cont")
     if metric == "mse": return("cont")
     if metric == "logloss": return("bin")
     if metric == "auc": return("bin")
     if metric == "F1" or metric == "f1" or metric == "aucpr": return("bin")
 
-def get_score_func_based_on_metric(metric):
+import sklearn.metrics as skm
+def get_score_func_based_on_metric(metric: str) -> callable:
+    """Returns the scoring function based on the metric."""
     if metric == "tweedie": return(skm.d2_tweedie_score)
     if metric == "mse": return(skm.mean_squared_error)
     if metric == "logloss": return(skm.log_loss)
@@ -29,32 +31,41 @@ def get_score_func_based_on_metric(metric):
     if metric == "F1" or metric == "f1": return(skm.f1_score)
     if metric == "aucpr" or metric == "AUPRC" or metric == "auprc": return(skm.average_precision_score)
 
-set_names = {1:"Valid", 2: "Test", 0: "Train"}
-
-def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
-    """Returns the optimal probability cutoff for the precision-recall curve."""
-
-    precision_, recall_, proba = skm.precision_recall_curve(out_data["TRUE_ABNORM"].to_nump(), out_data["ABNORM_PROBS"].to_numpy())
-    optimal_proba_cutoff = sorted(list(zip(np.abs(precision_ - recall_), proba)), key=lambda i: i[0], reverse=False)[0][1]
-    return optimal_proba_cutoff
-
-def bootstrap_metric(func, obs, preds, n_boots=500, rng_seed=42):
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Bootstraping                                            #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+from collections.abc import Iterable
+import numpy as np
+def bootstrap_metric(metric_func: callable, 
+                     obs: Iterable[float], 
+                     preds: Iterable[float], 
+                     n_boots=500, 
+                     rng_seed=42) -> tuple[np.float64, np.float64, np.float64]:
     """Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Setting up # # # # # # # # # # # # # # # # # # # # # # # 
     bootstraps = []
-    obs = np.array(obs)
-    preds = np.array(preds)
+    obs = np.asarray(obs)
+    preds = np.asarray(preds)
     rng = np.random.RandomState(rng_seed)
-    try:
-        total_est = func(obs, preds)
-    except:
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Point estiamte # # # # # # # # # # # # # # # # # # # # # 
+    try: # tweedie sometimes has issues
+        total_est = metric_func(obs, preds)
+    except: # return nan if not possible
         return(np.nan, np.nan, np.nan)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Bootstrapping # # # # # # # # # # # # # # # # # # # # # # 
     for i in np.arange(n_boots):
         idxs = rng.randint(0, len(obs), len(obs))
         try: # tweedie sometimes has issues
-            bootstraps.append(func(obs[idxs], preds[idxs]))
+            bootstraps.append(metric_func(obs[idxs], preds[idxs]))
         except:
             continue
-    if len(bootstraps) > 0:
+    if len(bootstraps) > 0: # if at least one bootstrap was successful
         # Sorting
         bootstraps = np.array(bootstraps)
         bootstraps.sort()
@@ -63,15 +74,47 @@ def bootstrap_metric(func, obs, preds, n_boots=500, rng_seed=42):
         ci_high = bootstraps[int(0.975*len(bootstraps))]
 
         return(total_est, ci_low, ci_high)
-    else:
-        return(np.nan, np.nan, np.nan)
-"""Calculate metrics on given set of data."""
-def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set, subset_name="all", n_boots=500, train_type="cont"):
-    set_data = pred_data.loc[pred_data.SET == set]
+    else: # if no bootstrap was successful
+        return(total_est, np.nan, np.nan)
     
-    n_indv = set_data.shape[0]
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Evaluation metrics                                      #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+import sklearn.metrics as skm
+def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
+    """Returns the optimal probability cutoff for the precision-recall curve."""
+
+    precision_, recall_, proba = skm.precision_recall_curve(out_data["TRUE_ABNORM"].to_numpy(), out_data["ABNORM_PROBS"].to_numpy())
+    optimal_proba_cutoff = sorted(list(zip(np.abs(precision_ - recall_), proba)), key=lambda i: i[0], reverse=False)[0][1]
+
+    return optimal_proba_cutoff
+
+set_names = {0: "Train", 1: "Valid", 2: "Test"}
+import polars as pl
+def set_metrics(pred_data: pl.DataFrame, 
+                y_pred_col: str, 
+                y_cont_pred_col: str, 
+                y_goal_col: str, 
+                y_cont_goal_col: str, 
+                eval_metrics: pl.DataFrame, 
+                set: int, 
+                subset_name="all",
+                n_boots=500, 
+                train_type="cont"):
+    """Calculate metrics on given set of data."""
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Getting set data  # # # # # # # # # # # # # # # # # # # # 
+    set_data = pred_data.filter(pl.col("SET") == set)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Simple stats # # # # # # # # # # # # # # # # # # # # # # 
+    n_indv = set_data.height
     n_abnorm = set_data[y_goal_col].sum()
 
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Bootstrapping metrics of interest # # # # # # # # # # # # 
     if train_type != "bin":
         # Measurement for continuous value
         mse = bootstrap_metric(skm.mean_squared_error, set_data[y_cont_goal_col], set_data[y_cont_pred_col], n_boots=n_boots)
@@ -80,6 +123,9 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
         AUC = bootstrap_metric(skm.roc_auc_score, set_data[y_goal_col], set_data[y_cont_pred_col], n_boots=n_boots)
         avPRC = bootstrap_metric(skm.average_precision_score, set_data[y_goal_col], set_data[y_cont_pred_col], n_boots=n_boots)
 
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Saving and printing # # # # # # # # # # # # # # # # # # # 
     ## Making sure at least one abnormal is present, otherwise metrics make no sense
     if n_abnorm > 0:
         accuracy = bootstrap_metric(skm.accuracy_score, set_data[y_goal_col], set_data[y_pred_col], n_boots=n_boots)
@@ -88,68 +134,59 @@ def set_metrics(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_
         recall = bootstrap_metric(lambda x, y: skm.recall_score(x, y, zero_division=0), set_data[y_goal_col], set_data[y_pred_col], n_boots=n_boots)
 
         # Results
-        if train_type!="bin":
+        if train_type != "bin":
             print("{} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
         else:
             print("{} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f})  F1: {:.2f} ({:.2f}-{:.2f})   acurracy: {:.2f} ({:.2f}-{:.2f})   precision {:.2f} ({:.2f}-{:.2f})    recall {:.2f} ({:.2f}-{:.2f})".format(set_names[set], AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2], f1[0], f1[1], f1[2], accuracy[0], accuracy[1], accuracy[2], precision[0], precision[1], precision[2], recall[0], recall[1], recall[2]))
 
         ## First row in dataset
-        if eval_metrics.shape[0] == 0:
-            if train_type!="bin":
-                eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all","N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "tweedie": [tweedie[0]], "tweedie_CIneg": [tweedie[1]], "tweedie_CIpos": [tweedie[2]], "MSE": [mse[0]], "MSE_CIneg": [mse[1]], "MSE_CIpos": [mse[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
-            else:
-                eval_metrics = pd.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": [n_indv], "N_ABNORM": [n_abnorm], "AUC": [AUC[0]], "AUC_CIneg": [AUC[1]], "AUC_CIpos": [AUC[2]], "avPRC": [avPRC[0]], "avPRC_CIneg": [avPRC[1]], "avPRC_CIpos": [avPRC[2]], "F1":[f1[0]], "F1_CIneg": [f1[1]], "F1_CIpos": [f1[2]], "accuracy": [accuracy[0]], "accuracy_CIneg": [accuracy[1]], "accuracy_CIpos": [accuracy[2]], "precision": [precision[0]], "precision_CIneg": [precision[1]], "precision_CIpos": [precision[2]], "recall": [recall[0]], "recall_CIneg": [recall[1]], "recall_CIpos": [recall[2]]})
-
-        ## All other rows
+        # Create an empty eval_metrics DataFrame
+        if train_type != "bin":
+            new_row_df = pl.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", 
+                                            "N_INDV": n_indv, "N_ABNORM": n_abnorm, 
+                                            "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], 
+                                            "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2], 
+                                            "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], 
+                                            "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], 
+                                            "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], 
+                                            "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]})
         else:
-            if train_type!="bin":
-                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
-            else:
-                eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], "accuracy":accuracy[0], "accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]}, ignore_index=True)
+            new_row_df = pl.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", 
+                                             "N_INDV": n_indv, "N_ABNORM": n_abnorm, 
+                                             "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC[2], 
+                                             "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2], 
+                                             "F1":f1[0], "F1_CIneg": f1[1], "F1_CIpos": f1[2], 
+                                             "accuracy":accuracy[0],"accuracy_CIneg":accuracy[1], "accuracy_CIpos": accuracy[2], 
+                                             "precision": precision[0], "precision_CIneg": precision[1], "precision_CIpos": precision[2], 
+                                             "recall": recall[0], "recall_CIneg": recall[1], "recall_CIpos": recall[2]})
+        if eval_metrics.height == 0:
+            eval_metrics = new_row_df
+        else:
+            eval_metrics = pl.concat([eval_metrics, new_row_df])
 
-    ## Only continuous metrics
+    ## Only continuous metrics when there is no abnormal prediciton in the set
     else:
         # Results
         if train_type!="bin":
-            print("{} {} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})".format(set_names[set], group_name, tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2]))
-            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name,"GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2]}, ignore_index=True)
+            print("{} {} - Tweedie: {:.2f} ({:.2f}-{:.2f})  MSE: {:.2f} ({:.2f}-{:.2f})".format(set_names[set], "all", tweedie[0], tweedie[1], tweedie[2], mse[0], mse[1], mse[2]))
+            new_row_df = pl.DataFrame({"SET": set_names[set], "SUBSET": subset_name,"GROUP": "all", 
+                                       "N_INDV": n_indv, "N_ABNORM": n_abnorm, 
+                                       "tweedie": tweedie[0], "tweedie_CIneg": tweedie[1], "tweedie_CIpos": tweedie[2], 
+                                       "MSE":mse[0], "MSE_CIneg": mse[1], "MSE_CIpos": mse[2]})
         else:
-            print("{} {} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f}) ".format(set_names[set], group_name, AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2]))
-            eval_metrics = eval_metrics._append({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", "N_INDV": n_indv, "N_ABNORM": n_abnorm, "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC_CIpos[2], "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2]}, ignore_index=True)
+            print("{} {} - AUC: {:.2f} ({:.2f}-{:.2f})  avPRC: {:.2f} ({:.2f}-{:.2f}) ".format(set_names[set], "all", AUC[0], AUC[1], AUC[2], avPRC[0], avPRC[1], avPRC[2]))
+            new_row_df = pl.DataFrame({"SET": set_names[set], "SUBSET": subset_name, "GROUP": "all", 
+                                       "N_INDV": n_indv, "N_ABNORM": n_abnorm, 
+                                       "AUC": AUC[0], "AUC_CIneg": AUC[1], "AUC_CIpos": AUC[2], 
+                                       "avPRC":avPRC[0], "avPRC_CIneg": avPRC[1], "avPRC_CIpos": avPRC[2]})
+        if eval_metrics.height == 0:
+            eval_metrics = new_row_df
+        else:
+            eval_metrics = pl.concat([eval_metrics, new_row_df])
 
     return(eval_metrics)
 
-
-def eval_subset(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, out_dir=None, out_name=None, subset_name="all", n_boots=500, train_type="cont"):
-    eval_metrics = pd.DataFrame()
-    all_conf_mats = pd.DataFrame()
-    g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col, train_type == "bin")
-    if out_dir: g.savefig(out_dir + "plots/" + out_name + "_" + get_date() + "_scatter.png", dpi=300)
-    g, newcol_x, newcol_y = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
-    if out_dir and out_name:
-        g.savefig(out_dir + "down/" + get_date() + "/" + out_name + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
-
-    all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
-    # Metrics with bootstrap for different sets
-    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=0, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
-    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=1, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
-    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=2, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
-
-    ## Age-group level
-    #eval_metrics, fig = age_group_evals(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, subset_name)
-    # if fig_path:
-    #     fig.savefig(fig_path + "_" + subset_name + "_agestrata.png", dpi=300)
-    #     fig.savefig(fig_path + "_" + subset_name + "_agestrata.pdf")
-    
-    # ## Time level
-    #if "TIME_LAST" in data.columns:
-    #    eval_metrics, all_conf_mats, fig = time_evals(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats, subset_name)
-    #     if fig_path:
-    #         fig.savefig(fig_path + "_" + subset_name +"_timestrata.png", dpi=300)
-    #         fig.savefig(fig_path + "_" + subset_name + "_timestrata.pdf")
-    
-    return(eval_metrics, all_conf_mats)
-
+import polars as pl
 def conf_matrix_dfs(pred_data, y_goal_col, y_pred_col, all_conf_mats):
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=0)
     crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
@@ -166,6 +203,7 @@ def conf_matrix_dfs(pred_data, y_goal_col, y_pred_col, all_conf_mats):
     
     return(all_conf_mats)
 
+import sklearn.metrics as skm
 def conf_matrix(pred_data, y_goal_col, y_pred_col, set=1, title=""):
     set_data = pred_data.loc[pred_data.SET == set]
     set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
@@ -174,149 +212,111 @@ def conf_matrix(pred_data, y_goal_col, y_pred_col, set=1, title=""):
     cm = skm.confusion_matrix(set_data.loc[:,y_goal_col].values, set_data.loc[:,y_pred_col].values)
     return(cm, cm_norm)
 
-def time_evals(pred_data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, all_conf_mats, subset_name):
-    max_years = math.ceil(max(pred_data.TIME_LAST/365.25))
-    time_scores = pd.DataFrame()
-    conf_mats = pd.DataFrame()
-    for set in [0,1,2]:
-        set_data = pred_data.loc[pred_data.SET == set]
-        set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
-        set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
-        crnt_time_scores = pd.DataFrame({"GROUP": pd.cut(pred_data.TIME_LAST, np.arange(0, 365.25*max_years, 365.25)).cat.categories})
-        crnt_conf_mats = {}
-        for level in pd.cut(set_data.TIME_LAST, np.arange(0, 365.25*11, 365.25)).cat.categories:
-            crnt_data = set_data.loc[np.logical_and(set_data.TIME_LAST >= level.left, set_data.TIME_LAST <= level.right)]
-            if crnt_data.shape[0] >= 5 and crnt_data.loc[:,y_goal_col].sum() >= 5:   
-                conf_mats_square = conf_matrix(crnt_data, y_goal_col, y_pred_col, set, title="(" + str(level.left/365.25) + "," + str(level.right/365.25) + "]")
-                crnt_conf_mats[level] = conf_mats_square[0].flatten()
-
-                mse = skm.mean_squared_error(crnt_data.loc[:,y_cont_goal_col], crnt_data.loc[:,y_cont_pred_col])
-                try:
-                    tweedie = skm.d2_tweedie_score(crnt_data.loc[:,y_cont_goal_col], crnt_data.loc[:,y_cont_pred_col], power=3)
-                    if tweedie < 0: tweedie = np.nan
-                except:
-                    tweedie = np.nan
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "tweedie"] = tweedie
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "MSE"] = mse
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "N_INDV"] = crnt_data.shape[0]
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "N_ABNORM"] = crnt_data.loc[:,y_goal_col].sum()
-
-                f1 = skm.f1_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], average="macro", zero_division=0)
-                accuracy = skm.accuracy_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col])
-                precision = skm.precision_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], zero_division=0)
-                recall = skm.recall_score(crnt_data.loc[:,y_goal_col], crnt_data.loc[:,y_pred_col], zero_division=0)
-
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "F1"] = f1
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "accuracy"] = accuracy
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "precision"] = precision
-                crnt_time_scores.loc[crnt_time_scores.GROUP == level, "recall"] = recall
-                
-        crnt_conf_mats = pd.DataFrame.from_dict(crnt_conf_mats, orient="index") 
-        crnt_conf_mats.loc[:,"SET"] = set_names[set]
-        crnt_time_scores.loc[:,"SET"] = set_names[set]
-        crnt_conf_mats.loc[:,"SUBSET"] = subset_name
-        crnt_time_scores.loc[:,"SUBSET"] = subset_name
-        
-        if time_scores.shape[0] >= 5: 
-            time_scores = pd.concat([time_scores, crnt_time_scores])
-            conf_mats = pd.concat([conf_mats, crnt_conf_mats])
-        else: 
-            time_scores = crnt_time_scores.copy()
-            conf_mats = crnt_conf_mats.copy()
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Greater eval functions                                  #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+from general_utils import get_date
+from plot_utils import plot_observerd_vs_predicted, plot_observed_vs_probability_min5
+import polars as pl
+def eval_subset(data: pl.DataFrame, 
+                y_pred_col: str, 
+                y_cont_pred_col: str, 
+                y_goal_col: str, 
+                y_cont_goal_col: str, 
+                out_dir=None, 
+                out_name=None, 
+                subset_name="all", 
+                n_boots=500, 
+                train_type="cont") -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Evaluate the model on the given subset of data.
+       Creates plots of observed vs. predicted, observed vs. probability, and confusion matrices.
+       Returns the evaluation metrics and confusion matrices."""
     
-    fig = plot_scores_metrics(time_scores, eval_metrics, "Years", "GROUP", subset_name)
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Setup # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    eval_metrics = pl.DataFrame()
+    all_conf_mats = pl.DataFrame()
 
-    eval_metrics = pd.concat([eval_metrics, time_scores])
-    all_conf_mats = pd.concat([all_conf_mats, conf_mats])
-    return(eval_metrics, all_conf_mats, fig)
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # # 
+    if y_cont_goal_col in data.columns:
+        g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col, train_type == "bin")
+        if out_dir: g.savefig(out_dir + "plots/" + out_name + "_" + get_date() + "_scatter.png", dpi=300)
+        g, _, _ = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
+        if out_dir and out_name:
+            g.savefig(out_dir + "down/" + get_date() + "/" + out_name + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
 
-def age_group_evals(pred_data,  y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, subset_name):
-    age_scores = pd.DataFrame()
-    pred_data = pred_data.assign(AGE_GROUP=pd.cut(pred_data.EVENT_AGE, [18, 30, 40, 50, 60, 70, 80]))
+    all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
 
-    age_groups = pred_data.AGE_GROUP.cat.remove_unused_categories().cat.categories
-
-    for set in [0,1,2]:
-        crnt_age_scores = pd.DataFrame({"GROUP": age_groups})
-        set_data = pred_data.loc[pred_data.SET == set]
-        set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
-        set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
-        for group in age_groups:
-            group_data = set_data.loc[set_data.AGE_GROUP == group]
-            mse = skm.mean_squared_error(group_data.loc[:,y_cont_goal_col], group_data.loc[:,y_cont_pred_col])
-            try:
-                tweedie = skm.d2_tweedie_score(group_data.loc[:,y_cont_goal_col], group_data.loc[:,y_cont_pred_col], power=3)
-                if tweedie < 0: tweedie = np.nan
-            except:
-                tweedie = np.nan
-            
-            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"tweedie"] = tweedie
-            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"MSE"] = mse
-            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_INDV"] = group_data.shape[0]
-            crnt_age_scores.loc[crnt_age_scores.GROUP == group,"N_ABNORM"] = group_data.loc[:,y_goal_col].sum()
-            if group_data.shape[0] >= 5:
-                f1 = skm.f1_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], average="macro", zero_division=0)
-                accuracy = skm.accuracy_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col])
-                precision = skm.precision_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], zero_division=0)
-                recall = skm.recall_score(group_data.loc[:,y_goal_col], group_data.loc[:,y_pred_col], zero_division=0)
-                    
-                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"F1"] = f1
-                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"accuracy"] = accuracy
-                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"precision"] = precision
-                crnt_age_scores.loc[crnt_age_scores.GROUP == group,"recall"] = recall
-
-        crnt_age_scores.loc[:,"SET"] = set_names[set]
-        crnt_age_scores.loc[:,"SUBSET"] = subset_name
-        if age_scores.shape[0] > 0: age_scores = pd.concat([age_scores, crnt_age_scores])
-        else: age_scores = crnt_age_scores.copy()
-    eval_metrics = pd.concat([eval_metrics, age_scores])
-    age_scores["AGE_MID"] = age_scores.GROUP.transform(lambda x: x.mid)
-    fig = plot_scores_metrics(age_scores, eval_metrics, "Age", "AGE_MID", subset_name)
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Bootstrapped metrics# # # # # # # # # # # # # # # # # # #     
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=0, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=1, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
+    eval_metrics = set_metrics(data, y_pred_col, y_cont_pred_col, y_goal_col, y_cont_goal_col, eval_metrics, set=2, subset_name=subset_name, n_boots=n_boots, train_type=train_type)
     
-    return(eval_metrics, fig)
-    
-#######################################################
+    return(eval_metrics, all_conf_mats)
 
-def create_report(mdl, out_data, display_scores=[], confusion_labels=["Controls", "Cases"], verbose=True, metric="logloss"):
-    """ Reports various metrics of the trained classifier """
-    
-    dump = dict()
-    y_train = out_data.query("SET==0")["TRUE_ABNORM"]
-    y_valid = out_data.query("SET==1")["TRUE_ABNORM"]
-    print(y_valid.sum())
-    train_preds = out_data.query("SET==0")["ABNORM_PREDS"]
-    valid_preds = out_data.query("SET==1")["ABNORM_PREDS"]
-    print(valid_preds.sum())
+from general_utils import logging_print
+from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+def create_report(mdl: object, 
+                  out_data: pl.DataFrame, 
+                  display_scores=[], 
+                  confusion_labels=["Controls", "Cases"], 
+                  metric="logloss"):
+    """ Reports various metrics of the trained classifier.
+        Returns a dictionary containing the model, accuracy, scores, predictions, and classification report.
+        Output:
+        -------
+        dump: dictionary containing the model, accuracy, scores, predictions, and classification report.
+                    - mdl: trained model
+                    - accuracy: list of train and valid accuracy
+                    - scores: dictionary of train and valid scores
+                    - fids: list of FINNGENIDs
+                    - y_valid: list of true labels
+                    - train_preds: list of train predictions
+                    - valid_preds: list of valid predictions
+                    - valid_probs: list of valid probabilities
+                    - report: classification report
+                    - roc_auc: area under ROC curve
+                    - model_memory: model memory size in KB
+        """
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Get data # # # # # # # # # # # # # # # # # # # # # # # #    
+    y_train = out_data.filter(pl.col("SET")==0).select("TRUE_ABNORM")
+    y_valid = out_data.filter(pl.col("SET")==1).select("TRUE_ABNORM")
+    train_preds = out_data.filter(pl.col("SET")==0).select("ABNORM_PREDS")
+    valid_preds = out_data.filter(pl.col("SET")==1).select("ABNORM_PREDS")
     if get_train_type(metric) == "bin":
-        y_probs = out_data.query("SET==1")["ABNORM_PROBS"]
-        roc_auc = roc_auc_score(y_valid, y_probs)
+        y_probs = out_data.filter(pl.col("SET")==1).select("ABNORM_PROBS")
 
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Metrics # # # # # # # # # # # # # # # # # # # # # # # # #  
+        roc_auc = roc_auc_score(y_valid, y_probs) # defined only for binary classification
     train_acc = accuracy_score(y_train, train_preds)
     valid_acc = accuracy_score(y_valid, valid_preds)
-
-    ## Additional scores
+    # Additional scores
     scores_dict = dict()
     for score_name in display_scores:
         func = get_score_func_based_on_metric(score_name)
-        scores_dict[score_name] = [func(y_train, train_preds), func(y_valid, valid_preds)]
-        
-    ## Model Memory
+        scores_dict[score_name] = [func(y_train, train_preds), func(y_valid, valid_preds)]   
+    # Model Memory
     try:
         model_mem = round(model_memory_size(mdl) / 1024, 2)
     except:
         model_mem = np.nan
     
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Logging # # # # # # # # # # # # # # # # # # # # # # # # #  
     logging_print(mdl)
     logging_print("\n=============================> TRAIN-TEST DETAILS <======================================")
-    
-    ## Metrics
+    # Metrics
     logging_print(f"Train Size: {len(y_train)} samples")
     logging_print(f"Valid Size: {len(y_valid)} samples")
     logging_print("---------------------------------------------")
     logging_print("Train Accuracy: " + str(train_acc))
     logging_print("Valid Accuracy: " + str(valid_acc))
     logging_print("---------------------------------------------")
-    
     if display_scores:
         for k, v in scores_dict.items():
             score_name = ' '.join(map(lambda x: x.title(), k.split('_')))
@@ -324,7 +324,6 @@ def create_report(mdl, out_data, display_scores=[], confusion_labels=["Controls"
             logging_print(f'Valid {score_name}: '+ str(v[1]))
             logging_print("")
         logging_print("---------------------------------------------")
-
     if get_train_type(metric) == "bin":
         logging_print("Area Under ROC (valid): " + str(roc_auc))
         logging_print("---------------------------------------------")
@@ -333,14 +332,13 @@ def create_report(mdl, out_data, display_scores=[], confusion_labels=["Controls"
     
     ## Classification Report
     mdl_rep = classification_report(y_valid, valid_preds, output_dict=True)
-    
     logging_print(classification_report(y_valid, valid_preds, target_names=confusion_labels))
 
     ## Dump to report_dict
     dump = dict(mdl=mdl, 
                 accuracy=[train_acc, valid_acc], 
                 **scores_dict,
-                fids=out_data.FINNGENID,
+                fids=out_data["FINNGENID"],
                 y_valid=y_valid,
                 train_preds=train_preds,
                 valid_preds=valid_preds,
@@ -350,8 +348,16 @@ def create_report(mdl, out_data, display_scores=[], confusion_labels=["Controls"
                 model_memory=model_mem)
     return dump
 
-
-def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0"):
+import matplotlib.pyplot as plt
+import polars as pl
+from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from plot_utils import roc_plot, precision_recall_plot, plot_calibration, plot_box_probs
+def compare_models(mdl_reports=[], 
+                   labels=[], 
+                   score='accuracy', 
+                   pos_label="1.0") -> tuple[pl.DataFrame, plt.Figure]:
     """ Compare evaluation metrics for the True Positive class [1] of 
         binary classifiers passed in the argument and plot ROC and PR curves.
         
@@ -365,7 +371,8 @@ def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0")
                   fig: `matplotlib` figure object with ROC and PR curves """
 
     
-    ## Classifier Labels
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Table # # # # # # # # # # # # # # # # # # # # # # # # # #  
     default_names = [rep['mdl'].__class__.__name__ for rep in mdl_reports]
     mdl_names = labels if len(labels) == len(mdl_reports) else default_names
     
@@ -382,10 +389,11 @@ def compare_models(mdl_reports=[], labels=[], score='accuracy', pos_label="1.0")
         
         table[mdl_names[i]] = scores + [scores[1] < scores[0], roc_auc] + true_positive_metrics
     
-    table = pd.DataFrame(data=table, index=index)
+    table = pl.DataFrame(table)
+    table = table.with_columns(pl.Series("index", index))
     
-    
-    ## Compare Plots
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #    
     fig = plt.figure(figsize=(15, 10))
     ax1 = fig.add_subplot(231)
     ax2 = fig.add_subplot(232)
