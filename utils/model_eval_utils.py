@@ -5,7 +5,7 @@ sys.path.append(("/home/ivm/valid/scripts/utils/"))
 import matplotlib.pyplot as plt
 import pandas as pd
 from plot_utils import *
-from utils import *
+from valid.utils.general_utils import *
 import sklearn.metrics as skm
 
 def model_memory_size(clf):
@@ -30,6 +30,13 @@ def get_score_func_based_on_metric(metric):
     if metric == "aucpr" or metric == "AUPRC" or metric == "auprc": return(skm.average_precision_score)
 
 set_names = {1:"Valid", 2: "Test", 0: "Train"}
+
+def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
+    """Returns the optimal probability cutoff for the precision-recall curve."""
+
+    precision_, recall_, proba = skm.precision_recall_curve(out_data["TRUE_ABNORM"].to_nump(), out_data["ABNORM_PROBS"].to_numpy())
+    optimal_proba_cutoff = sorted(list(zip(np.abs(precision_ - recall_), proba)), key=lambda i: i[0], reverse=False)[0][1]
+    return optimal_proba_cutoff
 
 def bootstrap_metric(func, obs, preds, n_boots=500, rng_seed=42):
     """Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""

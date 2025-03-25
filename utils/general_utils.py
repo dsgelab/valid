@@ -1,7 +1,6 @@
-import pandas as pd
-import numpy as np
-
-######## Directories and Logging ########
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Directories and Logging                                 #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import os
 def make_dir(dir_path):
     if not os.path.exists(dir_path): os.makedirs(dir_path)
@@ -13,20 +12,41 @@ def init_logging(out_dir, log_file_name, logger, args):
     logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
     logger.info("Time: " + get_datetime() + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
 
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Time                                                    #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 from datetime import datetime
 def get_date():
     return datetime.today().strftime("%Y-%m-%d")
 def get_datetime():
     return datetime.today().strftime("%Y-%m-%d-%H%M")
 
-######### Printing and Plotting #########
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Printing                                                #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 def print_count(data):
     print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
     
 def logging_print(text):
     print(text)
     logging.info(text)
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Reading                                                 #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+import polars as pl
+def read_file(full_file_path):
+    if full_file_path.endswith(".csv"):
+        return pl.read_csv(full_file_path, try_parse_dates=True)
+    elif full_file_path.endswith(".parquet"):
+        return pl.read_parquet(full_file_path)
+    else:
+        raise ValueError("File type not supported: " + full_file_path)
     
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Plotting                                                #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 """Plots trajectory of lab values for a specific individual. (x=DATE, y=VALUE)"""
