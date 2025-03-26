@@ -5,6 +5,7 @@ from general_utils import get_date, get_datetime, make_dir, init_logging, Timer,
 from model_eval_utils import get_train_type, create_report, eval_subset
 from model_fit_utils import create_optuna_study, get_optim_precision_recall_cutoff
 from processing_utils import get_abnorm_func_based_on_name 
+from plot_utils import create_report_plots, get_plot_names
 # Standard stuff
 import time 
 import polars as pl
@@ -110,23 +111,26 @@ def get_out_data(data: pl.DataFrame,
         )
     return(out_data)
 
+def get_shap_importances(X_in: pl.DataFrame,
+                         explainer: shap.TreeExplainer,
+                         lab_name: str):
+    new_names = get_plot_names(X_in.columns, lab_name)
+    explanations = explainer.shap_values(X_in.to_numpy())
+    mean_shaps = np.abs(explanations.values).mean(0)
+    shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
 
-def save_importances(labels: list, 
+    return(shap_importance, new_names)
+
+def save_importances(X_all: pl.DataFrame, 
                      model_final: xgb.XGBClassifier, 
-                     out_file_name: str) -> None:
+                     out_file_name: str,
+                     lab_name: str,
+                     date_model_fit: str,
+                     pred_descriptor: str) -> None:
     """Saves the feature importances of the model to a csv file. """
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Getting info                                            #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    values = list(model_final.feature_importances_)
-    top_gain = pl.DataFrame({"score": values}, schema=["score"]).with_columns(pl.Series("labels", labels)).sort("score", descending=True)
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Logging info                                            #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    top_gain, _ = get_shap_importances(X_all, model_final.get_booster().get_dump()[0], lab_name)
     logging.info(top_gain.head(10))
-    top_gain.to_csv(out_file_name + "_importance_" + get_date() + ".csv")
+    top_gain.write_csv(out_file_name + "down/" + date_model_fit + "/" + lab_name + "xgb_" + pred_descriptor + "_shap_importance_" + get_date() + ".csv")
       
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
@@ -330,7 +334,7 @@ def create_xgb_dts(data: pl.DataFrame,
     X_train= pl.DataFrame(scaler_base.fit_transform(X_train.to_numpy()), schema=X_train.schema)
     X_valid= pl.DataFrame(scaler_base.transform(X_valid.to_numpy()), schema=X_valid.schema)
     X_test= pl.DataFrame(scaler_base.transform(X_test.to_numpy()), schema=X_test.schema)
-    X_all= pl.DataFrame(scaler_base.transform(X_all.to_numpy()), schema=X_all.schema)
+    X_all_scaled = pl.DataFrame(scaler_base.transform(X_all.to_numpy()), schema=X_all.schema)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 XGBoost datatype                                        #
@@ -341,7 +345,7 @@ def create_xgb_dts(data: pl.DataFrame,
     #dtest = xgb.DMatrix(data=X_test, label=y_test, enable_categorical=True, weight=get_weights(pos_weight, y_test))
     #dall = xgb.DMatrix(data=X_all, label=y_all, enable_categorical=True, weight=get_weights(pos_weight, y_all))
     
-    return(X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, dtrain, dvalid, scaler_base)
+    return(X_train, y_train, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dvalid, scaler_base)
     
 
 def get_relevant_label_data_cols(data: pl.DataFrame, 
@@ -416,7 +420,9 @@ def get_data_and_pred_list(file_path_labels: str,
 def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
+    # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
+    parser.add_argument("--date_model_fit", type=str, help="Original date of model fitting.", required=True)
 
     # Data paths
     parser.add_argument("--file_path_labels", type=str, help="Path to outcome label data.", default="")
@@ -468,9 +474,9 @@ if __name__ == "__main__":
     study_name = "xgb_" + str(args.metric) + "_" + args.pred_descriptor +  "_reweight" + str(args.reweight) # for optuna
     out_dir = args.res_dir + study_name + "/"; out_file_name = out_dir + args.lab_name; out_plot_name = out_dir + "plots/" + args.lab_name
     log_file_name = args.lab_name + "_" + args.pred_descriptor + "_preds_" + get_datetime()
+    if args.date_model_fit == "": args.date_model_fit = get_date()
     init_logging(out_dir, log_file_name, logger, args)
-
-    make_dir(out_dir + "plots/")
+    make_dir(out_dir + "plots/"); make_dir(out_dir + "down/"); make_dir(out_dir + "down/" + args.date_model_fit + "/")
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Preparing data                                          #
@@ -483,8 +489,8 @@ if __name__ == "__main__":
                                           file_path_labs=args.file_path_labs, 
                                           goal=args.goal, 
                                           preds=args.preds)
-    X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, dtrain, dvalid, scaler_base = create_xgb_dts(data=data, X_cols=X_cols, goal=args.goal, reweight=args.reweight)
-
+    X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, dtrain, dvalid, scaler_base = create_xgb_dts(data=data, X_cols=X_cols, goal=args.goal, reweight=args.reweight)
+    X_all_unscaled.write_csv(out_file_name + "_Xall_unscaled_" + get_date() + ".csv")
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -509,23 +515,38 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-            save_importances(labels=X_train.columns, model_final=model_final, out_file_name=out_file_name)
+            save_importances(labels=X_train.columns, 
+                             model_final=model_final, 
+                             out_file_name=out_file_name,
+                             lab_name=args.lab_name,
+                             date_model_fit=args.date_model_fit,
+                            pred_descriptor=args.pred_descriptor)
             pickle.dump(model_final, open(out_file_name + "_model_" + get_date() + ".pkl", "wb"))
             pickle.dump(scaler_base, open(out_file_name + "_scaler_" + get_date() + ".pkl", "wb"))
         else:
             model_final = pickle.load(open(out_file_name + "_model_" + get_date() + ".pkl", "rb"))
+        # SHAP explainer for model
+        shap_explainer = shap.TreeExplainer(model_final)
         # Model predictions
         out_data = get_out_data(data, model_final, X_all, y_all, args)
-        out_data.to_csv(out_file_name + "_preds_" + get_date() + ".csv", index=False)  
+        out_data.write_csv(out_file_name + "_preds_" + get_date() + ".csv")  
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Evaluations                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #         
-        crnt_report, fig = create_report(model_final, out_data, feature_labels=X_cols, display_scores=[args.metric, "aucpr"], metric=args.metric, importance_plot=True)
-        fig.savefig(out_plot_name + "_report_" + get_date() + ".png"); fig.savefig(out_plot_name + "_report_" + get_date() + ".pdf")   
+        crnt_report = create_report(model_final, out_data, display_scores=[args.metric, "aucpr"], metric=args.metric)
         pickle.dump(crnt_report, open(out_file_name + "_report_" + get_date() + ".pkl", "wb"))  
+
+        importances, new_names = get_shap_importances(X_all, shap_explainer, args.lab_name)
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 1).select("TRUE_ABNORM"), 
+                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PROBS"),
+                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PREDS"),
+                                  importances=importances)
+        
+        
+        fig.savefig(out_plot_name + "_report_" + get_date() + ".png"); fig.savefig(out_plot_name + "_report_" + get_date() + ".pdf")   
         
         eval_metrics, all_conf_mats = eval_subset(out_data, "ABNORM_PREDS", "ABNORM_PROBS", "TRUE_ABNORM", "TRUE_VALUE", out_plot_name, out_dir, "all", args.n_boots, get_train_type(args.metric))
         if args.save_csv == 1:
-            eval_metrics.loc[eval_metrics.F1.notnull()].to_csv(out_file_name + "_evals_" + get_date() + ".csv", sep=",", index=False)
-            all_conf_mats.to_csv(out_file_name + "_confmats_" + get_date() + ".csv", sep=",", index=False)
+            eval_metrics.loc[eval_metrics.F1.notnull()].write_csv(out_file_name + "_evals_" + get_date() + ".csv", sep=",")
+            all_conf_mats.write_csv(out_file_name + "_confmats_" + get_date() + ".csv", sep=",")
