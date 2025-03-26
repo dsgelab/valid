@@ -27,20 +27,21 @@ def get_omop_id_data_bq(omop_concept_ids = ["3020564"],
 
 """Get data for a specific OMOP concept ID from the kanta lab data. Returns a panda with data."""
 def get_orig_omop_id_data_parquet(omop_concept_id = "3020564",
-                                  table = "/finngen/library-red/finngen_R13/kanta_lab_1.0/finngen_R12_kanta_lab_2.0-rc.1.parquet",
+                                  table = "/finngen/library-red/finngen_R13/kanta_lab_1.0/data/finngen_R13_kanta_lab_1.0.parquet",
                                   columns = ["FINNGENID", "SEX", "EVENT_AGE", "APPROX_EVENT_DATETIME", "MEASUREMENT_VALUE", "MEASUREMENT_UNIT",  "TEST_OUTCOME"]):
     data = pl.DataFrame(pd.read_parquet(table, 
-                                        filers=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
+                                        filters=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
                                         columns=columns))
     return(data)
 
 """Get data for a specific OMOP concept ID from the kanta lab data. Returns a panda with data."""
 def get_extract_omop_id_data_parquet(omop_concept_id = "3020564",
-                                     table = "/finngen/pipeline/DATA_IMPORT/fg-3/kanta/finngen_R12_kanta_lab_2.0-rc.1.parquet",
+                                     table = "/finngen/library-red/finngen_R13/kanta_analysis_1.0/data/finngen_R13_kanta_lab_1.0.parquet",
                                      columns = ["FINNGENID", "SEX", "EVENT_AGE", "APPROX_EVENT_DATETIME", "TEST_OUTCOME", "MEASUREMENT_VALUE_EXTRACTED", "IS_VALUE_EXTRACTED"]):
     data = pl.DataFrame(pd.read_parquet(table, 
-                                        filers=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
+                                        filters=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
                                         columns=columns))
+    extracted_info = (data.filter(pl.col("IS_VALUE_EXTRACTED") == "1").select(["FINNGENID", "APPROX_EVENT_DATETIME"]))
     data = (data.filter(pl.col("IS_VALUE_EXTRACTED") == "1")
                 .with_columns(MEASUREMENT_VALUE=pl.col("MEASUREMENT_VALUE_EXTRACTED"),
                               MEASUREMENT_UNIT=None,
@@ -48,7 +49,7 @@ def get_extract_omop_id_data_parquet(omop_concept_id = "3020564",
                               MEASUREMENT_UNIT_HARMONIZED=None,
                               TEST_OUTCOME_IMPUTED=None)
                 .drop(["MEASUREMENT_VALUE_EXTRACTED", "IS_VALUE_EXTRACTED"]))
-    return(data)
+    return(data, extracted_info)
 
 """Setting up the parser arguments."""
 def get_parser_arguments():
@@ -73,11 +74,14 @@ if __name__ == "__main__":
     
     #### Data processing
     ## Raw data
-    data = get_orig_omop_id_data_parquet(omop_concept_ids=args.omop, 
+    data = get_orig_omop_id_data_parquet(omop_concept_id=args.omop, 
                                          columns=["FINNGENID", "SEX", "EVENT_AGE", "TEST_OUTCOME", "TEST_OUTCOME_IMPUTED", "MEASUREMENT_VALUE_HARMONIZED", "MEASUREMENT_UNIT_HARMONIZED", "MEASUREMENT_VALUE", "MEASUREMENT_UNIT", "APPROX_EVENT_DATETIME"])
-    extract_data = get_extract_omop_id_data_parquet(omop_concept_ids=args.omop)
+    extract_data, extracted_info = get_extract_omop_id_data_parquet(omop_concept_id=args.omop)
+    # remove rows without values but extracted info from data
+    data = data.filter(~(pl.col("FINNGENID").is_in(extracted_info["FINNGENID"]) & pl.col("APPROX_EVENT_DATETIME").is_in(extracted_info["APPROX_EVENT_DATETIME"]) & pl.col("MEASUREMENT_VALUE").is_null()))
+    # Now we can join
     extract_data = extract_data.select(data.columns)
-    all_data = pl.concat([data, extract_data])
+    data = pl.concat([data, extract_data])
     ## Sorting
     data = data.sort(["FINNGENID", "APPROX_EVENT_DATETIME"], descending=True)
     data = data.rename({"APPROX_EVENT_DATETIME": "DATE", "MEASUREMENT_VALUE": "VALUE", "TEST_OUTCOME": "ABNORM", "MEASUREMENT_UNIT": "UNIT", "MEASUREMENT_VALUE_HARMONIZED": "VALUE_FG", "MEASUREMENT_UNIT_HARMONIZED": "UNIT_FG", "TEST_OUTCOME_IMPUTED":"ABNORM_FG"})

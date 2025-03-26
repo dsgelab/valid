@@ -1,7 +1,19 @@
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+import polars as pl
 
+def egfr_transform(data):
+    data = data.to_pandas()
+    data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE"]/61.9 )**(-0.329))*(0.993**data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "EVENT_AGE"])*144
+    data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "VALUE"]/61.9 )**(-1.209))*(0.993**data.loc[np.logical_and(data["VALUE"] > 62, data["SEX"] == "female"), "EVENT_AGE"])*144
+    data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "VALUE"]/79.6 )**(-0.411))*(0.993**data.loc[np.logical_and(data["VALUE"] <= 80, data["SEX"] == "male"), "EVENT_AGE"])*141
+    data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "VALUE"]/79.6 )**(-1.209))*(0.993**data.loc[np.logical_and(data["VALUE"] > 80, data["SEX"] == "male"), "EVENT_AGE"])*141
+    data = data.assign(VALUE = data["VALUE_TRANSFORM"])
+    data = data.drop("VALUE_TRANSFORM", axis=1)
+    
+    return(pl.DataFrame(data))
+    
 def get_abnorm_func_based_on_name(lab_name):
     if lab_name == "tsh": return(tsh_abnorm)
     if lab_name == "hba1c": return(hba1c_abnorm)
@@ -16,66 +28,87 @@ def get_abnorm_func_based_on_name(lab_name):
 
 """Individual ABNORMity with grey area 2.5-4"""
 def tsh_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
     data.loc[data[value_col_name] < 4,"ABNORM_CUSTOM"] = 0
     data.loc[data[value_col_name] > 2.5,"ABNORM_CUSTOM"] = 0.5
     data.loc[data[value_col_name] >= 4,"ABNORM_CUSTOM"] = 1
     data.loc[data[value_col_name] < 0.4,"ABNORM_CUSTOM"] = -1
-    return(data)
+    return(pl.DataFrame(data))
 
 def gluc_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
     data.loc[:,"ABNORM_CUSTOM"] = 0
     data.loc[data[value_col_name] >= 7, "ABNORM_CUSTOM"] = 1
     data.loc[data[value_col_name] < 4, "ABNORM_CUSTOM"] = -1
-    return(data)
+    return(pl.DataFrame(data))
 
 """Based on what andrea sent."""
 def alat_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
     data.loc[:,"ABNORM_CUSTOM"] = 0
     data.loc[data[value_col_name] > 45, "ABNORM_CUSTOM"] = 1
-    return(data)
+    return(pl.DataFrame(data))
+
 """Based on what andrea sent."""
 def asat_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
     data.loc[:,"ABNORM_CUSTOM"] = 0
     data.loc[data[value_col_name] > 35, "ABNORM_CUSTOM"] = 1
-    return(data)
+    return(pl.DataFrame(data))
 
 """Abnormality for cystatin c"""
 def cystc_abnorm(data, value_col_name):
+    data = data.to_pandas()
+
     data.loc[data[value_col_name] <= 1.2,"ABNORM_CUSTOM"] = 0
     data.loc[data[value_col_name] > 1.2,"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data[value_col_name] > 1, data.EVENT_AGE<=50),"ABNORM_CUSTOM"] = 1
-    return(data)   
+    return(pl.DataFrame(data))
     
 """Individual ABNORMity >42mmol/l also theoretically should be at least 20 but this does not have a 
    diagnostic value aparently"""
 def hba1c_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
     data.loc[data[value_col_name] > 42,"ABNORM_CUSTOM"] = 1
     data.loc[data[value_col_name] > 47,"ABNORM_CUSTOM"] = 2
     data.loc[data[value_col_name] <= 42,"ABNORM_CUSTOM"] = 0
-    return(data)
+    return(pl.DataFrame(data))
 
 """Based on FinnGen ABNORMity column have only normal and ABNORM."""
 def simple_abnorm(data):
+    data = data.to_pandas()
+
     data.loc[np.logical_and(data.ABNORM != "N", data.ABNORM.notnull()), "ABNORM"] = 1
     data.loc[data.ABNORM == "N","ABNORM"] = 0
-    return(data)
+    return(pl.DataFrame(data))
     
 """Based on FinnGen ABNORMity column have normal (0), high (-1), and low (1).""" 
 def three_level_abnorm(data):
+    data = data.to_pandas()
+
     data.loc[data.ABNORM == "N","ABNORM"] = 0
     data.loc[data.ABNORM == "L","ABNORM"] = -1
     data.loc[data.ABNORM == "H","ABNORM"] = 1
-    return(data)
+    return(pl.DataFrame(data))
 
 def ldl_abnorm(data):
+    data = data.to_pandas()
+
     data.loc[data.VALUE <= 5.3,"ABNORM_CUSTOM"] = 0
     data.loc[data.VALUE > 5.3,"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data.EVENT_AGE <= 49, data.VALUE > 4.7),"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data.EVENT_AGE <= 29, data.VALUE > 4.3),"ABNORM_CUSTOM"] = 1
-    return(data)
+    return(pl.DataFrame(data))
 
 """Based on transformed kreatinine to eGFR."""
 def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
+    data = data.to_pandas()
+
     # 0-39 -> >88
     data.loc[np.logical_and(data[value_col_name] < 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data[value_col_name] >= 89, round(data.EVENT_AGE) <=39),"ABNORM_CUSTOM"] = 0
@@ -91,17 +124,21 @@ def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
     # 70+ -> >58
     data.loc[np.logical_and(data[value_col_name] < 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data[value_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
-    return(data)
+    return(pl.DataFrame(data))
 
 def add_measure_counts(data):
+    data = data.to_pandas()
+
     data.DATE = data.DATE.astype("datetime64[ns]")
     n_measures = data.groupby("FINNGENID").agg({"DATE": [("N_YEAR", lambda x: len(set(x.dt.year)))], "VALUE": len}).reset_index()
     n_measures.columns = ["FINNGENID", "N_YEAR", "N_MEASURE"]
     data = pd.merge(data, n_measures, on="FINNGENID", how="left")
-    return(data)
+    return(pl.DataFrame(data))
 
 
 def add_set(unique_data, test_pct=0.1, valid_pct=0.1):
+    unique_data = unique_data.to_pandas()
+
     """Adds SET column to data based on random split of individuals.
        Data passed must be unique data with only one row per individual."""
     data_train, data_rest = train_test_split(unique_data, shuffle=True, random_state=3291, test_size=(valid_pct+test_pct), train_size=1-(valid_pct+test_pct), stratify=unique_data.y_DIAG)
@@ -116,4 +153,4 @@ def add_set(unique_data, test_pct=0.1, valid_pct=0.1):
     unique_data.loc[unique_data.FINNGENID.isin(data_valid.FINNGENID),"SET"] = 1
     unique_data.loc[unique_data.FINNGENID.isin(data_test.FINNGENID),"SET"] = 2
     print(unique_data.SET.value_counts(dropna=False))
-    return(unique_data)
+    return(pl.DataFrame(unique_data))
