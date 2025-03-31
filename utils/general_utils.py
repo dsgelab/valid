@@ -35,9 +35,15 @@ def logging_print(text):
 #                 Reading                                                 #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import polars as pl
-def read_file(full_file_path):
+def read_file(full_file_path,
+              schema=None) -> pl.DataFrame:
     if full_file_path.endswith(".csv"):
-        return pl.read_csv(full_file_path, try_parse_dates=True)
+        if not schema:
+            return pl.read_csv(full_file_path, try_parse_dates=True)
+        else:
+            return pl.read_csv(full_file_path, 
+                               schema_overrides=schema,
+                               null_values="NA")
     elif full_file_path.endswith(".parquet"):
         return pl.read_parquet(full_file_path)
     else:
