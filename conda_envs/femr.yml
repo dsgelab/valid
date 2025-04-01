@@ -1,0 +1,13 @@
+name: femr
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - ipykernel
+  - numpy=2.2.3
+  - conda-pack
+  - pip
+  - tqdm
+  - polars
+  - scipy
+  - scikit-learn

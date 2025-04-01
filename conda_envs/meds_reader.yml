@@ -1,0 +1,14 @@
+name: optuna_python
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - pandas
+  - numpy=1.26.4
+  - ipykernel
+  - conda-pack
+  - pip
+  - tqdm
+  - polars
+  - bazel # needed dependency for meds_reader
