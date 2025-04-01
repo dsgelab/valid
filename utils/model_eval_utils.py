@@ -189,27 +189,27 @@ def set_metrics(pred_data: pl.DataFrame,
 import polars as pl
 def conf_matrix_dfs(pred_data, y_goal_col, y_pred_col, all_conf_mats):
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=0)
-    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
-    crnt_conf_mats.loc[:,"SET"] = set_names[0]
-    all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
+    crnt_conf_mats = pl.DataFrame({"all": cm[0].flatten(), "SET": set_names[0]})
+    all_conf_mats = pl.concat([all_conf_mats, crnt_conf_mats])
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=1)
-    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
-    crnt_conf_mats.loc[:,"SET"] = set_names[1]
-    all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
+    crnt_conf_mats = pl.DataFrame({"all": cm[0].flatten(), "SET": set_names[1]})
+    all_conf_mats = pl.concat([all_conf_mats, crnt_conf_mats])
     cm = conf_matrix(pred_data, y_goal_col, y_pred_col, set=2)
-    crnt_conf_mats = pd.DataFrame.from_dict({"all": cm[0].flatten()}, orient="index")
-    crnt_conf_mats.loc[:,"SET"] = set_names[2]
-    all_conf_mats = pd.concat([all_conf_mats, crnt_conf_mats])
+    crnt_conf_mats = pl.DataFrame({"all": cm[0].flatten(), "SET": set_names[2]})
+    all_conf_mats = pl.concat([all_conf_mats, crnt_conf_mats])
     
     return(all_conf_mats)
 
 import sklearn.metrics as skm
 def conf_matrix(pred_data, y_goal_col, y_pred_col, set=1, title=""):
-    set_data = pred_data.loc[pred_data.SET == set]
-    set_data = set_data.loc[set_data.loc[:,y_pred_col].notnull()]
-    set_data = set_data.loc[set_data.loc[:,y_goal_col].notnull()]
-    cm_norm = skm.confusion_matrix(set_data.loc[:,y_goal_col].values, set_data.loc[:,y_pred_col].values, normalize="true")
-    cm = skm.confusion_matrix(set_data.loc[:,y_goal_col].values, set_data.loc[:,y_pred_col].values)
+    set_data = pred_data.filter(pl.col("SET") == set)
+    set_data = set_data.filter(pl.col(y_goal_col).is_not_null() & pl.col(y_pred_col).is_not_null())
+
+    cm_norm = skm.confusion_matrix(set_data.get_column(y_goal_col).to_numpy(),
+                                   set_data.get_column(y_pred_col).to_numpy(), 
+                                   normalize="true")
+    cm = skm.confusion_matrix(set_data.get_column(y_goal_col).to_numpy(),
+                              set_data.get_column(y_pred_col).to_numpy())
     return(cm, cm_norm)
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -223,8 +223,8 @@ def eval_subset(data: pl.DataFrame,
                 y_cont_pred_col: str, 
                 y_goal_col: str, 
                 y_cont_goal_col: str, 
-                out_dir=None, 
-                out_name=None, 
+                plot_path=None, 
+                down_path=None, 
                 subset_name="all", 
                 n_boots=500, 
                 train_type="cont") -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -241,10 +241,10 @@ def eval_subset(data: pl.DataFrame,
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # # 
     if y_cont_goal_col in data.columns:
         g = plot_observerd_vs_predicted(data, y_cont_goal_col, y_cont_pred_col, y_goal_col, train_type == "bin")
-        if out_dir: g.savefig(out_dir + "plots/" + out_name + "_" + get_date() + "_scatter.png", dpi=300)
+        if plot_path: g.savefig(plot_path + subset_name + "_scatter_" + get_date() + ".png", dpi=300)
         g, _, _ = plot_observed_vs_probability_min5(data, y_cont_goal_col, y_cont_pred_col)
-        if out_dir and out_name:
-            g.savefig(out_dir + "down/" + get_date() + "/" + out_name + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
+        if down_path:
+            g.savefig(down_path + subset_name + "_scatter_min5_" + get_date() + ".png", dpi=300)
 
     all_conf_mats = conf_matrix_dfs(data, y_goal_col, y_pred_col, all_conf_mats)
 

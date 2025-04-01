@@ -15,13 +15,14 @@ def pretty_int(int_no):
         return(str(round(int_no, 0)))
     
 import polars as pl
+from general_utils import read_file
 def get_plot_names(col_names: list[str], 
                    lab_name: str,
                    omop_mapping_path="/home/ivm/valid/data/extra_data/upload/kanta_omop_mappings_counts.csv") -> list[str]:
     """Get the plot names for the columns. 
        Prettier/more readable names for output. OMOP mapping is used for lab values."""
-    kanta_omop_map = pl.read_csv(omop_mapping_path)
-    kanta_omop_map = dict(zip(kanta_omop_map["measurement_concept_id"].astype(str), kanta_omop_map["concept_name"]))
+    kanta_omop_map = read_file(omop_mapping_path, schema={"measurement_concept_id": pl.Utf8, "concept_name": pl.Utf8})
+    kanta_omop_map = dict(zip(kanta_omop_map["measurement_concept_id"].to_list(), kanta_omop_map["concept_name"].to_list()))
     new_names = []
     if lab_name == "hba1c": lab_name = "HbA1c"
     if lab_name == "egfr": lab_name == "eGFR"
@@ -61,6 +62,7 @@ def get_plot_names(col_names: list[str],
     
 import numpy as np
 import polars as pl
+from collections.abc import Iterable
 def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
     """Rounds a column to the nearest 5 and replaces values with less than 5 counts with the nearest value with 5 counts.
         Returns the new column and the min and max values of the column."""
@@ -161,10 +163,9 @@ def plot_observed_vs_probability_min5(data: pl.DataFrame,
                                      col_name_x: str, 
                                      col_name_y: str) -> tuple[plt.Figure, pl.Series, pl.Series]:
     sns.set_style('whitegrid')
-    data_temp = data.copy()
-    newcol_x, min_val_x, max_val_x = round_column_min5(data_temp[col_name_x])
-    if all(data_temp[col_name_y] <= 1.0): data_temp[col_name_y] = data_temp[col_name_y]*100
-    newcol_y, min_val_y, max_val_y = round_column_min5(data_temp[col_name_y])
+    newcol_x, min_val_x, max_val_x = round_column_min5(data[col_name_x])
+    if all(data[col_name_y] <= 1.0): data = data.with_columns(pl.col(col_name_y)*100)
+    newcol_y, min_val_y, max_val_y = round_column_min5(data[col_name_y])
 
     # Show the joint distribution using kernel density estimation
     g = sns.jointplot(x=newcol_x, y=newcol_y, kind="hex", mincnt=5, cmap="twilight_shifted", marginal_kws=dict(stat="density", kde=True, discrete=True, color="#564D65"))
@@ -302,7 +303,9 @@ def plot_calibration(y_true: Iterable[int],
     if ax1 is None:  fig, (ax1,ax2) = plt.subplots(2,figsize=(15,7), sharex=True, sharey=False, height_ratios=[1, .5])
     if bin_type != "equal": bins = np.quantile(y_probs, np.arange(0,1.1,0.1))
     else: bins=np.arange(0, 1.1, 0.1)
-    print(bins)
+
+    y_true = np.asarray(y_true)
+    y_probs = np.asarray(y_probs)
 
     pred = np.array([y_probs[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean() for b in range(1,len(bins))])
     obs = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean()  for b in range(1,len(bins))])
@@ -340,17 +343,16 @@ def plot_calibration(y_true: Iterable[int],
 
     if not ax2 is None:
         if fg_down:
-            safe_cases = {"valid_probs": y_probs[y_true==1].copy()*100}
-            safe_cases, _, _ = round_column_min5(safe_cases, "valid_probs")
-            safe_controls = {"valid_probs": y_probs[y_true==0].copy()*100}
-            safe_controls, _, _ = round_column_min5(safe_controls, "valid_probs")
-            safe = pd.concat([safe_cases, safe_controls])
-            labels = pd.concat([y_true[y_true==1], y_true[y_true==0]])
+            safe_cases, _, _ = round_column_min5(y_probs[y_true==1].copy()*100)
+            safe_controls, _, _ = round_column_min5( y_probs[y_true==0].copy()*100)
+            safe = pl.Series(np.concatenate([safe_cases, safe_controls]))
+            labels = pl.concat([pl.Series(y_true[y_true == 1]), pl.Series(y_true[y_true == 0])])
         else:
-            safe = y_probs*100
-            labels = y_true
+            safe = pl.Series((y_probs*100).squeeze())
+            labels = pl.Series(y_true.squeeze())
         sns.boxplot(x=safe/100, 
-                    y=pd.Categorical(labels.map({0: "Control", 1: "Case"}), categories=["Control", "Case"]), 
+                    y=pl.Series(labels.map_elements(lambda x: "Control" if x == 0 else "Case", return_dtype=pl.Utf8),
+                                dtype=pl.Enum(["Control", "Case"])), 
                     ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, 
                     flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
         ax2.set_xlabel('Predicted Probability')

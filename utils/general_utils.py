@@ -39,9 +39,13 @@ def read_file(full_file_path,
               schema=None) -> pl.DataFrame:
     if full_file_path.endswith(".csv"):
         if not schema:
-            return pl.read_csv(full_file_path, try_parse_dates=True)
+            return pl.read_csv(full_file_path, 
+                               infer_schema_length=100000,
+                               try_parse_dates=True,
+                               null_values="NA")
         else:
             return pl.read_csv(full_file_path, 
+                               infer_schema_length=100000,
                                schema_overrides=schema,
                                null_values="NA")
     elif full_file_path.endswith(".parquet"):

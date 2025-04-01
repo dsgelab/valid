@@ -2,8 +2,8 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, read_file
-from model_eval_utils import get_train_type, create_report, eval_subset
-from model_fit_utils import create_optuna_study, get_optim_precision_recall_cutoff
+from model_eval_utils import get_train_type, create_report, eval_subset, get_optim_precision_recall_cutoff
+from model_fit_utils import create_optuna_study
 from processing_utils import get_abnorm_func_based_on_name 
 from plot_utils import create_report_plots, get_plot_names
 # Standard stuff
@@ -27,8 +27,8 @@ def get_cont_goal_col_name(goal: str,
        If first part of goal name in column names, i.e. y_MEDIAN in the case of y_MEDIAN_ABNORM, returns the first part.
        Otherwise returns y_MEAN. If not present, certain plotting will be skipped"""
     # Binary prediction tasks
+    goal_split = goal.split("_")
     if goal_split[-1] == "ABNORM" or args.goal == "y_DIAG":
-        goal_split = goal.split("_")
         new_goal = "_".join(goal_split[0:len(goal_split)-1])
         if not new_goal in col_names: new_goal = "y_MEAN"
 
@@ -49,12 +49,12 @@ def get_out_data(data: pl.DataFrame,
                  y_all: pl.DataFrame, 
                  metric: str,
                  lab_name: str,
-                 goal: str):
+                 goal: str) -> pl.DataFrame:
     """Returns the relevant columns from the input data with the predictions of the model.
        Not that abnormality here is the case/control status.
        Columns:
             - `FINNGENID`: Individual ID
-            - `EVENT_AGE`: Age at event (TODO need to check what exact time this is)
+            - `EVENT_AGE`: Age at event (for controls last lab record and for cases )
             - `LAST_VAL_DATE`: Prediction date (TODO need to check what exact time this is)
             - `SET`: Train, validation or test set
             - `N_PRIOR_ABNORMS`: Number of prior abnormal values
@@ -68,7 +68,7 @@ def get_out_data(data: pl.DataFrame,
     #                 Base data                                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     out_data = (data.select(["FINNGENID", "EVENT_AGE", "LAST_VAL_DATE", "SET", "ABNORM"])
-                    .rename({"DATE": "LAST_VAL_DATE", "ABNORM": "N_PRIOR_ABNORMS"})
+                    .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
                     .unique())
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -77,9 +77,12 @@ def get_out_data(data: pl.DataFrame,
     ################# PROBABLY DEPRECATED #####################################
     if get_train_type(metric) == "cont":    
         y_pred = model_final.predict(X_all.to_numpy())
-        out_data = out_data.assign(VALUE = y_pred)
+        out_data = out_data.with_columns([
+                            pl.Series("VALUE", y_pred),
+                            pl.Series("TRUE_VALUE", y_all),
+        ])
+        # Abnormality prediction based on the continuous value
         out_data = get_abnorm_func_based_on_name(lab_name)(out_data, "VALUE").rename(columns={"ABNORM_CUSTOM": "ABNORM_PREDS"})
-        out_data = out_data.assign(TRUE_VALUE = y_all)
         out_data = get_abnorm_func_based_on_name(lab_name)(out_data, "TRUE_VALUE").rename(columns={"ABNORM_CUSTOM": "TRUE_ABNORM"})
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -109,28 +112,33 @@ def get_out_data(data: pl.DataFrame,
         out_data = out_data.with_columns(
             (pl.col("ABNORM_PROBS") > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS")
         )
+
     return(out_data)
 
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
-                         lab_name: str):
+                         lab_name: str) -> tuple[pl.DataFrame, list]:
+    """Creates a dataframe based on the mean absolute SHAP values of the model. 
+       Also returns the (readable) names of the features in the same order as the SHAP values."""
+    
     new_names = get_plot_names(X_in.columns, lab_name)
-    explanations = explainer.shap_values(X_in.to_numpy())
-    mean_shaps = np.abs(explanations.values).mean(0)
+    explanations = explainer.shap_values(X_in)
+    mean_shaps = np.abs(explanations).mean(0)
     shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
 
     return(shap_importance, new_names)
 
-def save_importances(X_all: pl.DataFrame, 
+def save_importances(X_in: pl.DataFrame, 
                      model_final: xgb.XGBClassifier, 
-                     out_file_name: str,
+                     out_down_path: str,
                      lab_name: str,
-                     date_model_fit: str,
                      pred_descriptor: str) -> None:
     """Saves the feature importances of the model to a csv file. """
-    top_gain, _ = get_shap_importances(X_all, model_final.get_booster().get_dump()[0], lab_name)
+
+    shap_explainer = shap.TreeExplainer(model_final)
+    top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name)
     logging.info(top_gain.head(10))
-    top_gain.write_csv(out_file_name + "down/" + date_model_fit + "/" + lab_name + "xgb_" + pred_descriptor + "_shap_importance_" + get_date() + ".csv")
+    top_gain.write_csv(out_down_path+ "xgb_" + pred_descriptor + "_shap_importance_" + get_date() + ".csv")
       
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
@@ -217,7 +225,8 @@ def optuna_objective(trial: optuna.Trial,
     return evals_result["valid"][eval_metric][-1] 
 
 
-def get_xgb_base_params(metric, lr):
+def get_xgb_base_params(metric: str, 
+                        lr: float) -> dict:
     """Returns the base parameters for the XGBoost model."""
 
     base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 139}
@@ -309,8 +318,9 @@ def create_xgb_dts(data: pl.DataFrame,
                    reweight: int) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, RobustScaler]:
     """Creates the XGBoost data matrices and scales the data."""
     # Need later to be Float for scaling
-    for col in data: 
-        if data.schema[col] == pl.Int64: data.with_columns(pl.col(col).cast(pl.Float64))
+    data = data.with_columns([
+        pl.col(col).cast(pl.Float64) for col, dtype in data.schema.items() if isinstance(dtype, pl.Int64)
+    ])
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Split data                                              #
@@ -330,11 +340,11 @@ def create_xgb_dts(data: pl.DataFrame,
     #                 Scaling                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
     scaler_base = RobustScaler()
-    
-    X_train= pl.DataFrame(scaler_base.fit_transform(X_train.to_numpy()), schema=X_train.schema)
-    X_valid= pl.DataFrame(scaler_base.transform(X_valid.to_numpy()), schema=X_valid.schema)
-    X_test= pl.DataFrame(scaler_base.transform(X_test.to_numpy()), schema=X_test.schema)
-    X_all_scaled = pl.DataFrame(scaler_base.transform(X_all.to_numpy()), schema=X_all.schema)
+    scaler_base.set_output(transform="polars")
+    X_train= pl.DataFrame(scaler_base.fit_transform(X_train), schema=X_train.schema)
+    X_valid= pl.DataFrame(scaler_base.transform(X_valid), schema=X_valid.schema)
+    X_test= pl.DataFrame(scaler_base.transform(X_test), schema=X_test.schema)
+    X_all_scaled = pl.DataFrame(scaler_base.transform(X_all), schema=X_all.schema)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 XGBoost datatype                                        #
@@ -383,7 +393,11 @@ def get_data_and_pred_list(file_path_labels: str,
         atcs = read_file(file_path_atcs)
         data = data.join(atcs, on="FINNGENID", how="left")
     if file_path_sumstats != "": 
-        sumstats = read_file(file_path_sumstats)
+        sumstats = read_file(file_path_sumstats,
+                             schema={"SEQ_LEN": pl.Float64,
+                                     "MIN_LOC": pl.Float64,
+                                     "MAX_LOC": pl.Float64,
+                                     "FIRST_LAST": pl.Float64})
         if "SET" in sumstats.columns: sumstats = sumstats.drop("SET") # dropping duplicate info if present
         data = data.join(sumstats, on="FINNGENID", how="left")
     if file_path_second_sumstats != "": 
@@ -403,15 +417,15 @@ def get_data_and_pred_list(file_path_labels: str,
     X_cols = []
     for pred in preds:
         if pred == "ICD_MAT":
-            [X_cols.append(ICD_CODE) for ICD_CODE in icds.columns[np.logical_and(icds.columns != "FINNGENID", icds.columns != "LAST_ICD_DATE")]]
+            [X_cols.append(ICD_CODE) for ICD_CODE, _ in icds.schema.items() if ICD_CODE != "FINNGENID" and ICD_CODE != "LAST_ICD_DATE"]
         elif pred == "ATC_MAT":
-            [X_cols.append(ATC_CODE) for ATC_CODE in atcs.columns[np.logical_and(atcs.columns != "FINNGENID", atcs.columns != "LAST_ATC_DATE")]]
+            [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_ATC_DATE"]
         elif pred == "SUMSTATS":
-            [X_cols.append(SUMSTAT) for SUMSTAT in sumstats.columns[np.logical_and(sumstats.columns != "FINNGENID", sumstats.columns != "LAST_VAL_DATE")]]
+            [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
         elif pred == "SECOND_SUMSTATS":
-            [X_cols.append(SUMSTAT) for SUMSTAT in second_sumstats.columns[np.logical_and(second_sumstats.columns != "FINNGENID", second_sumstats.columns != "S_LAST_VAL_DATE")]]
+            [X_cols.append(SUMSTAT) for SUMSTAT, _ in second_sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "S_LAST_VAL_DATE"]
         elif pred == "LAB_MAT":
-            [X_cols.append(LAB_MAT) for LAB_MAT in labs.columns[labs.columns != "FINNGENID"]]
+            [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID"]
         else:
             X_cols.append(pred)
 
@@ -422,7 +436,7 @@ def get_parser_arguments():
     parser = argparse.ArgumentParser()
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
-    parser.add_argument("--date_model_fit", type=str, help="Original date of model fitting.", required=True)
+    parser.add_argument("--date_model_fit", type=str, help="Original date of model fitting.", default="")
 
     # Data paths
     parser.add_argument("--file_path_labels", type=str, help="Path to outcome label data.", default="")
@@ -472,11 +486,17 @@ if __name__ == "__main__":
 
     # File names
     study_name = "xgb_" + str(args.metric) + "_" + args.pred_descriptor +  "_reweight" + str(args.reweight) # for optuna
-    out_dir = args.res_dir + study_name + "/"; out_file_name = out_dir + args.lab_name; out_plot_name = out_dir + "plots/" + args.lab_name
-    log_file_name = args.lab_name + "_" + args.pred_descriptor + "_preds_" + get_datetime()
     if args.date_model_fit == "": args.date_model_fit = get_date()
+
+    out_dir = args.res_dir + study_name + "/"; 
+    out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.date_model_fit + "/" 
+    out_plot_dir = out_dir + "plots/" + args.date_model_fit + "/"
+    out_plot_path = out_plot_dir + args.lab_name + "_"
+    out_down_dir = out_dir + "down/" + args.date_model_fit + "/"
+    out_down_path = out_down_dir + args.lab_name + "_"
+    log_file_name = args.lab_name + "_" + args.pred_descriptor + "_preds_" + get_datetime()
     init_logging(out_dir, log_file_name, logger, args)
-    make_dir(out_dir + "plots/"); make_dir(out_dir + "down/"); make_dir(out_dir + "down/" + args.date_model_fit + "/")
+    make_dir(out_model_dir); make_dir(out_plot_dir); make_dir(out_down_dir)
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Preparing data                                          #
@@ -489,12 +509,18 @@ if __name__ == "__main__":
                                           file_path_labs=args.file_path_labs, 
                                           goal=args.goal, 
                                           preds=args.preds)
-    X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, dtrain, dvalid, scaler_base = create_xgb_dts(data=data, X_cols=X_cols, goal=args.goal, reweight=args.reweight)
-    X_all_unscaled.write_csv(out_file_name + "_Xall_unscaled_" + get_date() + ".csv")
+    X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, dtrain, dvalid, scaler_base = create_xgb_dts(data=data, 
+                                                                                                                                   X_cols=X_cols, 
+                                                                                                                                   y_goal=args.goal, 
+                                                                                                                                   reweight=args.reweight)
+    X_all_unscaled.write_csv(out_model_dir + "Xall_unscaled_" + get_date() + ".csv")
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if args.run_step0 == 1: run_speed_test(dtrain=dtrain, dvalid=dvalid, metric=args.metric, lr=args.lr) # to test learning rate
+    if args.run_step0 == 1: run_speed_test(dtrain=dtrain, 
+                                           dvalid=dvalid, 
+                                           metric=args.metric, 
+                                           lr=args.lr) # to test learning rate
     else:
         if not args.skip_model_fit:
             best_params = run_optuna_optim(dtrain=dtrain, dvalid=dvalid, 
@@ -515,38 +541,86 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-            save_importances(labels=X_train.columns, 
+            save_importances(X_in=X_train, 
                              model_final=model_final, 
-                             out_file_name=out_file_name,
+                             out_down_path=out_down_path,
                              lab_name=args.lab_name,
-                             date_model_fit=args.date_model_fit,
-                            pred_descriptor=args.pred_descriptor)
-            pickle.dump(model_final, open(out_file_name + "_model_" + get_date() + ".pkl", "wb"))
-            pickle.dump(scaler_base, open(out_file_name + "_scaler_" + get_date() + ".pkl", "wb"))
+                             pred_descriptor=args.pred_descriptor)
+            pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
+            pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
         else:
-            model_final = pickle.load(open(out_file_name + "_model_" + get_date() + ".pkl", "rb"))
+            model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
         # SHAP explainer for model
         shap_explainer = shap.TreeExplainer(model_final)
         # Model predictions
-        out_data = get_out_data(data, model_final, X_all, y_all, args)
-        out_data.write_csv(out_file_name + "_preds_" + get_date() + ".csv")  
+        out_data = get_out_data(data=data, 
+                                model_final=model_final, 
+                                X_all=X_all, 
+                                y_all=y_all, 
+                                metric=args.metric,
+                                lab_name=args.lab_name,
+                                goal=args.goal)
+        out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Evaluations                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #         
         crnt_report = create_report(model_final, out_data, display_scores=[args.metric, "aucpr"], metric=args.metric)
-        pickle.dump(crnt_report, open(out_file_name + "_report_" + get_date() + ".pkl", "wb"))  
+        pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
 
         importances, new_names = get_shap_importances(X_all, shap_explainer, args.lab_name)
+
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 0).select("TRUE_ABNORM"), 
+                                  out_data.filter(pl.col("SET") == 0).select("ABNORM_PROBS"),
+                                  out_data.filter(pl.col("SET") == 0).select("ABNORM_PREDS"),
+                                  importances=importances)
+        fig.savefig(out_plot_path + "train_report_" + get_date() + ".png")
+        
         fig = create_report_plots(out_data.filter(pl.col("SET") == 1).select("TRUE_ABNORM"), 
                                   out_data.filter(pl.col("SET") == 1).select("ABNORM_PROBS"),
                                   out_data.filter(pl.col("SET") == 1).select("ABNORM_PREDS"),
                                   importances=importances)
+        fig.savefig(out_plot_path + "val_report_" + get_date() + ".png")
         
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 2).select("TRUE_ABNORM"),
+                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PROBS"),
+                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PREDS"),
+                                    importances=importances)
+        fig.savefig(out_plot_path + "test_report_" + get_date() + ".png")
+
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 0).select("TRUE_ABNORM"),
+                                    out_data.filter(pl.col("SET") == 0).select("ABNORM_PROBS"),
+                                    out_data.filter(pl.col("SET") == 0).select("ABNORM_PREDS"),
+                                    importances=importances,
+                                    fg_down=True)
+        fig.savefig(out_down_path + "train_report_" + get_date() + ".png")
+        fig.savefig(out_down_path + "train_report_" + get_date() + ".pdf")
         
-        fig.savefig(out_plot_name + "_report_" + get_date() + ".png"); fig.savefig(out_plot_name + "_report_" + get_date() + ".pdf")   
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 1).select("TRUE_ABNORM"), 
+                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PROBS"),
+                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PREDS"),
+                                  importances=importances,
+                                  fg_down=True)
+        fig.savefig(out_down_path + "val_report_" + get_date() + ".png")
+        fig.savefig(out_down_path + "val_report_" + get_date() + ".pdf")   
         
-        eval_metrics, all_conf_mats = eval_subset(out_data, "ABNORM_PREDS", "ABNORM_PROBS", "TRUE_ABNORM", "TRUE_VALUE", out_plot_name, out_dir, "all", args.n_boots, get_train_type(args.metric))
+        fig = create_report_plots(out_data.filter(pl.col("SET") == 2).select("TRUE_ABNORM"),
+                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PROBS"),
+                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PREDS"),
+                                    importances=importances,
+                                    fg_down=True)
+        fig.savefig(out_down_path + "test_report_" + get_date() + ".png")
+        fig.savefig(out_down_path + "test_report_" + get_date() + ".pdf")
+
+        eval_metrics, all_conf_mats = eval_subset(data=out_data, 
+                                                  y_pred_col="ABNORM_PREDS", 
+                                                  y_cont_pred_col="ABNORM_PROBS", 
+                                                  y_goal_col="TRUE_ABNORM", 
+                                                  y_cont_goal_col="TRUE_VALUE", 
+                                                  plot_path=out_dir, 
+                                                  down_path=out_down_path, 
+                                                  subset_name="all", 
+                                                  n_boots=args.n_boots, 
+                                                  train_type=get_train_type(args.metric))
         if args.save_csv == 1:
-            eval_metrics.loc[eval_metrics.F1.notnull()].write_csv(out_file_name + "_evals_" + get_date() + ".csv", sep=",")
-            all_conf_mats.write_csv(out_file_name + "_confmats_" + get_date() + ".csv", sep=",")
+            eval_metrics.filter(pl.col("F1").is_not_null()).write_csv(out_down_path + "evals_" + get_date() + ".csv", separator=",")

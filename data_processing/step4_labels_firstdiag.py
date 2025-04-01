@@ -17,16 +17,19 @@ def get_controls(data: pl.DataFrame,
                  months_buffer=0):
     """Get controls based on the data.
          Controls are defined as individuals without a diagnosis and data-based diagnosis."""
-    # Removing all individuals with a dia   
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Controls do not have diagnosis # # # # # # # # # # # # #
     controls = data.filter(pl.col("DATA_DIAG_DATE").is_null())
-    print
+
     # Figuring out their last measurements (mostly for plotting in the end - predicting control status)
     controls_end_data = (controls.sort(["FINNGENID", "DATE"], descending=True)
                                  .group_by("FINNGENID")
                                  .head(1)
                                  .select(["FINNGENID", "DATE", "EVENT_AGE", "VALUE", "ABNORM_CUSTOM"])
-                                 .rename({"DATE":"START_DATE", "EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"}))
-    controls_end_data = controls_end_data.with_columns(pl.col("START_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE"))
+                                 .rename({"DATE": "START_DATE", "EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"}))
+    controls_end_data = controls_end_data.with_columns(
+                            pl.col("START_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE")
+                        )
     controls = controls.join(controls_end_data, on="FINNGENID", how="left")
     controls = controls.with_columns(y_DIAG=0)
     # Removing cases with prior abnormal data - if wanted
@@ -52,15 +55,19 @@ def get_cases(data: pl.DataFrame,
     """Get cases based on the data.
        Cases are defined as individuals with a diagnosis and data-based diagnosis. 
        The start date is the first abnormality that lead to the diagnosis or the first diagnosis date."""
-    # Cases have a diagnosis 
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Cases have diagnosis # # # # # # # # # # # # # # # # # #
     cases = data.filter(pl.col("DATA_DIAG_DATE").is_not_null())
 
-    # Start date is either the first diag date or the first abnormal that lead to the diagnosis minus a buffer of `months_buffer` months
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Date of prediction # # # # # # # # # # # # # # # # # # #
+    # Start date is either the first diag date or the first abnormal that lead to the diagnosis 
+    # minus a buffer of `months_buffer` months
     cases = cases.with_columns(y_DIAG=1, 
                                START_DATE=pl.min_horizontal(["FIRST_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE"]))
-    cases = cases.with_columns(pl.col("START_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE"))
 
-    # Removing cases with prior abnormal data - if wanted
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # No prior abnormal (if wanted) # # # # # # # # # # # # # #
     if(no_abnormal_cases == 1):
         case_prior_data = cases.filter(pl.col("DATE") < pl.col("START_DATE"))
         remove_fids = (case_prior_data
@@ -72,13 +79,19 @@ def get_cases(data: pl.DataFrame,
     else:
         remove_fids = set()
 
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Age at prediction time # # # # # # # # # # # # # # # # #
     # Age and value at first abnormality that lead to the data-based diagnosis
     case_ages = (cases.filter(pl.col("DATE")==pl.col("START_DATE"))
                       .rename({"EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"})
                       .select(["FINNGENID", "END_AGE", "y_MEAN", "LAST_ABNORM"])
                       .unique())
     cases = cases.join(case_ages, on="FINNGENID", how="left")
-    
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Removing buffer time from start # # # # # # # # # # # # #
+    cases = cases.with_columns(pl.col("START_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE"))
+
     return(cases, remove_fids)
 
 
