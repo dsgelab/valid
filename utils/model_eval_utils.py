@@ -82,6 +82,7 @@ def bootstrap_metric(metric_func: callable,
 #                 Evaluation metrics                                      #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import sklearn.metrics as skm
+import polars as pl
 def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
     """Returns the optimal probability cutoff for the precision-recall curve."""
 

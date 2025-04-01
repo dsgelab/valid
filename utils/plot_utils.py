@@ -87,7 +87,7 @@ def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
         else: # No new mapping needed
             value_map[crnt_value] = crnt_value
     # mapping the values
-    newcol = col_data.map_elements(lambda x: value_map.get(x, x), return_dtype=pl.Int64)
+    newcol = col_data.map_elements(lambda x: value_map.get(x, x), return_dtype=pl.Float64)
 
     return(newcol, min_val, max_val)
 
@@ -442,8 +442,8 @@ def create_report_plots(y_true: Iterable[int],
             
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #
-    if imp_ax is not None: feature_importance_plot(importances=importances.feature_importance_vals, 
-                                                   feature_labels=importances.feature_name, 
+    if imp_ax is not None: feature_importance_plot(importances=importances["mean_shap"], 
+                                                   feature_labels=importances["labels"], 
                                                    ax=imp_ax)
     confusion_plot(confusion_matrix(y_true, y_preds), labels=confusion_labels, ax=conf_axes)
     if train_type == "bin":

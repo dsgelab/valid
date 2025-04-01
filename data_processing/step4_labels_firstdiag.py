@@ -82,7 +82,9 @@ def get_cases(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Age at prediction time # # # # # # # # # # # # # # # # #
     # Age and value at first abnormality that lead to the data-based diagnosis
-    case_ages = (cases.filter(pl.col("DATE")==pl.col("START_DATE"))
+    # it might be that diag earlier TODO deal with later
+    case_ages = (cases.filter(pl.col("DATE")==pl.col("DATA_FIRST_DIAG_ABNORM_DATE"))
+                      .group_by("FINNGENID").head(1) # bug there might be multiple measurements TODO fix later in earlier steps 
                       .rename({"EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"})
                       .select(["FINNGENID", "END_AGE", "y_MEAN", "LAST_ABNORM"])
                       .unique())
@@ -177,11 +179,14 @@ if __name__ == "__main__":
                             .filter(pl.col("APPROX_EVENT_DAY") < pl.col("START_DATE"))
                             .get_column("FINNGENID"))
         new_data = new_data.filter(~pl.col("FINNGENID").is_in(diag_remove_fids))
+        logging.info("Removed " + str(len(set(diag_remove_fids))) + " individuals because of diagnosis exclusions")
+        pd.DataFrame({"FINNGENID":list(set(diag_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_ctrl-abnorm_fids.csv", sep=",")
+
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 labels                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    labels = new_data.select(["FINNGENID", "y_DIAG", "END_AGE", "SEX","y_MEAN", "START_DATE"]).rename({"END_AGE": "EVENT_AGE"}).unique()
+    labels = new_data.select(["FINNGENID", "y_DIAG", "END_AGE", "SEX","y_MEAN", "START_DATE"]).rename({"END_AGE": "EVENT_AGE"}).unique(subset=["FINNGENID", "y_DIAG"])
     labels = add_set(labels, args.test_pct, args.valid_pct)
     logging_print(f"N rows {len(new_data)}   N indvs {len(labels)}  N cases {sum(labels["y_DIAG"])} pct cases {round(sum(labels["y_DIAG"])/len(labels), 2)*100}%")
 
@@ -199,8 +204,6 @@ if __name__ == "__main__":
     pd.DataFrame({"FINNGENID":list(set(case_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_case-abnorm_fids.csv", sep=",")
     logging.info("Removed " + str(len(set(case_remove_fids))) + " individuals because of controls with prior abnormal or last abnormal if no ctrl abnormal filtering")
     pd.DataFrame({"FINNGENID":list(set(ctrl_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_ctrl-abnorm_fids.csv", sep=",")
-    logging.info("Removed " + str(len(set(diag_remove_fids))) + " individuals because of diagnosis exclusions")
-    pd.DataFrame({"FINNGENID":list(set(diag_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_ctrl-abnorm_fids.csv", sep=",")
 
     new_data.select(["FINNGENID", "SEX", "EVENT_AGE", "DATE", "VALUE", "ABNORM_CUSTOM"]).write_csv(args.res_dir + out_file_name + ".csv", separator=",")
     labels.write_csv(args.res_dir + out_file_name + "_labels.csv", separator=",")
