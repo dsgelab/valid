@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
 # Logging and input
 import logging
 logger = logging.getLogger(__name__)
@@ -18,21 +20,27 @@ import seaborn as sns
 sns.set_style("whitegrid")
 # Statistics/Processing
 import scipy.stats as st
-    
+import warnings
+
 def remove_single_value_outliers(data: pl.DataFrame, 
                                  n_indvs_stats: pd.DataFrame) -> tuple[pl.DataFrame, pd.DataFrame]:
     """This is geared towards eGFR"""
     # Z-scores for each individuals value distributions
-    z_scores = (data.group_by("FINNGENID", maintain_order=True)
-                .agg(pl.col("VALUE").apply(lambda x: st.zscore(x.to_numpy())), return_dtype=pl.Float64)
-                .alias("Z_indv"))
-    data = data.join(z_scores.select(["FINNGENID", "Z_indv"]), on="FINNGENID")
+    data = (data.with_columns(
+                    ((pl.col("VALUE") - pl.col("VALUE").mean().over("FINNGENID")) /
+                     pl.col("VALUE").std().over("FINNGENID")).alias("Z_indv")))
+    # with warnings.catch_warnings(action="ignore"):
+    #     z_scores = (data.group_by("FINNGENID", maintain_order=True)
+    #                 .agg(pl.col("VALUE").map_elements(lambda group_values: st.zscore(group_values.to_numpy())).alias("Z_indv").explode()))
+    #     print(z_scores)
+    #data = data.join(z_scores.select(["FINNGENID", "Z_indv"]), on="FINNGENID")
     # Outliers
-    outliers_high = (data.filter(pl.col("Z_indv">2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW")))
+    print(data.sort(["FINNGENID", "DATE"]))
+    outliers_high = (data.filter(pl.col("Z_indv")>2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
     outliers_high = (data.join(outliers_high, on="FINNGENID")# individuals with single severe outliers 
                          .filter((pl.col("N_ROW")==1) & (pl.col("Z_indv")>5) & (pl.col("VALUE")>500)))
                          
-    outliers_low = (data.filter(pl.col("Z_indv"<-4)).group_by("FINNGENID").agg(pl.len().alias("N_ROW")))
+    outliers_low = (data.filter(pl.col("Z_indv")<-4)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
     outliers_low = (data.join(outliers_low, on="FINNGENID")
                         .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")>53)))
     outliers = pl.concat([outliers_high, outliers_low])
@@ -58,8 +66,9 @@ def remove_severe_value_outliers(data: pl.DataFrame,
 
     out_dir = res_dir + "plots/"; make_dir(out_dir)
     ### Severe z-score outliers
-    data = data.with_columns(pl.col("VALUE").apply(lambda x: st.zscore(x.to_numpy()), return_dtype=pl.Float64).alias("Z"))
-
+    data = data.with_columns(
+        pl.lit(st.zscore(data["VALUE"].to_numpy())).alias("Z")
+    )
     # Make sure not to include single extreme outliers with the value quant. I.e. LDL had one such individual completely skewing the upper box.
     # Log with plots
     if plot:
@@ -74,8 +83,8 @@ def remove_severe_value_outliers(data: pl.DataFrame,
     n_indv = len(set(data["FINNGENID"]))
     n_row_remove = data.filter(pl.col("Z").abs()>=max_z).height
     logger.info("Max z of {} removed values greater than {} and lower than {}".format(max_z, 
-                                                                                      data.filter(pl.col("Z")>=max_z).select(pl.col("Z").min()).to_numpy()[0][0], 
-                                                                                      data.filter(pl.col("Z")<=-max_z).select(pl.col("Z").max()).to_numpy()[0][0]))
+                                                                                      data.filter(pl.col("Z")>=max_z).select(pl.col("VALUE").min()).to_numpy()[0][0], 
+                                                                                      data.filter(pl.col("Z")<=-max_z).select(pl.col("VALUE").max()).to_numpy()[0][0]))
     # Removing
     data = data.filter(pl.col("Z").abs()<max_z)
     # Stats
@@ -96,7 +105,7 @@ def remove_known_outliers(data: pl.DataFrame,
     n_indv = len(set(data["FINNGENID"]))
     if not ref_max: ref_max = data.select(pl.col("VALUE").max()).to_numpy()[0][0]
     if not ref_min: ref_min = data.select(pl.col("VALUE").min()).to_numpy()[0][0]
-    n_outliers = data.filter((pl.col("VALUE")<ref_min) & (pl.col("VALUE")>ref_max)).height
+    n_outliers = data.filter((pl.col("VALUE")<ref_min) | (pl.col("VALUE")>ref_max)).height
     data = data.filter((pl.col("VALUE")>=ref_min) & (pl.col("VALUE")<=ref_max))
     # Stats   
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_known","N_ROWS_NOW"] = data.height
@@ -127,6 +136,7 @@ def custom_abnorm(data: pl.DataFrame,
     data = get_abnorm_func_based_on_name(lab_name)(data, "VALUE")
 
     return(data)
+
 
 def convert_hba1c_data(data, n_indvs_stats, main_unit):
     """Converting % to mmol/mol, assuming all missing now is mmol/mol and rounding values.
@@ -232,13 +242,14 @@ def handle_different_units(data: pl.DataFrame,
     # Keeping first of exact duplicates
     data = data.unique(subset=["FINNGENID", "DATE", "VALUE", "UNIT"], keep="first")
     logging_print("After removing exact duplicates")
+
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Time duplicates                                         #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
-    data = data.unique(subset=["FINNGENID", "DATE"], keep=False)
+    data = data.unique(subset=["FINNGENID", "DATE"], keep="none")
     logging_print("After temporarily removing date duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
@@ -254,7 +265,7 @@ def handle_different_units(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     data = pl.concat([data, dups.select(data.columns)])
     logging_print("After adding back units")
-    logging_print("{:,} individuals with {:,} rows".format(data["FINNGENID"].unique(), data.height))
+    logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
     # Stats
     n_indvs_stats.loc[n_indvs_stats.STEP == "Dups manual","N_ROWS_NOW"] = data.height
@@ -285,6 +296,10 @@ def get_parser_arguments():
     args = parser.parse_args()
     return(args)
 
+def replace_missing_with_extracted(data, n_indvs_stats):
+    data.group_by(["FINNGENID", "DATE"])
+    
+    return(data, n_indvs_stats)
 if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Initial setup                                           #
@@ -304,7 +319,7 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
     data = read_file(args.file_path)
     # Prep
-    n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Dups manual", "Values", "Unit", "Outliers_known", "Outliers", "Outliers_single"]})
+    n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Dups manual", "Values", "Outliers_known", "Outliers", "Outliers_single"]})
     n_indv = len(set(data["FINNGENID"]))
 
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_ROWS_NOW"] = data.height
@@ -344,7 +359,7 @@ if __name__ == "__main__":
     logging.info("Min abnorm " + str(data.filter(pl.col("ABNORM_CUSTOM")>0.0).select(pl.col("VALUE").min()).to_numpy()[0][0]) + " max abnorm " + str(data.filter(pl.col("ABNORM_CUSTOM")>0.0).select(pl.col("VALUE").max()).to_numpy()[0][0]))
     
     # Saving
-    data = data.drop(["Z", "VALUE_QUANT"])
+    data = data.drop(["Z"])
     data.write_parquet(args.res_dir + file_name + ".parquet")
     n_indvs_stats.to_csv(count_dir + file_name + "_counts.csv", sep=",", index=False)
     #Final logging

@@ -61,6 +61,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 """Plots trajectory of lab values for a specific individual. (x=DATE, y=VALUE)"""
 def plot_data(data, fg_id):
+    data = data.to_pandas()
     crnt_data = data.loc[data.FINNGENID == fg_id]
     crnt_data = crnt_data.sort_values("DATE", ascending=True)
     fig, ax = plt.subplots()
@@ -81,16 +82,18 @@ try:
 except ImportError:
     pass
 # From Mathias for FinnGen BigQuery
-def query_to_df(query, **job_config_kwargs):
+def query_to_df(query, **job_config_kwargs) -> pl.DataFrame:
     client = bigquery.Client()
     job_config = bigquery.QueryJobConfig(**job_config_kwargs)
     query_result = client.query(query, job_config=job_config)
-    df = pd.DataFrame([dict(row) for row in query_result])
+    df = pl.DataFrame([dict(row) for row in query_result])
     df = parse_dates(df)
     return(df)
-def parse_dates(df):
+
+def parse_dates(df: pl.DataFrame) -> pl.DataFrame:
     for col in df.columns:
-        if col.endswith("_DATETIME"): df[col] = pd.to_datetime(df[col])
+        if col.endswith("_DATETIME"):
+            df = df.with_column(pl.col(col).str.strptime(pl.Datetime, fmt="%Y-%m-%d %H:%M:%S"))
     return df
 
 # https://stackoverflow.com/questions/7370801/how-do-i-measure-elapsed-time-in-python

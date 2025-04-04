@@ -42,6 +42,8 @@ def get_plot_names(col_names: list[str],
                 new_name = "Last value - " + lab_name
             elif col_name == "IDX_QUANT_50":
                 new_name = "Mid value - " + lab_name
+            elif col_name == "IDX_QUANT_0":
+                new_name = "First value - " + lab_name
             elif col_name == "EVENT_AGE":
                 new_name = "Age"
             elif col_name == "FIRST_LAST":
@@ -54,6 +56,30 @@ def get_plot_names(col_names: list[str],
                 new_name = "Location of max (-days) - " + lab_name
             elif col_name == "REG_COEF":
                 new_name = "Regression coef - " + lab_name
+            elif col_name == "SUM_ABS_CHANGE":
+                new_name = "Sum of absolute change - " + lab_name
+            elif col_name == "MAX_ABS_CHANGE":
+                new_name = "Max of absolute change - " + lab_name
+            elif col_name == "MEAN_ABS_CHANGE":
+                new_name = "Mean of absolute change - " + lab_name
+            elif col_name == "ABNORM":
+                new_name = "Number of prior abnorm - " + lab_name
+            elif col_name == "MEAN_CHANGE":
+                new_name = "Mean change - " + lab_name
+            elif col_name == "MAX_CHANGE":
+                new_name = "Max change - " + lab_name
+            elif col_name == "SUM":
+                new_name = "Sum - " + lab_name
+            elif col_name == "SD":
+                new_name = "Standard deviation - " + lab_name
+            elif col_name == "ABS_ENERG":
+                new_name = "Absolute energy - " + lab_name
+            elif col_name == "SKEW":
+                new_name = "Skew - " + lab_name
+            elif col_name == "KURT":
+                new_name = "Kurtosis - " + lab_name
+            elif col_name == "SEQ_LEN":
+                new_name = "Number of measurements - " + lab_name
             else:
                 new_name = col_name
 
@@ -290,6 +316,7 @@ import seaborn as sns
 import numpy as np
 from collections.abc import Iterable
 import pandas as pd
+import warnings
 def plot_calibration(y_true: Iterable[int], 
                      y_probs: Iterable[float], 
                      ax1=None, 
@@ -307,8 +334,11 @@ def plot_calibration(y_true: Iterable[int],
     y_true = np.asarray(y_true)
     y_probs = np.asarray(y_probs)
 
-    pred = np.array([y_probs[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean() for b in range(1,len(bins))])
-    obs = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean()  for b in range(1,len(bins))])
+    # I expect to see RuntimeWarnings in this block
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        pred = np.array([y_probs[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean() for b in range(1,len(bins))])
+        obs = np.array([y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].mean()  for b in range(1,len(bins))])
     ci = np.array([scipy.stats.beta(0.1 + y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])].sum(), 0.1 + (1-y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]).sum()).ppf([0.025,0.975]) for b in range(1,len(bins))])
 
     # Making sure at least 5 individuals in groups

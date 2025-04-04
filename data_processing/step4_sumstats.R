@@ -11,6 +11,8 @@ library(dplyr)
 library(optparse)
 library(e1071)
 library(lubridate)
+library(arrow)
+
 options(width=250)
 
 args_list <- list(
@@ -28,32 +30,26 @@ args <- parse_args(parser, positional_arguments=0)$options
 print(args)
 
 date = Sys.Date()
-file_path_data <- paste0(args$file_path, args$file_name, ".csv")
+file_path_data <- paste0(args$file_path, args$file_name, ".parquet")
 
-data <- readr::read_delim(file_path_data, delim=",") 
+data <- tibble::as_tibble(arrow::read_parquet(file_path_data))
 if(args$file_path_labels != "") {
-  labels <- readr::read_delim(args$file_path_labels)
-  out_file_path <- paste0(args$res_dir, args$custom_file_name, "_sumstats.csv")
+  labels <-  tibble::as_tibble(arrow::read_parquet(args$file_path_labels))
+  out_file_path <- paste0(args$res_dir, args$custom_file_name, "_sumstats.parquet")
 } else {
   if(args$custom_file_name == ""){
-    out_file_path <- paste0(args$res_dir, args$file_name, "_sumstats.csv")
+    out_file_path <- paste0(args$res_dir, args$file_name, "_sumstats.parquet")
   } else {
-    out_file_path <- paste0(args$res_dir, args$custom_file_name, "_sumstats.csv")
+    out_file_path <- paste0(args$res_dir, args$custom_file_name, "_sumstats.parquet")
   }
-  labels <- readr::read_delim(paste0(args$file_path, args$file_name, "_labels.csv"))
+  labels <- tibble::as_tibble(arrow::read_parquet(paste0(args$file_path, args$file_name, "_labels.parquet")))
 }
-print(labels)
-print(data)
-print(out_file_path)
 
 data <- left_join(labels %>% select(FINNGENID, START_DATE, SET), data) %>% arrange(FINNGENID) 
 print(data)
 
 mean_val <- mean(data %>% dplyr::filter(SET == 0) %>% pull(VALUE))
 set.seed(10234)
-
-models <- dlply(data  %>% dplyr::filter(DATE < START_DATE, !is.na(VALUE)) %>% dplyr::arrange(desc(DATE)), "FINNGENID", function(df){lm(VALUE~DATE, data=df)})
-coefs <- ldply(models, coef) %>% dplyr::rename(REG_COEF=DATE) %>% dplyr::select(FINNGENID, REG_COEF)
 
 sumstats <- data  %>% group_by(FINNGENID) %>% dplyr::filter(DATE < START_DATE, !is.na(VALUE)) %>% dplyr::arrange(desc(DATE)) %>%
   dplyr::reframe(MIN=min(VALUE), 
@@ -87,11 +83,10 @@ sumstats %>%mutate(FIRST_LAST=round(FIRST_LAST/365.25)) %>%pull(FIRST_LAST) %>% 
 sumstats <- dplyr::mutate(sumstats, MAX_CHANGE=ifelse(is.infinite(MAX_CHANGE), NA, MAX_CHANGE), MAX_ABS_CHANGE=ifelse(is.infinite(MAX_ABS_CHANGE), NA, MAX_ABS_CHANGE))
 sumstats <- dplyr::select(sumstats, -UNIQUE_VALS)
 sumstats$LAST_VAL_DATE <- as.Date(sumstats$LAST_VAL_DATE)
-sumstats <- dplyr::left_join(sumstats, coefs)
 
 ## Adding sumstats for missing values
 # Missing data-imputation
-if(args$file_path_labels != "")  {
+if(args$file_path_labels == "")  {
   missing_data <- dplyr::group_by(data, FINNGENID) %>% dplyr::filter(n()==1, is.na(VALUE)) %>% ungroup()
   train_sumstats <- dplyr::filter(sumstats,SET==0)
   
@@ -104,7 +99,7 @@ if(args$file_path_labels != "")  {
                                                           KURT=NA, 
                                                           SKEW=NA, 
                                                           ABS_ENERG=mean(train_sumstats$ABS_ENERG, na.rm=TRUE), 
-                                                          SUM_ABS_CHANGE=NA,
+                                                          SUM_ABS_CHANGE=0,
                                                           MEAN_ABS_CHANGE=NA,
                                                           MAX_CHANGE=NA,
                                                           MAX_ABS_CHANGE=NA,
@@ -116,16 +111,14 @@ if(args$file_path_labels != "")  {
                                                           IDX_QUANT_100=mean(train_sumstats$IDX_QUANT_100, na.rm=TRUE), 
                                                           MIN_LOC=mean(train_sumstats$MIN_LOC, na.rm=TRUE),
                                                           MAX_LOC=mean(train_sumstats$MAX_LOC, na.rm=TRUE),
-                                                          ABNORM=mean(train_sumstats$ABNORM, na.rm=TRUE),
-                                                          SEQ_LEN=mean(train_sumstats$SEQ_LEN, na.rm=TRUE),
-                                                          FIRST_LAST=mean(train_sumstats$FIRST_LAST, na.rm=TRUE),
-                                                          REG_COEF=NA,
+                                                          ABNORM=0,
+                                                          SEQ_LEN=0,
+                                                          FIRST_LAST=0.0,
                                                           LAST_VAL_DATE=NA)
   missing_data_sumstats <- missing_data_sumstats[colnames(sumstats)]
   print(missing_data_sumstats)
   sumstats <- rbind(sumstats, missing_data_sumstats)
 }
-print(sumstats %>% pull(IDX_QUANT_100) %>% table(useNA="always"))
 
 dir.create(args$res_dir, showWarnings=FALSE)
-readr::write_delim(sumstats, out_file_path, delim=",")
+arrow::write_parquet(sumstats, out_file_path)

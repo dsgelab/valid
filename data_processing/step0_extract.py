@@ -36,7 +36,7 @@ def get_orig_omop_id_data_parquet(omop_concept_id = "3020564",
 
 """Get data for a specific OMOP concept ID from the kanta lab data. Returns a panda with data."""
 def get_extract_omop_id_data_parquet(omop_concept_id = "3020564",
-                                     table = "/finngen/library-red/finngen_R13/kanta_analysis_1.0/data/finngen_R13_kanta_lab_1.0.parquet",
+                                     table = "/finngen/library-red/finngen_R13/kanta_analysis_1.0/data/finngen_R13_kanta_analysis_1.0.parquet",
                                      columns = ["FINNGENID", "SEX", "EVENT_AGE", "APPROX_EVENT_DATETIME", "TEST_OUTCOME", "MEASUREMENT_VALUE_EXTRACTED", "IS_VALUE_EXTRACTED"]):
     data = pl.DataFrame(pd.read_parquet(table, 
                                         filters=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],

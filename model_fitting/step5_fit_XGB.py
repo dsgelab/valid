@@ -138,7 +138,7 @@ def save_importances(X_in: pl.DataFrame,
     shap_explainer = shap.TreeExplainer(model_final)
     top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name)
     logging.info(top_gain.head(10))
-    top_gain.write_csv(out_down_path+ "xgb_" + pred_descriptor + "_shap_importance_" + get_date() + ".csv")
+    top_gain.write_csv(out_down_path + "shap_importance_" + get_date() + ".csv")
       
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
@@ -163,7 +163,7 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=1000)
+    clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
     clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -197,8 +197,8 @@ def optuna_objective(trial: optuna.Trial,
         'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
         'subsample': trial.suggest_float('subsample', 0.5, 0.8),
         'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
-        'reg_lambda': trial.suggest_float('reg_lambda', 1, 15, log=True),
-        'gamma': trial.suggest_float('gamma', 1, 15, log=True),
+        'reg_lambda': trial.suggest_float('reg_lambda', 0, 15),
+        'gamma': trial.suggest_float('gamma', 0, 15),
     }
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -248,7 +248,9 @@ def run_optuna_optim(dtrain: xgb.DMatrix,
                      refit: bool,
                      time_optim: int,
                      n_trials: int,
-                     study_name: str) -> dict:   
+                     study_name: str,
+                     res_dir: str,
+                     model_fit_date: str) -> dict:   
     """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
        Uses Optuna to optimize the hyperparameters. The function returns the best hyperparameters found.
        Logs the best hyperparameters found and the best boosting round."""     
@@ -258,7 +260,7 @@ def run_optuna_optim(dtrain: xgb.DMatrix,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     base_params = get_xgb_base_params(metric, lr)
     sampler = optuna.samplers.TPESampler(seed=429)
-    study = create_optuna_study(study_name, lab_name, sampler, refit)
+    study = create_optuna_study(study_name, lab_name, sampler, model_fit_date, res_dir, refit)
     tic = time.time()
     timer = Timer()
     np.random.seed(9234)
@@ -417,9 +419,9 @@ def get_data_and_pred_list(file_path_labels: str,
     X_cols = []
     for pred in preds:
         if pred == "ICD_MAT":
-            [X_cols.append(ICD_CODE) for ICD_CODE, _ in icds.schema.items() if ICD_CODE != "FINNGENID" and ICD_CODE != "LAST_ICD_DATE"]
+            [X_cols.append(ICD_CODE) for ICD_CODE, _ in icds.schema.items() if ICD_CODE != "FINNGENID" and ICD_CODE != "LAST_CODE_DATE"]
         elif pred == "ATC_MAT":
-            [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_ATC_DATE"]
+            [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_CODE_DATE"]
         elif pred == "SUMSTATS":
             [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
         elif pred == "SECOND_SUMSTATS":
@@ -436,7 +438,7 @@ def get_parser_arguments():
     parser = argparse.ArgumentParser()
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
-    parser.add_argument("--date_model_fit", type=str, help="Original date of model fitting.", default="")
+    parser.add_argument("--model_fit_date", type=str, help="Original date of model fitting.", default="")
 
     # Data paths
     parser.add_argument("--file_path_labels", type=str, help="Path to outcome label data.", default="")
@@ -485,15 +487,15 @@ if __name__ == "__main__":
     args = get_parser_arguments()
 
     # File names
-    study_name = "xgb_" + str(args.metric) + "_" + args.pred_descriptor +  "_reweight" + str(args.reweight) # for optuna
-    if args.date_model_fit == "": args.date_model_fit = get_date()
+    study_name = "xgb_" + str(args.metric) + "_" + args.pred_descriptor
+    if args.model_fit_date == "": args.model_fit_date = get_date()
 
     out_dir = args.res_dir + study_name + "/"; 
-    out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.date_model_fit + "/" 
-    out_plot_dir = out_dir + "plots/" + args.date_model_fit + "/"
+    out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.model_fit_date + "/" 
+    out_plot_dir = out_dir + "plots/" + args.model_fit_date + "/"
     out_plot_path = out_plot_dir + args.lab_name + "_"
-    out_down_dir = out_dir + "down/" + args.date_model_fit + "/"
-    out_down_path = out_down_dir + args.lab_name + "_"
+    out_down_dir = out_dir + "down/" + args.model_fit_date + "/"
+    out_down_path = out_down_dir + args.lab_name + "_" + study_name + "_"
     log_file_name = args.lab_name + "_" + args.pred_descriptor + "_preds_" + get_datetime()
     init_logging(out_dir, log_file_name, logger, args)
     make_dir(out_model_dir); make_dir(out_plot_dir); make_dir(out_down_dir)
@@ -513,7 +515,7 @@ if __name__ == "__main__":
                                                                                                                                    X_cols=X_cols, 
                                                                                                                                    y_goal=args.goal, 
                                                                                                                                    reweight=args.reweight)
-    X_all_unscaled.write_csv(out_model_dir + "Xall_unscaled_" + get_date() + ".csv")
+    X_all_unscaled.write_parquet(out_model_dir + "Xall_unscaled_" + get_date() + ".parquet")
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -530,7 +532,9 @@ if __name__ == "__main__":
                                            refit=args.refit, 
                                            time_optim=args.time_optim, 
                                            n_trials=args.n_trials, 
-                                           study_name=study_name)
+                                           study_name=study_name,
+                                           res_dir=args.res_dir,
+                                           model_fit_date=args.model_fit_date)
             logging.info(timer.get_elapsed())
             model_final = xgb_final_fitting(best_params=best_params, 
                                             X_train=X_train, y_train=y_train, 
@@ -617,7 +621,7 @@ if __name__ == "__main__":
                                                   y_cont_pred_col="ABNORM_PROBS", 
                                                   y_goal_col="TRUE_ABNORM", 
                                                   y_cont_goal_col="TRUE_VALUE", 
-                                                  plot_path=out_dir, 
+                                                  plot_path=out_plot_path, 
                                                   down_path=out_down_path, 
                                                   subset_name="all", 
                                                   n_boots=args.n_boots, 
