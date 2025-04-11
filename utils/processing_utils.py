@@ -3,6 +3,23 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 import polars as pl
 
+
+# Function to generate a random date for each year
+from datetime import datetime
+import calendar
+def generate_random_date(year):
+    # Randomly select a month (1 to 12)
+    month = np.random.randint(1, 13)
+        
+    # Get the number of days in the selected month (handling leap years for February)
+    days_in_month = calendar.monthrange(year, month)[1]
+        
+    # Randomly select a day within that month
+    day = np.random.randint(1, days_in_month + 1)
+        
+    # Return the sampled random date
+    return datetime(year, month, day).date()
+    
 def egfr_transform(data):
     data = data.to_pandas()
     data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE_TRANSFORM"]=((data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "VALUE"]/61.9 )**(-0.329))*(0.993**data.loc[np.logical_and(data["VALUE"] <= 62, data["SEX"] == "female"), "EVENT_AGE"])*144

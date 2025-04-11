@@ -117,6 +117,7 @@ def get_parser_arguments():
     parser.add_argument("--diag_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", default="")
     parser.add_argument("--med_regex", type=str, help="Regex for selecting medication purchases.", required=False, default="")
     parser.add_argument("--diag_excl_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", required=True)
+    parser.add_argument("--med_excl_regex", type=str, help="Regex for selecting medication purchases.", required=True)
 
 
     args = parser.parse_args()
@@ -137,17 +138,24 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     if args.diag_excl_regex != "" or args.med_excl_regex != "": 
         diags = get_diag_med_data(diag_regex=args.diag_excl_regex, 
+                                  med_regex=args.med_excl_regex,
                                   fg_ver=args.fg_ver)
-        excls = (get_codes_first(diags, args.diag_excl_regex)
-                 .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
-        print(excls)
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-        # # # # # # # Kidney-specific # # # # # # # # # # # # # # # # # # # # # # #                                  
-        kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
-        excls = pl.concat([excls, kd_data.select(excls.columns)])
+        icd_excls = (get_codes_first(diags, args.diag_excl_regex)
+                     .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
+        if args.med_excl_regex != "":
+            med_excls = (get_codes_first(diags, args.med_excl_regex)
+                        .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
+            excls = pl.concat([icd_excls, med_excls])
+        else:
+            excls = icd_excls
+        if args.lab_name == "egfr":
+            # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+            # # # # # # # Kidney-specific # # # # # # # # # # # # # # # # # # # # # # #                                  
+            kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
+            excls = pl.concat([excls, kd_data.select(excls.columns)])
 
-        canc_data = get_canc_register_data(fg_ver=args.fg_ver)
-        excls = pl.concat([excls, canc_data.select(excls.columns)])
+            canc_data = get_canc_register_data(fg_ver=args.fg_ver)
+            excls = pl.concat([excls, canc_data.select(excls.columns)])
 
         excls.write_parquet(out_file_path + "_excls.parquet")
 
