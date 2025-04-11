@@ -47,7 +47,6 @@ def get_diag_med_data(diag_regex,
     logging_print("Time import: "+timer.get_elapsed())
     return(diags)
     
-"""First exclusion"""
 def get_codes_first(data: pl.DataFrame,
                     crnt_regex: str) -> pl.DataFrame:
     """Get the first occurance of a code for each individual and code."""
@@ -57,7 +56,55 @@ def get_codes_first(data: pl.DataFrame,
             .group_by(["FINNGENID", "CODE"])
             .head(1))
     return(data)
-   
+
+def get_kidney_register_data(fg_ver = "R12"):
+    """Get kidney register data."""
+    if fg_ver == "R12":
+        table = "/finngen/library-red/finngen_R12/kidney_disease_register_1.0/data/finngen_R12_kidney_combined_1.0.txt"
+    elif fg_ver == "R13":
+        print("R13 kidney not yet processed (2025-04-07), using R12 instead.")
+        # table = "/finngen/library-red/finngen_R13/kidney_disease_register_1.0/data/finngen_R13_kidney_combined_1.0.txt"
+        table = "/finngen/library-red/finngen_R12/kidney_disease_register_1.0/data/finngen_R12_kidney_combined_1.0.txt"
+    else:
+        raise ValueError("Finngen version must be R12 or R13.")
+
+    kd_data = (pl.read_csv(table, separator="\t")
+                 .select(["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "KIDNEY_DISEASE_DIAGNOSIS_1", "KIDNEY_DISEASE_DIAGNOSIS_2"])
+                 .filter(pl.col("EVENT_AGE").is_not_null())
+                 # pviot longer to combine diagnosis columns
+                 .unpivot(index=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY"], value_name="EXCL_CODE")
+                 .drop(["variable"])
+                 .rename({"APPROX_EVENT_DAY":"EXCL_DATE"})
+                 .filter(pl.col("EXCL_CODE") != "NA")
+                  # string to datetime
+                 .with_columns(pl.col("EXCL_DATE").str.strptime(pl.Date, "%Y-%m-%d"),
+                               pl.col("EVENT_AGE").cast(pl.Float64))
+                )
+
+    return(kd_data)
+
+def get_canc_register_data(fg_ver = "R12"):
+    """Get kidney register data."""
+    if fg_ver == "R12":
+        table = "/finngen/library-red/finngen_R12/cancer_detailed_1.0/data/finngen_R12_cancer_detailed_1.0.txt"
+    elif fg_ver == "R13":
+        table = "/finngen/library-red/finngen_R13/cancer_detailed_1.0/data/finngen_R12_cancer_detailed_1.0.txt"
+    else:
+        raise ValueError("Finngen version must be R12 or R14.")
+
+    canc_data = (pl.read_csv(table, separator="\t")
+                 .select(["FINNGENID", "EVENT_AGE", "EVENT_YEAR", "topo"])
+                 .filter(pl.col("EVENT_AGE").is_not_null())
+                 .rename({"EVENT_YEAR":"EXCL_DATE",
+                          "topo":"EXCL_CODE"})
+                  # string to datetime
+                 .with_columns(pl.col("EXCL_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d"),
+                               pl.col("EVENT_AGE").cast(pl.Float64))
+                )
+
+    return(canc_data)
+
+
 def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
@@ -67,7 +114,7 @@ def get_parser_arguments():
     parser.add_argument("--fg_ver", type=str, help="Finngen version (R12 or R13)", required=True)
 
     # Regex for selecting the data
-    parser.add_argument("--diag_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", required=True)
+    parser.add_argument("--diag_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", default="")
     parser.add_argument("--med_regex", type=str, help="Regex for selecting medication purchases.", required=False, default="")
     parser.add_argument("--diag_excl_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", required=True)
 
@@ -94,6 +141,14 @@ if __name__ == "__main__":
         excls = (get_codes_first(diags, args.diag_excl_regex)
                  .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
         print(excls)
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+        # # # # # # # Kidney-specific # # # # # # # # # # # # # # # # # # # # # # #                                  
+        kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
+        excls = pl.concat([excls, kd_data.select(excls.columns)])
+
+        canc_data = get_canc_register_data(fg_ver=args.fg_ver)
+        excls = pl.concat([excls, canc_data.select(excls.columns)])
+
         excls.write_parquet(out_file_path + "_excls.parquet")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -113,6 +168,7 @@ if __name__ == "__main__":
                          .rename({"APPROX_EVENT_DAY": "MED_DATE", "CODE":"MED"}))
             print(med_diags)
             med_diags.write_parquet(out_file_path + "_meds.parquet")
+
 
     #Final logging
     logger.info("Time total: "+timer.get_elapsed())
