@@ -100,7 +100,7 @@ all_meta <- dplyr::full_join(all_meta, icd_data %>% rename(FIRST_ICD_DIAG_DATE=D
 print(all_meta)
 
 # Medication-based diagnoses
-if(file.exists(paste0(args$diags_file_path, "_meds.csv"))) {
+if(file.exists(paste0(args$diags_file_path, "_meds.parquet"))) {
   med_data <- tibble::as_tibble(arrow::read_parquet(paste0(args$diags_file_path, "_meds.parquet")))
   print(med_data)
   

@@ -288,10 +288,11 @@ def plot_box_probs(evals=[],
     for group in [0,1]:
         all_evals = pd.DataFrame()
         for idx, eval_x in enumerate(evals):
-            eval_x = pd.DataFrame({"valid_probs": eval_x["valid_probs"], "y_valid": eval_x["y_valid"]})
+            eval_x = pd.DataFrame({"valid_probs": eval_x["valid_probs"].get_column("ABNORM_PROBS"), 
+                                   "y_valid": eval_x["y_valid"].get_column("TRUE_ABNORM")})
             eval_crnt = eval_x.loc[eval_x.y_valid==group]
             safe = {"valid_probs": eval_crnt["valid_probs"].copy()*100}
-            safe["valid_probs"], min_val, max_val = round_column_min5(safe, "valid_probs")
+            safe["valid_probs"], min_val, max_val = round_column_min5(safe["valid_probs"])
             safe["group"] = eval_crnt["y_valid"]
             safe["label"] = labels[idx]
             all_evals = pd.concat([all_evals, pd.DataFrame(safe)])

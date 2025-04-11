@@ -2,6 +2,7 @@
 
 library(readr)
 library(dplyr)
+library(arrow)
 library(optparse)
 
 ####### Setting up parser
@@ -30,7 +31,7 @@ preds_data <- readr::read_delim(args$file_path_preds) # Predictors data
 # current - all predictor information only collected after first measurement -X months
 get_time_period_data <- function(time, all_data_file_path, preds_data, months_before) {
     # Need date of first measurement of each individual to filter historical or current data
-    start_dates <- readr::read_delim(all_data_file_path) 
+    start_dates <- tibble::as_tibble(arrow::read_parquet(all_data_file_path) )
     start_dates <- dplyr::group_by(start_dates, FINNGENID) %>% 
                             dplyr::arrange(DATE) %>% slice(1L) %>% # Date of first recorded measurement for each individual
                             dplyr::rename(DATA_START_DATE=DATE) %>% 
@@ -45,10 +46,10 @@ get_time_period_data <- function(time, all_data_file_path, preds_data, months_be
     if(args$time == -1) preds_data <- dplyr::filter(preds_data, DATE<=DATA_START_DATE) %>% dplyr::select(-DATA_START_DATE)
     return(preds_data)
 }
-if(args$time != 0) preds_data = get_time_period_data(args$time, paste0(args$dir_path_labels, args$file_name_labels, ".csv"), preds_data, args$months_before) 
+if(args$time != 0) preds_data = get_time_period_data(args$time, paste0(args$dir_path_labels, args$file_name_labels, ".parquet"), preds_data, args$months_before) 
 
 ####### Getting information about start of prediction period = end of collection for predictors data
-end_dates <- readr::read_delim(paste0(args$dir_path_labels, args$file_name_labels, "_labels.csv")) 
+end_dates <- tibble::as_tibble(arrow::read_parquet(paste0(args$dir_path_labels, args$file_name_labels, "_labels.parquet")) )
 end_dates <- end_dates %>% dplyr::select(FINNGENID, START_DATE) %>% dplyr::mutate(START_DATE=as.Date(START_DATE))
 # Adding info to predictor data
 preds_data <- dplyr::left_join(preds_data, end_dates, by="FINNGENID")
@@ -82,9 +83,9 @@ dir.create(args$res_dir, showWarnings=FALSE, recursive = TRUE)
 out_file_path <- "atcs_"
 if(args$col_name == "ICD_THREE") out_file_path <- "icds_"
 if(args$out_file_name != "") {
-  out_file_path <- paste0(args$res_dir, out_file_path, args$out_file_name, "_", args$file_name, ".csv")
+  out_file_path <- paste0(args$res_dir, out_file_path, args$out_file_name, "_", args$file_name, ".parquet")
 } else {
-  out_file_path <- paste0(args$res_dir, out_file_path, args$file_name, ".csv")
+  out_file_path <- paste0(args$res_dir, out_file_path, args$file_name, ".parquet")
 }
-readr::write_delim(preds_wider, out_file_path, delim=",")
+arrow::write_parquet(preds_wider, out_file_path)
 

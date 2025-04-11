@@ -390,8 +390,11 @@ def compare_models(mdl_reports=[],
         
         table[mdl_names[i]] = scores + [scores[1] < scores[0], roc_auc] + true_positive_metrics
     
-    table = pl.DataFrame(table)
-    table = table.with_columns(pl.Series("index", index))
+    table = (pl.DataFrame(table)
+             .with_columns(pl.Series("index", index))
+             .unpivot(index="index", variable_name="Model")
+             .pivot("index", index="Model")
+    )
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #    
@@ -410,8 +413,9 @@ def compare_models(mdl_reports=[],
     ax4 = fig.add_subplot(223)
     ax5 = fig.add_subplot(224)
     #ax4.sharey(ax5)
+
     plot_box_probs(mdl_reports, mdl_names, ax4, ax5)
     fig.tight_layout()
     plt.close()
     
-    return table.T, fig
+    return table, fig
