@@ -229,7 +229,7 @@ def get_xgb_base_params(metric: str,
                         lr: float) -> dict:
     """Returns the base parameters for the XGBoost model."""
 
-    base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 139}
+    base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
 
     if metric == "tweedie":
         base_params.update({"objective": "reg:tweedie", "eval_metric": "tweedie-nloglik@1.99"})
