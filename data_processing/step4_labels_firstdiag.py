@@ -12,13 +12,32 @@ import logging
 logger = logging.getLogger(__name__)
 import argparse
 
+def correct_ages(data: pl.DataFrame,
+                 fg_ver) -> pl.DataFrame:
+    if fg_ver == "R12" or fg_ver == "r12":
+        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_1.0.txt.gz"
+    elif fg_ver == "R13" or fg_ver == "r13":        
+        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_1.0.txt.gz"
+
+    ages = pl.read_csv(minimum_file_name,
+                       separator="\t",
+                        columns=["FINNGENID", "APPROX_BIRTH_DATE"])
+    data = (data.join(ages, on="FINNGENID", how="left")
+                .with_columns(pl.col.APPROX_BIRTH_DATE.cast(pl.Utf8).str.to_date(),
+                              pl.col.START_DATE.cast(pl.Utf8).str.to_date()))
+    data = data.with_columns(
+            ((pl.col.START_DATE-pl.col.APPROX_BIRTH_DATE).dt.total_days()/365.25)
+            .alias("END_AGE")
+    )
+    return(data.drop("APPROX_BIRTH_DATE"))
+    
 def get_controls(data: pl.DataFrame,  
                  no_abnormal_ctrls=1,
                  months_buffer=0):
     """Get controls based on the data.
          Controls are defined as individuals without a diagnosis and data-based diagnosis."""
     # Removing all individuals with a dia   
-    controls = data.filter(pl.col("DATA_DIAG_DATE").is_null())
+    controls = data.filter(pl.col("FIRST_DIAG_DATE").is_null())
     # Figuring out their last measurements (mostly for plotting in the end - predicting control status)
     controls_end_data = (controls.sort(["FINNGENID", "DATE"], descending=True)
                                  .group_by("FINNGENID")
@@ -54,7 +73,7 @@ def get_cases(data: pl.DataFrame,
        The start date is the first abnormality that lead to the diagnosis or the first diagnosis date."""
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Cases have diagnosis # # # # # # # # # # # # # # # # # #
-    cases = data.filter(pl.col("DATA_DIAG_DATE").is_not_null())
+    cases = data.filter(pl.col("DATA_FIRST_DIAG_ABNORM_DATE").is_not_null())
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Date of prediction # # # # # # # # # # # # # # # # # # #
@@ -69,7 +88,6 @@ def get_cases(data: pl.DataFrame,
     cases = cases.join(first_measurement, on="FINNGENID", how="left")
     cases = cases.with_columns(y_DIAG=1, 
                                START_DATE=pl.min_horizontal(["FIRST_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE"]))
-
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # No prior abnormal (if wanted) # # # # # # # # # # # # # #
     # removing individuals whose measurements only start after or with diagnosis
@@ -111,7 +129,66 @@ def get_cases(data: pl.DataFrame,
     cases = cases.with_columns(pl.col("START_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE"))
     cases = cases.drop(["FIRST_MEASUREMENT_DATE", "FIRST_MEASUREMENT_ABNORM"])
     return(cases, remove_fids)
+import calendar
+from datetime import datetime
+def sample_controls(cases: pl.DataFrame,
+                    controls: pl.DataFrame,
+                    months_buffer: int,
+                    fg_ver: str) -> pl.DataFrame:
+    """Sample controls based on the cases."""
 
+    # Example: Step 1: Get the number of cases per month
+    case_bins = (cases.with_columns([
+                            pl.col("START_DATE").dt.year().alias("CASE_BIN")
+                        ])
+                      .group_by("CASE_BIN")
+                      .agg(pl.len().alias("N_CASES"))
+    )
+    # Step 2: Expand case bin counts into a list of index dates
+    case_index_pool = (case_bins
+                        .select([
+                            pl.col("CASE_BIN").repeat_by("N_CASES")
+                        ])
+                        .explode("CASE_BIN")
+                        .rename({"CASE_BIN": "SAMPLED_INDEX_DATE"})
+    )
+    # Step 3: Get one row per control
+    control_meta = (controls.select("FINNGENID").unique())
+
+    # Step 4: Sample index dates for controls from case_index_pool
+    n_controls = control_meta.height
+    sampled_dates = case_index_pool.sample(n_controls, with_replacement=True).to_series()
+
+    # Step 5: Attach sampled index dates to controls
+    months = np.random.randint(1, 13)
+    
+    # Function to generate a random date for each year
+    def generate_random_date(year):
+        # Randomly select a month (1 to 12)
+        month = np.random.randint(1, 13)
+        
+        # Get the number of days in the selected month (handling leap years for February)
+        days_in_month = calendar.monthrange(year, month)[1]
+        
+        # Randomly select a day within that month
+        day = np.random.randint(1, days_in_month + 1)
+        
+        # Return the sampled random date
+        return datetime(year, month, day).date()
+    
+    # Vectorized approach to generate random dates for the 'year' column
+    control_meta = control_meta.with_columns([
+        pl.Series("START_DATE", sampled_dates).map_elements(generate_random_date, return_dtype=pl.Date).alias("START_DATE")
+    ])
+    n_prior = control_meta.get_column("FINNGENID").len()
+
+    controls = controls.drop(["START_DATE"])
+
+    # Step 7: Join back to df_controls and truncate to the window
+    controls = controls.join(control_meta, on="FINNGENID", how="inner")
+    controls = correct_ages(controls, fg_ver)
+
+    return(controls)
 
 
 def get_parser_arguments():
@@ -122,6 +199,7 @@ def get_parser_arguments():
     parser.add_argument("--file_name", type=str, help="Path to data.")
     parser.add_argument("--exclusion_path", type=str, help="Path to exclusions, atm excluding all FGIDs in there.")
     parser.add_argument("--exclude_diags", type=int, default=0, help="Whether to exclude individuals with prior diags or not. 0 = no, 1 = yes")
+    parser.add_argument("--fg_ver", type=str, default="R12", help="Which FinnGen release [options: R12 and R13]")
 
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
@@ -132,6 +210,8 @@ def get_parser_arguments():
     parser.add_argument("--valid_pct", type=float, help="Percentage of validation data.", default=0.2)
     parser.add_argument("--no_abnorm", type=float, help="Whether to create super controls where all prior data is normal.", default=1)
     parser.add_argument("--normal_before_diag", type=float, help="Whether cases need at least one recorded normal before diagnosis.", default=0)
+    parser.add_argument("--sample_ctrls", type=float, help="Whether cases need at least one recorded normal before diagnosis.", default=0)
+    parser.add_argument("--start_year", type=float, help="Minimum number of years with at least one measurement to be included", default=2013)
 
     parser.add_argument("--min_n_years", type=float, help="Minimum number of years with at least one measurement to be included", default=2)
     parser.add_argument("--months_buffer", type=int, help="Minimum number months before prediction to be removed.", default=2)
@@ -154,7 +234,11 @@ if __name__ == "__main__":
     if args.no_abnorm == 1:
         extra = "-noabnorm"
     if args.normal_before_diag:
-        extra += "-normbefore"        
+        extra += "-normbefore"     
+    if args.sample_ctrls == 1:
+        extra += "-ctrlsample"
+    if args.start_year > 2013:
+        extra += "-start" + str(int(args.start_year))
     out_file_name = args.file_name + "_data-diag" + extra + "_" + get_date() 
         
     make_dir(args.res_dir)
@@ -165,11 +249,15 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    data = read_file(args.data_path + args.file_name + ".csv")
-    metadata = read_file(args.data_path + args.file_name + "_meta.csv",
+    data = read_file(args.data_path + args.file_name + ".parquet")
+    metadata = read_file(args.data_path + args.file_name + "_meta.parquet",
                          schema={"FIRST_DIAG_DATE": pl.Date, "DATA_FIRST_DIAG_ABNORM_DATE": pl.Date, "DATA_DIAG_DATE": pl.Date})
     data = data.join(metadata, on="FINNGENID", how="left")
-
+    data = data.with_columns(
+                    pl.col("DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("DATE"),
+                    pl.col("DATA_FIRST_DIAG_ABNORM_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("DATA_FIRST_DIAG_ABNORM_DATE"),
+                    pl.col("FIRST_DIAG_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("FIRST_DIAG_DATE")
+    )
     ### Processing
     if args.min_n_years > 1:
         data = add_measure_counts(data)
@@ -186,6 +274,12 @@ if __name__ == "__main__":
     new_data = pl.concat([cases, controls.select(cases.columns)]) 
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Year                                                    #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    year_remove_fids = set(new_data.filter(pl.col("START_DATE").dt.year()<(args.start_year-1))["FINNGENID"])
+    new_data = new_data.filter(~pl.col("FINNGENID").is_in(year_remove_fids))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Age                                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     age_remove_fids = set(new_data.filter((pl.col("END_AGE")<args.min_age)|(pl.col("END_AGE")>args.max_age))["FINNGENID"])
@@ -198,18 +292,29 @@ if __name__ == "__main__":
         exclusion_data = read_file(args.exclusion_path)
         diag_remove_fids = (exclusion_data
                             .join(new_data.select(["FINNGENID", "START_DATE"]), on="FINNGENID", how="left")
-                            .filter(pl.col("APPROX_EVENT_DAY") < pl.col("START_DATE"))
+                            .filter(pl.col("EXCL_DATE") > pl.col("START_DATE"))
                             .get_column("FINNGENID"))
         new_data = new_data.filter(~pl.col("FINNGENID").is_in(diag_remove_fids))
-        logging.info("Removed " + str(len(set(diag_remove_fids))) + " individuals because of diagnosis exclusions")
-        pd.DataFrame({"FINNGENID":list(set(diag_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_ctrl-abnorm_fids.csv", sep=",")
+        logging.info("Removed " + str(len(set(diag_remove_fids))) + " individuals because of diagnosis exclusions.")
+        pd.DataFrame({"FINNGENID":list(set(diag_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_diag-exclusion_fids.csv", sep=",")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 labels                                                  #
+    #                 Control sampling                                        #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if args.sample_ctrls == 1:
+        controls = sample_controls(new_data.filter(pl.col("y_DIAG")==1), 
+                                   new_data.filter(pl.col("y_DIAG")==0), 
+                                   args.months_buffer,
+                                   args.fg_ver)
+        new_data = pl.concat([new_data.filter(pl.col("y_DIAG")==1), 
+                              controls.select(new_data.columns)]) 
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Labels                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     labels = new_data.select(["FINNGENID", "y_DIAG", "END_AGE", "SEX","y_MEAN", "START_DATE"]).rename({"END_AGE": "EVENT_AGE"}).unique(subset=["FINNGENID", "y_DIAG"])
     labels = add_set(labels, args.test_pct, args.valid_pct)
-    logging_print(f"N rows data {len(new_data)} N rows labels {len(labels)}  N indvs {len(set(labels["FINNGENID"]))}  N cases {sum(labels["y_DIAG"])} pct cases {round(sum(labels["y_DIAG"])/len(labels), 2)*100}%")
+    logging_print(f"N rows data {len(new_data)} N rows labels {len(labels)}  N indvs {len(set(labels["FINNGENID"]))}  N cases {sum(labels["y_DIAG"])} pct cases {round(sum(labels["y_DIAG"])/len(labels)*100,2)}%")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Data before start                                       #
@@ -221,6 +326,8 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     logging.info("Removed " + str(len(age_remove_fids)) + " individuals with age < " + str(args.min_age) + " or > " + str(args.max_age))
     pd.DataFrame({"FINNGENID":list(set(age_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_age.csv", sep=",")
+    logging.info("Removed " + str(len(year_remove_fids)) + " individuals with time of prediction < " + str(args.start_year))
+    pd.DataFrame({"FINNGENID":list(set(year_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_year.csv", sep=",")
     logging.info("Removed " + str(len(set(case_remove_fids))) + " individuals because of case with prior abnormal ")
     pd.DataFrame({"FINNGENID":list(set(case_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_case-abnorm_fids.csv", sep=",")
     logging.info("Removed " + str(len(set(ctrl_remove_fids))) + " individuals because of controls with prior abnormal or last abnormal if no ctrl abnormal filtering")
