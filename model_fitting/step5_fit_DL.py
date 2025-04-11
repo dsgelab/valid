@@ -32,8 +32,8 @@ from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
-from utils import *
-from plot_utils import create_report_plot
+from general_utils import *
+from plot_utils import create_report_plots
 
 try:
     import cPickle as pickle
@@ -408,6 +408,7 @@ def main():
         best_params = {'embed_dim_exp': 7, 'hidden_size_exp': 7, 'dropout_r': 4, 'L2': 0.0009451300184944492, 'lr': 8, 'optimizer': 'adamax'}
 
     if args.skip_model_fit == 0:
+        print(best_params)
         ehr_model = get_model(args, best_params)
         optimizer = get_obj(ehr_model, args, best_params)
         if use_cuda: 
@@ -422,7 +423,7 @@ def main():
                           optimizer = optimizer,
                           shuffle = True, 
                           which_model = args.which_model, 
-                          patience = 5,
+                          patience = 10,
                           model_out=out_dir + "models/" + args.lab_name + "_EHRmodel_" + get_date())
         #we can keyboard interupt now
         except KeyboardInterrupt:
@@ -453,14 +454,14 @@ def main():
 
     ## Report on all data
 
-    fig = create_report_plot(out_data.loc[out_data.SET==1].TRUE_ABNORM, out_data.loc[out_data.SET==1].ABNORM_PROBS, out_data.loc[out_data.SET==1].ABNORM_PREDS)
+    fig = create_report_plots(out_data.loc[out_data.SET==1].TRUE_ABNORM, out_data.loc[out_data.SET==1].ABNORM_PROBS, out_data.loc[out_data.SET==1].ABNORM_PREDS)
     fig.savefig(out_dir + "plots/" + out_name + "_report_val_" + get_date() + ".png")   
-    fig = create_report_plot(out_data.loc[out_data.SET==0].TRUE_ABNORM, out_data.loc[out_data.SET==0].ABNORM_PROBS, out_data.loc[out_data.SET==0].ABNORM_PREDS)
+    fig = create_report_plots(out_data.loc[out_data.SET==0].TRUE_ABNORM, out_data.loc[out_data.SET==0].ABNORM_PROBS, out_data.loc[out_data.SET==0].ABNORM_PREDS)
     fig.savefig(out_dir + "plots/" + out_name + "_report_train_" + get_date() + ".png")   
-    fig = create_report_plot(out_data.loc[out_data.SET==1].TRUE_ABNORM, out_data.loc[out_data.SET==1].ABNORM_PROBS, out_data.loc[out_data.SET==1].ABNORM_PREDS, fg_down=True)
+    fig = create_report_plots(out_data.loc[out_data.SET==1].TRUE_ABNORM, out_data.loc[out_data.SET==1].ABNORM_PROBS, out_data.loc[out_data.SET==1].ABNORM_PREDS, fg_down=True)
     fig.savefig(out_dir + "down/" + args.date_model_fit + "/" + out_name + "_" + study_name + "_report_val_" + get_date() + ".png")   
     fig.savefig(out_dir + "down/" + args.date_model_fit + "/" + out_name + "_" + study_name + "_report_val_" + get_date() + ".pdf")   
-    fig = create_report_plot(out_data.loc[out_data.SET==0].TRUE_ABNORM, out_data.loc[out_data.SET==0].ABNORM_PROBS, out_data.loc[out_data.SET==0].ABNORM_PREDS, fg_down=True)
+    fig = create_report_plots(out_data.loc[out_data.SET==0].TRUE_ABNORM, out_data.loc[out_data.SET==0].ABNORM_PROBS, out_data.loc[out_data.SET==0].ABNORM_PREDS, fg_down=True)
     fig.savefig(out_dir + "down/" + args.date_model_fit + "/" + out_name + "_" + study_name + "_report_train_" + get_date() + ".png")   
     fig.savefig(out_dir + "down/" + args.date_model_fit + "/" + out_name + "_" + study_name + "_report_train_" + get_date() + ".pdf")   
         
