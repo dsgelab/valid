@@ -1,7 +1,7 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, read_file, logging_print
+from general_utils import get_date, make_dir, init_logging, Timer, read_file, logging_print
 from labeling_utils import get_lab_data, get_cases, get_controls
 # Standard stuff
 import numpy as np
@@ -51,9 +51,9 @@ def get_egfr_select_fids(fg_ver="R13",
 
     # Read in the minimum data file
     if fg_ver == "R12" or fg_ver == "r12":
-        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_1.0.txt.gz"
+        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
     elif fg_ver == "R13" or fg_ver == "r13":        
-        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_1.0.txt.gz"
+        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
     min_data = pl.read_csv(minimum_file_name, 
                            separator="\t",
                            columns=["FINNGENID", "APPROX_BIRTH_DATE", "COHORT", "DEATH_APPROX_EVENT_DAY", "BMI"])
@@ -71,8 +71,8 @@ def get_egfr_select_fids(fg_ver="R13",
                        # Did not die 
                        (pl.col.DEATH_APPROX_EVENT_DAY.is_null()) &
                        # Aged between 30 and 70 at prediction time (or what is set as min and max)
-                       (pl.col.APPROX_BIRTH_DATE.dt.year() <= end_date.dt.year()-min_age) &
-                       (pl.col.APPROX_BIRTH_DATE.dt.year() >= end_date.dt.year()-max_age) &
+                       (pl.col.APPROX_BIRTH_DATE.dt.year() <= end_date.year-min_age) &
+                       (pl.col.APPROX_BIRTH_DATE.dt.year() >= end_date.year-max_age) &
                        # BMI not recorded or BMI >= 18.5 (low might make eGFR unreliable)
                        ((pl.col.BMI.is_null()) | (pl.col.BMI>=18.5)) 
                    )
@@ -81,21 +81,16 @@ def get_egfr_select_fids(fg_ver="R13",
 
     return(select_fids)
 
-def get_end_obs_date(start_pred_date: str, 
-                     months_buffer: int) -> pl.DataFrame:
-    """Get the end observation date based on the first prediction date and months buffer."""
-    return start_pred_date.str.to_date("%Y-%m-%d").dt.offset_by(pl.format("-{}m", months_buffer))
-
 if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Initial setup                                           #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     timer = Timer()
     args = get_parser_arguments()
-    out_file_name = args.file_name + "_testset_" + get_date() 
+    out_file_name = args.file_name + get_date() 
         
     make_dir(args.res_dir)
-    init_logging(args.res_dir, args.file_name + "_testset_" + get_datetime(), logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
     removed_ids_path = args.res_dir + "logs/removed_fids/" + args.lab_name + "/" 
     make_dir(removed_ids_path)
     logging.info("Saving files to: "+out_file_name)
@@ -105,7 +100,7 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # Selecting in HBB, correct age at end, not dead, and BMI >= 18.5
     select_fids = get_egfr_select_fids(fg_ver=args.fg_ver,
-                                       end_date=args.end_pred_date.str.to_date("%Y-%m-%d"),
+                                       end_date=datetime.strptime(args.end_pred_date, "%Y-%m-%d"),
                                        min_age=args.min_age,
                                        max_age=args.max_age)
     data = get_lab_data(data_path=args.data_path, file_name=args.file_name)
@@ -116,24 +111,23 @@ if __name__ == "__main__":
     #                 Cases and controls                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     cases, case_remove_fids = get_cases(data=data, 
-                                        no_abnorm=0, 
+                                        no_abnormal_cases=0, 
                                         months_buffer=args.months_buffer, 
                                         normal_before_diag=0)
     controls, ctrl_remove_fids = get_controls(data=data, 
-                                              no_abnorm=0, 
+                                              no_abnormal_ctrls=0, 
                                               months_buffer=args.months_buffer)
     new_data = pl.concat([cases, controls.select(cases.columns)]) 
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 End before start of observation                         #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    end_obs_date = get_end_obs_date(args.start_pred_date, args.months_buffer)
     date_remove_fids = set(new_data
                            # Careful this basically assumes that the start date
                            # cannot be after the planned prediction frame
                            # currently not the idea but might be confusing 
                            # from the coding concept
-                           .filter(pl.col("START_DATE")<get_end_obs_date)
+                           .filter(pl.col("PRED_DATE")<args.start_pred_date)
                            .get_column("FINNGENID")
                            )
     new_data = new_data.filter(~pl.col("FINNGENID").is_in(date_remove_fids))
@@ -144,7 +138,10 @@ if __name__ == "__main__":
     if args.exclude_diags == 1:
         exclusion_data = read_file(args.exclusion_path)
         # We do not want any of the exclusion individuals in the test set
-        diag_remove_fids = (exclusion_data.get_column("FINNGENID"))
+        diag_remove_fids = (exclusion_data
+                            .join(new_data.select(["FINNGENID", "PRED_DATE"]), on="FINNGENID", how="left")
+                            .filter(pl.col("EXCL_DATE") > pl.col("PRED_DATE"))
+                            .get_column("FINNGENID"))
         new_data = new_data.filter(~pl.col("FINNGENID").is_in(diag_remove_fids))
         logging.info("Removed " + str(len(set(diag_remove_fids))) + " individuals because of diagnosis exclusions.")
         pd.DataFrame({"FINNGENID":list(set(diag_remove_fids))}).to_csv(args.res_dir + "logs/removed_fids/" + out_file_name + "_reason_diag-exclusion_fids.csv", sep=",")
@@ -168,8 +165,8 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     logging.info("Removed " + str(len(min_removed_fids)) + " individuals not in Helsinki Biobank or dead before 2023 or BMI < 18.5")
     pd.DataFrame({"FINNGENID":list(set(min_removed_fids))}).to_csv(removed_ids_path + out_file_name + "_reason_minextended.csv", sep=",")
-    logging.info("Removed " + str(len(date_remove_fids)) + " individuals with time of prediction < " + str(args.start_year))
-    pd.DataFrame({"FINNGENID":list(set(date_remove_fids))}).to_csv(removed_ids_path + out_file_name + "_reason_year.csv", sep=",")
+    logging.info("Removed " + str(len(date_remove_fids)) + " individuals with time of prediction < " + str(args.start_pred_date))
+    pd.DataFrame({"FINNGENID":list(set(date_remove_fids))}).to_csv(removed_ids_path + out_file_name + "_reason_date.csv", sep=",")
     logging.info("Removed " + str(len(set(case_remove_fids))) + " individuals because of case with prior abnormal ")
     pd.DataFrame({"FINNGENID":list(set(case_remove_fids))}).to_csv(removed_ids_path +  out_file_name + "_reason_case-abnorm_fids.csv", sep=",")
     logging.info("Removed " + str(len(set(ctrl_remove_fids))) + " individuals because of controls with prior abnormal or last abnormal if no ctrl abnormal filtering")

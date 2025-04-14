@@ -1,6 +1,6 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, get_date, get_datetime, make_dir, init_logging, query_to_df
+from general_utils import Timer, get_date, make_dir, init_logging, query_to_df
 # Standard stuff
 import pandas as pd
 import polars as pl
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     log_file_name = args.lab_name + "_" + get_datetime()
     make_dir(args.res_dir)
     ## Logging
-    init_logging(args.res_dir, log_file_name, logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
     
     #### Data processing
     ## Raw data

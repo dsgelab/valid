@@ -11,7 +11,7 @@ import argparse
 
 # Statistics/Processing
 import scipy.stats as st
-from general_utils import get_date, get_datetime, make_dir, init_logging, Timer
+from general_utils import get_date, make_dir, init_logging, Timer
 from clean_utils import remove_severe_value_outliers, remove_single_value_outliers, handle_exact_duplicates, handle_same_time_duplicates
 from processing_utils import get_abnorm_func_based_on_name
 
@@ -36,10 +36,9 @@ if __name__ == "__main__":
     
     file_name = args.lab_name + "_" + get_date() 
     count_dir = args.res_dir + "counts/"
-    log_file_name = args.lab_name +  "_" + get_datetime()
     make_dir(args.res_dir); make_dir(count_dir)
     
-    init_logging(args.res_dir, log_file_name, logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Getting data                                            #

@@ -1,7 +1,7 @@
  # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, query_to_df, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
+from general_utils import Timer, query_to_df, get_date, make_dir, init_logging, logging_print
 # Standard stuff
 import numpy as np
 import polars as pl

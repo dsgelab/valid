@@ -1,7 +1,7 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
+from general_utils import Timer, get_date, make_dir, init_logging, read_file
 from processing_utils import custom_abnorm
 from clean_utils import remove_severe_value_outliers, remove_single_value_outliers, handle_different_units, handle_missing_values, get_main_unit_data, convert_hba1c_data, remove_known_outliers
 # Standard stuff
@@ -46,10 +46,9 @@ if __name__ == "__main__":
     # File names and directories
     file_name = args.lab_name + "_d" + str(args.fill_missing) + "_" + get_date() 
     count_dir = args.res_dir + "counts/"
-    log_file_name = args.lab_name + "_d" + str(args.fill_missing) + "_" + get_datetime()
     make_dir(args.res_dir); make_dir(count_dir)
     # Logging
-    init_logging(args.res_dir, log_file_name, logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Getting data                                            #

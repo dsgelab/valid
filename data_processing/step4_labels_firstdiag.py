@@ -1,8 +1,8 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, read_file, logging_print
-from processing_utils import add_measure_counts, add_set
+from general_utils import get_date, make_dir, init_logging, Timer, read_file, logging_print
+from processing_utils import add_measure_counts
 from labeling_utils import get_lab_data, get_cases, get_controls, sample_controls
 # Standard stuff
 import numpy as np
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     out_file_name = args.file_name + "_" + extra + get_date() 
         
     make_dir(args.res_dir)
-    init_logging(args.res_dir, args.file_name + "_" + get_datetime(), logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
     removed_ids_path = args.res_dir + "logs/removed_fids/" + args.lab_name + "/" 
     make_dir(removed_ids_path)
     logging.info("Saving files to: "+out_file_name)

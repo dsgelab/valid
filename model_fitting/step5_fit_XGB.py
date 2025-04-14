@@ -1,7 +1,7 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, read_file
+from general_utils import get_date, make_dir, init_logging, Timer, read_file
 from model_eval_utils import get_train_type, create_report, eval_subset, get_optim_precision_recall_cutoff
 from model_fit_utils import create_optuna_study
 from processing_utils import get_abnorm_func_based_on_name 
@@ -496,8 +496,7 @@ if __name__ == "__main__":
     out_plot_path = out_plot_dir + args.lab_name + "_"
     out_down_dir = out_dir + "down/" + args.model_fit_date + "/"
     out_down_path = out_down_dir + args.lab_name + "_" + study_name + "_"
-    log_file_name = args.lab_name + "_" + args.pred_descriptor + "_preds_" + get_datetime()
-    init_logging(out_dir, log_file_name, logger, args)
+    init_logging(out_dir, args.lab_name, logger, args)
     make_dir(out_model_dir); make_dir(out_plot_dir); make_dir(out_down_dir)
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
