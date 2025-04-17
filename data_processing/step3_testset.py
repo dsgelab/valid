@@ -111,11 +111,11 @@ if __name__ == "__main__":
     #                 Cases and controls                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     cases, case_remove_fids = get_cases(data=data, 
-                                        no_abnormal_cases=0, 
+                                        no_abnorm=0, 
                                         months_buffer=args.months_buffer, 
                                         normal_before_diag=0)
     controls, ctrl_remove_fids = get_controls(data=data, 
-                                              no_abnormal_ctrls=0, 
+                                              no_abnorm=0, 
                                               months_buffer=args.months_buffer)
     new_data = pl.concat([cases, controls.select(cases.columns)]) 
 

@@ -23,7 +23,7 @@ def correct_ages(data: pl.DataFrame,
     return(data.drop("APPROX_BIRTH_DATE"))
     
 def get_controls(data: pl.DataFrame,  
-                 no_abnormal_ctrls=1,
+                 no_abnorm=1,
                  months_buffer=0):
     """Get controls based on the data.
          Controls are defined as individuals without a diagnosis and data-based diagnosis."""
@@ -42,7 +42,7 @@ def get_controls(data: pl.DataFrame,
     controls = controls.join(controls_end_data, on="FINNGENID", how="left")
     controls = controls.with_columns(y_DIAG=0)
     # Removing cases with prior abnormal data - if wanted
-    if(no_abnormal_ctrls == 1):
+    if(no_abnorm == 1):
         ctrl_prior_data = controls.filter(pl.col("DATE") < pl.col("START_DATE"))
         remove_fids = (ctrl_prior_data
                        .group_by("FINNGENID")
@@ -59,7 +59,7 @@ def get_controls(data: pl.DataFrame,
     return(controls, remove_fids)
 
 def get_cases(data: pl.DataFrame, 
-              no_abnormal_cases=1,
+              no_abnorm=1,
               months_buffer=0,
               normal_before_diag=0) -> pl.DataFrame:
     """Get cases based on the data.
@@ -98,7 +98,7 @@ def get_cases(data: pl.DataFrame,
                            .get_column("FINNGENID")
                            .unique())
     
-    if no_abnormal_cases == 1:
+    if no_abnorm == 1:
         case_prior_data = cases.filter(pl.col("DATE") < pl.col("PRED_DATE"))
         remove_fids |= set(case_prior_data
                             .group_by("FINNGENID")
