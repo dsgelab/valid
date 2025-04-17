@@ -3,11 +3,11 @@ import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, make_dir, init_logging, Timer, read_file
 from model_eval_utils import get_train_type, create_report, eval_subset, get_optim_precision_recall_cutoff
-from model_fit_utils import create_optuna_study
 from processing_utils import get_abnorm_func_based_on_name 
-from plot_utils import create_report_plots, get_plot_names
+from plot_utils import get_plot_names
+from model_fit_utils import save_all_report_plots
+from optuna_utils import run_optuna_optim
 # Standard stuff
-import time 
 import polars as pl
 import numpy as np
 import xgboost as xgb
@@ -181,50 +181,6 @@ def xgb_final_fitting(best_params: dict,
 
     return(clf)    
 
-def optuna_objective(trial: optuna.Trial, 
-                     base_params: dict, 
-                     dtrain: xgb.DMatrix, 
-                     dvalid: xgb.DMatrix, 
-                     eval_metric="tweedie") -> float:
-    """Objective function for the Optuna optimization. Returns the last value of the metric on the validation set."""
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Suggested hyperparameters                               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params = {
-        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]),
-        'max_depth': trial.suggest_int('max_depth', 2, 12),
-        'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
-        'subsample': trial.suggest_float('subsample', 0.5, 0.8),
-        'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
-        'reg_lambda': trial.suggest_float('reg_lambda', 0, 15),
-        'gamma': trial.suggest_float('gamma', 0, 15),
-    }
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Setting up trial                                        #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params.update(base_params)
-    pruning_callback = optuna.integration.XGBoostPruningCallback(trial, f'valid-{eval_metric}')
-    evals_result = dict()
-    
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Train model                                             #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    model = xgb.train(params=params, 
-                      dtrain=dtrain, 
-                      num_boost_round=200, 
-                      evals=[(dtrain, "train"), (dvalid, "valid")], 
-                      evals_result=evals_result,
-                      early_stopping_rounds=5, 
-                      verbose_eval=0,
-                      callbacks=[pruning_callback])
-    trial.set_user_attr("best_iteration", int(model.best_iteration))
-    
-    # Return the last value of the metric on the validation set
-    return evals_result["valid"][eval_metric][-1] 
-
-
 def get_xgb_base_params(metric: str, 
                         lr: float) -> dict:
     """Returns the base parameters for the XGBoost model."""
@@ -239,56 +195,6 @@ def get_xgb_base_params(metric: str,
         base_params.update({"objective": "binary:logistic", "eval_metric": metric})
 
     return(base_params)
-
-def run_optuna_optim(dtrain: xgb.DMatrix, 
-                     dvalid: xgb.DMatrix, 
-                     metric: str,
-                     lr: float,
-                     lab_name: str,
-                     refit: bool,
-                     time_optim: int,
-                     n_trials: int,
-                     study_name: str,
-                     res_dir: str,
-                     model_fit_date: str) -> dict:   
-    """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
-       Uses Optuna to optimize the hyperparameters. The function returns the best hyperparameters found.
-       Logs the best hyperparameters found and the best boosting round."""     
-    
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Study setup                                             #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    base_params = get_xgb_base_params(metric, lr)
-    sampler = optuna.samplers.TPESampler(seed=429)
-    study = create_optuna_study(study_name, lab_name, sampler, model_fit_date, res_dir, refit)
-    tic = time.time()
-    timer = Timer()
-    np.random.seed(9234)
-    optuna.logging.set_verbosity(optuna.logging.INFO)
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Running trials                                          #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if n_trials == 1:
-        while time.time() - tic < time_optim:
-            study.optimize(lambda trial: optuna_objective(trial, base_params, dtrain, dvalid, metric) , n_trials=1)
-    else:
-        study.optimize(lambda trial: optuna_objective(trial, base_params, dtrain, dvalid, metric) , n_trials=n_trials)
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Logging info                                            #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    logging.info('Optuna optimization ==============================')
-    logging.info('Time ---------------------------')
-    logging.info(timer.get_elapsed())
-    logging.info(f'best score = {study.best_trial.value}')
-    logging.info('boosting params ---------------------------')
-    logging.info(f'fixed learning rate: {lr}')
-    logging.info(f'best boosting round: {study.best_trial.user_attrs["best_iteration"]}')
-    logging.info('best tree params --------------------------')
-    for k, v in study.best_trial.params.items(): logging.info(str(k)+':'+str(v))
-        
-    return(study.best_trial.params)
 
 def run_speed_test(dtrain: xgb.DMatrix, 
                    dvalid: xgb.DMatrix, 
@@ -358,7 +264,6 @@ def create_xgb_dts(data: pl.DataFrame,
     #dall = xgb.DMatrix(data=X_all, label=y_all, enable_categorical=True, weight=get_weights(pos_weight, y_all))
     
     return(X_train, y_train, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dvalid, scaler_base)
-    
 
 def get_relevant_label_data_cols(data: pl.DataFrame, 
                                  goal: str) -> pl.DataFrame:
@@ -367,10 +272,12 @@ def get_relevant_label_data_cols(data: pl.DataFrame,
        If prediction column is ABNORM, keeping column on which ABNORMALITY is based on.
        If prediciton column is y_DIAG, keeping column for mean value of the lab value (y_MEAN)."""
     new_goal = get_cont_goal_col_name(goal, data.columns)
+    data = data.with_columns(pl.col.START_DATE.dt.year().alias("YEAR"))
+
     if new_goal is not None:
-        data = data.select(["FINNGENID", "SET", "START_DATE", "EVENT_AGE", "SEX", goal, new_goal])
+        data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal, new_goal])
     else:
-        data = data.select(["FINNGENID", "SET", "START_DATE", "EVENT_AGE", "SEX", goal])
+        data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal])
     return data
 
 def get_data_and_pred_list(file_path_labels: str, 
@@ -391,6 +298,7 @@ def get_data_and_pred_list(file_path_labels: str,
     if file_path_icds != "": 
         icds = read_file(file_path_icds)
         data = data.join(icds, on="FINNGENID", how="left")
+        # Adding year
     if file_path_atcs != "": 
         atcs = read_file(file_path_atcs)
         data = data.join(atcs, on="FINNGENID", how="left")
@@ -515,6 +423,7 @@ if __name__ == "__main__":
                                                                                                                                    y_goal=args.goal, 
                                                                                                                                    reweight=args.reweight)
     X_all_unscaled.write_parquet(out_model_dir + "Xall_unscaled_" + get_date() + ".parquet")
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -524,6 +433,8 @@ if __name__ == "__main__":
                                            lr=args.lr) # to test learning rate
     else:
         if not args.skip_model_fit:
+            base_params = get_xgb_base_params(args.metric, args.lr)
+
             best_params = run_optuna_optim(dtrain=dtrain, dvalid=dvalid, 
                                            metric=args.metric, 
                                            lr=args.lr, 
@@ -533,7 +444,8 @@ if __name__ == "__main__":
                                            n_trials=args.n_trials, 
                                            study_name=study_name,
                                            res_dir=args.res_dir,
-                                           model_fit_date=args.model_fit_date)
+                                           model_fit_date=args.model_fit_date,
+                                           base_params=base_params)
             logging.info(timer.get_elapsed())
             model_final = xgb_final_fitting(best_params=best_params, 
                                             X_train=X_train, y_train=y_train, 
@@ -572,49 +484,10 @@ if __name__ == "__main__":
         pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
 
         importances, new_names = get_shap_importances(X_all, shap_explainer, args.lab_name)
-
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 0).select("TRUE_ABNORM"), 
-                                  out_data.filter(pl.col("SET") == 0).select("ABNORM_PROBS"),
-                                  out_data.filter(pl.col("SET") == 0).select("ABNORM_PREDS"),
-                                  importances=importances)
-        fig.savefig(out_plot_path + "train_report_" + get_date() + ".png")
-        
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 1).select("TRUE_ABNORM"), 
-                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PROBS"),
-                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PREDS"),
-                                  importances=importances)
-        fig.savefig(out_plot_path + "val_report_" + get_date() + ".png")
-        
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 2).select("TRUE_ABNORM"),
-                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PROBS"),
-                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PREDS"),
-                                    importances=importances)
-        fig.savefig(out_plot_path + "test_report_" + get_date() + ".png")
-
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 0).select("TRUE_ABNORM"),
-                                    out_data.filter(pl.col("SET") == 0).select("ABNORM_PROBS"),
-                                    out_data.filter(pl.col("SET") == 0).select("ABNORM_PREDS"),
-                                    importances=importances,
-                                    fg_down=True)
-        fig.savefig(out_down_path + "train_report_" + get_date() + ".png")
-        fig.savefig(out_down_path + "train_report_" + get_date() + ".pdf")
-        
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 1).select("TRUE_ABNORM"), 
-                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PROBS"),
-                                  out_data.filter(pl.col("SET") == 1).select("ABNORM_PREDS"),
-                                  importances=importances,
-                                  fg_down=True)
-        fig.savefig(out_down_path + "val_report_" + get_date() + ".png")
-        fig.savefig(out_down_path + "val_report_" + get_date() + ".pdf")   
-        
-        fig = create_report_plots(out_data.filter(pl.col("SET") == 2).select("TRUE_ABNORM"),
-                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PROBS"),
-                                    out_data.filter(pl.col("SET") == 2).select("ABNORM_PREDS"),
-                                    importances=importances,
-                                    fg_down=True)
-        fig.savefig(out_down_path + "test_report_" + get_date() + ".png")
-        fig.savefig(out_down_path + "test_report_" + get_date() + ".pdf")
-
+        save_all_report_plots(out_data=out_data,
+                              importances=importances,
+                              out_plot_path=out_plot_path,
+                              out_down_path=out_down_path)
         eval_metrics, all_conf_mats = eval_subset(data=out_data, 
                                                   y_pred_col="ABNORM_PREDS", 
                                                   y_cont_pred_col="ABNORM_PROBS", 

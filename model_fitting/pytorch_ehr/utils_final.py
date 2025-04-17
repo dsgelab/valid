@@ -213,7 +213,17 @@ def calculate_auc(model, mbs_list, which_model = 'RNN', shuffle = True):
     
 #define the final epochs running, use the different names
 
-def epochs_run(epochs, train, valid, test, model, optimizer, trial=None, shuffle = True, which_model = 'RNN', patience = 20, model_out=""):  
+def epochs_run(epochs, 
+               train, 
+               valid, 
+               test, 
+               model, 
+               optimizer, 
+               trial=None, 
+               shuffle = True, 
+               which_model = 'RNN', 
+               patience = 20, 
+               model_out=""):  
     best_val_loss = 10.0
     best_train_loss = 10.0
     best_val_ep = 0
@@ -254,7 +264,7 @@ def epochs_run(epochs, train, valid, test, model, optimizer, trial=None, shuffle
 
         if ep - best_val_ep > patience: break
     #model.load_state_dict(best_model_state)
-    return best_train_loss, best_val_loss, best_val_auc, best_test_auc, best_val_ep, model
+    return best_val_loss, best_val_ep, model
 
 
 def plot_roc_curve(label,score):
