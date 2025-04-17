@@ -38,6 +38,7 @@ def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader],
                      n_trials: int,
                      study_name: str,
                      res_dir: str,
+                     model_type: str,
                      model_fit_date: str,
                      base_params: dict) -> dict:   
     """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
@@ -62,12 +63,12 @@ def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader],
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Pick objective                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if base_params["model_type"] == "xgb":
+    if model_type == "xgb":
         optuna_objective = lambda trial: optuna_xgb_objective(trial, 
                                                               base_params, 
                                                               train, 
                                                               valid)
-    elif base_params["model_type"] == "torch":
+    elif model_type == "torch":
         optuna_objective = lambda trial: optuna_torch_objective(trial, 
                                                                 base_params, 
                                                                 train, 
@@ -102,8 +103,7 @@ import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
                          base_params: dict, 
                          dtrain: xgb.DMatrix, 
-                         dvalid: xgb.DMatrix, 
-                         dtest: xgb.DMatrix) -> float:
+                         dvalid: xgb.DMatrix) -> float:
     """Objective function for the Optuna optimization. Returns the last value of the metric on the validation set."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -148,8 +148,11 @@ except:
     def colored(string, color): return(string)
 import optuna
 import torch
-from utils_final import epochs_run
-from torch_utils import get_model, get_torch_optimizer
+try:
+    from utils_final import epochs_run
+    from torch_utils import get_model, get_torch_optimizer
+except:
+    pass
 def optuna_torch_objective(trial: optuna.Trial, 
                            base_params: dict,
                            train_mbs, 

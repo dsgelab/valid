@@ -31,17 +31,43 @@ def egfr_transform(data):
     
     return(pl.DataFrame(data))
     
-def get_abnorm_func_based_on_name(lab_name):
+    
+def get_abnorm_func_based_on_name(lab_name,
+                                  extra_choice=""):
     if lab_name == "tsh": return(tsh_abnorm)
     if lab_name == "hba1c": return(hba1c_abnorm)
     if lab_name == "ldl": return(ldl_abnorm)
-    if lab_name == "egfr" or lab_name == "krea": return(egfr_kdigo_abnorm)
+    if lab_name == "egfr" or lab_name == "krea": 
+        if extra_choice == "age":
+            return(egfr_transform)
+        if extra_choice == "KDIGO-strict":
+            return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=True))
+        if extra_choice == "KDIGO-soft":
+            return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=False))
     if lab_name == "cyst" or lab_name =="cystc": return(cystc_abnorm)
     if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
     if lab_name == "alat": return(alat_abnorm)
     if lab_name == "asat": return(asat_abnorm)
 
     else: raise("Sorry, no function for this lab name.")
+        
+"""Based on transformed kreatinine to eGFR."""
+def egfr_kdigo_abnorm(data, 
+                      value_col_name="VALUE_TRANSFORM",
+                      strict=False):
+    if strict:
+        data = data.with_columns(
+            pl.when(pl.col(value_col_name) <60).then(1)
+            .otherwise(0).alias("ABNORM_CUSTOM")
+        )    
+    else:
+        data = data.with_columns(
+                pl.when(pl.col(value_col_name) <60).then(1)
+                .when((pl.col(value_col_name) <=65)&(pl.col(value_col_name)>=60)).then(0.5)
+                .otherwise(0).alias("ABNORM_CUSTOM")
+            )   
+        print(data["ABNORM_CUSTOM"].value_counts())
+    return(data)
 
 """Individual ABNORMity with grey area 2.5-4"""
 def tsh_abnorm(data, value_col_name="VALUE"):
@@ -143,11 +169,6 @@ def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
     data.loc[np.logical_and(data[value_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
     return(pl.DataFrame(data))
 
-"""Based on transformed kreatinine to eGFR."""
-def egfr_kdigo_abnorm(data, value_col_name="VALUE_TRANSFORM"):
-    data = data.with_columns(ABNORM_CUSTOM=1 if pl.col(value_col_name) < 60 else 0)
-    return(data)
-
 def add_measure_counts(data):
     data = data.to_pandas()
 
@@ -157,32 +178,46 @@ def add_measure_counts(data):
     data = pd.merge(data, n_measures, on="FINNGENID", how="left")
     return(pl.DataFrame(data))
 
-
-def add_set(unique_data, test_pct=0.1, valid_pct=0.1):
+def add_set(unique_data, 
+            test_pct=0.1, 
+            valid_pct=0.1):
     """Adds SET column to data based on random split of individuals.
        Data passed must be unique data with only one row per individual."""
-    data_train, data_rest = train_test_split(unique_data, 
-                                             shuffle=True, 
-                                             random_state=3291, 
-                                             test_size=round((valid_pct+test_pct),2), 
-                                             train_size=round(1-(valid_pct+test_pct),2), 
-                                             stratify=unique_data["y_DIAG"])
-    print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train["FINNGENID"]))}  N cases train {sum(data_train["y_DIAG"])} pct cases {round(sum(data_train["y_DIAG"])/len(data_train), 2)}")
-    print(f"N rows rest {len(data_rest)}   N indvs rest{len(set(data_rest["FINNGENID"]))}  N cases {sum(data_rest["y_DIAG"])} pct cases {round(sum(data_rest["y_DIAG"])/len(data_rest), 2)}")
-
+    if test_pct > 0:
+        data_train, data_rest = train_test_split(unique_data, 
+                                                 shuffle=True, 
+                                                 random_state=3291, 
+                                                 test_size=round((valid_pct+test_pct),2), 
+                                                 train_size=round(1-(valid_pct+test_pct),2), 
+                                                 stratify=unique_data["y_DIAG"])
+        new_test_size = round(test_pct/(test_pct+valid_pct),2)
+        new_train_size = round(valid_pct/(test_pct+valid_pct),2)
+    else:
+        data_rest = unique_data
+        new_test_size = valid_pct
+        new_train_size = 1-valid_pct
     data_valid, data_test = train_test_split(data_rest, 
                                              shuffle=True, 
                                              random_state=391, 
-                                             test_size=round(test_pct/(test_pct+valid_pct),2), 
-                                             train_size=round(valid_pct/(test_pct+valid_pct),2), 
+                                             test_size=new_test_size, 
+                                             train_size=new_train_size, 
                                              stratify=data_rest["y_DIAG"])
-    print(f"N rows valid {len(data_valid)}   N indvs valid {len(set(data_valid["FINNGENID"]))}  N cases {sum(data_valid["y_DIAG"])} pct cases {round(sum(data_valid["y_DIAG"])/len(data_valid), 2)}")
-    print(f"N rows test {len(data_test)}   N indvs test {len(set(data_test["FINNGENID"]))}  N cases {sum(data_test["y_DIAG"])} pct cases {round(sum(data_test["y_DIAG"])/len(data_test), 2)}")
-    unique_data = unique_data.with_columns(
-        SET=pl.when(pl.col("FINNGENID").is_in(data_train["FINNGENID"])).then(0)
-           .when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(1)
-           .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(2)
-           .otherwise(None)
+    if test_pct == 0:
+        unique_data = unique_data.with_columns(
+                            SET=pl.when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(0)
+                                   .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(1)
+                                   .otherwise(None)
     )
+        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid["FINNGENID"]))}  N cases train {sum(data_valid["y_DIAG"])} pct cases {round(sum(data_valid["y_DIAG"])/len(data_valid), 2)}")
+
+    else:
+        unique_data = unique_data.with_columns(
+            SET=pl.when(pl.col("FINNGENID").is_in(data_train["FINNGENID"])).then(0)
+               .when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(1)
+               .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(2)
+               .otherwise(None)
+        )
+        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train["FINNGENID"]))}  N cases train {sum(data_train["y_DIAG"])} pct cases {round(sum(data_train["y_DIAG"])/len(data_train), 2)}")
+
     print(unique_data.select(pl.col("SET")).to_series().value_counts())
     return(pl.DataFrame(unique_data))

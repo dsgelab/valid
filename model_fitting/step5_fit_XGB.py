@@ -68,8 +68,7 @@ def get_out_data(data: pl.DataFrame,
     #                 Base data                                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     out_data = (data.select(["FINNGENID", "EVENT_AGE", "LAST_VAL_DATE", "SET", "ABNORM"])
-                    .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
-                    .unique())
+                    .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"}))
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Continuous prediction                                   #
@@ -89,7 +88,6 @@ def get_out_data(data: pl.DataFrame,
     #                 Binary prediction of "abnormality"                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     else:        
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         # # # # # # # # # Continuous column # # # # # # # # # # # # # # # # # # # #
         new_goal = get_cont_goal_col_name(goal, data.columns)
         if new_goal is not None:
@@ -98,14 +96,13 @@ def get_out_data(data: pl.DataFrame,
             out_data = out_data.with_columns([
                 pl.Series("TRUE_VALUE", y_cont_all),
             ])
-
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         # # # # # # # # # Abnormality columns # # # # # # # # # # # # # # # # # # #
         y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
         out_data = out_data.with_columns([
-                        pl.Series("TRUE_ABNORM", y_all),
-                        pl.Series("ABNORM_PROBS", y_pred),
+                        data["y_DIAG"].alias("TRUE_ABNORM"),
+                        pl.Series(y_pred).alias("ABNORM_PROBS"),
                     ])
+
         # Binary abnormality prediction based on optimal cut-off
         optimal_proba_cutoff = get_optim_precision_recall_cutoff(out_data)
         logging.info(f"Optimal cut-off for prediction based on PR {optimal_proba_cutoff}")
@@ -132,13 +129,13 @@ def save_importances(X_in: pl.DataFrame,
                      model_final: xgb.XGBClassifier, 
                      out_down_path: str,
                      lab_name: str,
-                     pred_descriptor: str) -> None:
+                     subset: str="all") -> None:
     """Saves the feature importances of the model to a csv file. """
 
     shap_explainer = shap.TreeExplainer(model_final)
     top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name)
     logging.info(top_gain.head(10))
-    top_gain.write_csv(out_down_path + "shap_importance_" + get_date() + ".csv")
+    top_gain.write_csv(out_down_path + "shap_importance_" + subset + "_" + get_date() + ".csv")
       
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
@@ -186,7 +183,7 @@ def get_xgb_base_params(metric: str,
     """Returns the base parameters for the XGBoost model."""
 
     base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
-
+    
     if metric == "tweedie":
         base_params.update({"objective": "reg:tweedie", "eval_metric": "tweedie-nloglik@1.99"})
     elif get_train_type(metric) == "cont":
@@ -294,11 +291,12 @@ def get_data_and_pred_list(file_path_labels: str,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
     data = get_relevant_label_data_cols(data, goal)
+    print(data.filter(pl.col("SET") == 2).get_column("y_DIAG").value_counts())
+
     # Adding other data modalities
     if file_path_icds != "": 
         icds = read_file(file_path_icds)
         data = data.join(icds, on="FINNGENID", how="left")
-        # Adding year
     if file_path_atcs != "": 
         atcs = read_file(file_path_atcs)
         data = data.join(atcs, on="FINNGENID", how="left")
@@ -435,15 +433,16 @@ if __name__ == "__main__":
         if not args.skip_model_fit:
             base_params = get_xgb_base_params(args.metric, args.lr)
 
-            best_params = run_optuna_optim(dtrain=dtrain, dvalid=dvalid, 
-                                           metric=args.metric, 
-                                           lr=args.lr, 
+            best_params = run_optuna_optim(train=dtrain, 
+                                           valid=dvalid, 
+                                           test=None,
                                            lab_name=args.lab_name, 
                                            refit=args.refit, 
                                            time_optim=args.time_optim, 
                                            n_trials=args.n_trials, 
                                            study_name=study_name,
                                            res_dir=args.res_dir,
+                                           model_type="xgb",
                                            model_fit_date=args.model_fit_date,
                                            base_params=base_params)
             logging.info(timer.get_elapsed())
@@ -460,7 +459,12 @@ if __name__ == "__main__":
                              model_final=model_final, 
                              out_down_path=out_down_path,
                              lab_name=args.lab_name,
-                             pred_descriptor=args.pred_descriptor)
+                             subset="train")
+            save_importances(X_in=X_test, 
+                             model_final=model_final, 
+                             out_down_path=out_down_path,
+                             lab_name=args.lab_name,
+                             subset="test")
             pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
             pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
         else:
@@ -475,6 +479,7 @@ if __name__ == "__main__":
                                 metric=args.metric,
                                 lab_name=args.lab_name,
                                 goal=args.goal)
+
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -483,9 +488,14 @@ if __name__ == "__main__":
         crnt_report = create_report(model_final, out_data, display_scores=[args.metric, "aucpr"], metric=args.metric)
         pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
 
-        importances, new_names = get_shap_importances(X_all, shap_explainer, args.lab_name)
+        train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name)
+        valid_importances, _ = get_shap_importances(X_valid, shap_explainer, args.lab_name)
+        test_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name)
+
         save_all_report_plots(out_data=out_data,
-                              importances=importances,
+                              train_importances=train_importances,
+                              valid_importances=valid_importances,
+                              test_importances=test_importances,
                               out_plot_path=out_plot_path,
                               out_down_path=out_down_path)
         eval_metrics, all_conf_mats = eval_subset(data=out_data, 

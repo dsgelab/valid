@@ -1,7 +1,7 @@
  # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, query_to_df, get_date, make_dir, init_logging, logging_print
+from general_utils import Timer, query_to_df, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
 # Standard stuff
 import numpy as np
 import polars as pl
@@ -77,7 +77,7 @@ def get_kidney_register_data(fg_ver = "R12"):
                  .rename({"APPROX_EVENT_DAY":"EXCL_DATE"})
                  .filter(pl.col("EXCL_CODE") != "NA")
                   # string to datetime
-                 .with_columns(pl.col("EXCL_DATE").str.strptime(pl.Date, "%Y-%m-%d"),
+                 .with_columns(pl.col("EXCL_DATE").str.to_date("%Y-%m-%d", strict=False),
                                pl.col("EVENT_AGE").cast(pl.Float64))
                 )
 
@@ -88,7 +88,7 @@ def get_canc_register_data(fg_ver = "R12"):
     if fg_ver == "R12":
         table = "/finngen/library-red/finngen_R12/cancer_detailed_1.0/data/finngen_R12_cancer_detailed_1.0.txt"
     elif fg_ver == "R13":
-        table = "/finngen/library-red/finngen_R13/cancer_detailed_1.0/data/finngen_R12_cancer_detailed_1.0.txt"
+        table = "/finngen/library-red/finngen_R13/cancer_detailed_1.0/data/finngen_R13E_cancer_detailed_1.0.txt"
     else:
         raise ValueError("Finngen version must be R12 or R14.")
 
@@ -98,7 +98,7 @@ def get_canc_register_data(fg_ver = "R12"):
                  .rename({"EVENT_YEAR":"EXCL_DATE",
                           "topo":"EXCL_CODE"})
                   # string to datetime
-                 .with_columns(pl.col("EXCL_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d"),
+                 .with_columns(pl.col("EXCL_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False),
                                pl.col("EVENT_AGE").cast(pl.Float64))
                 )
 

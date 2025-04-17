@@ -3,8 +3,8 @@ import polars as pl
 from processing_utils import generate_random_date
 from general_utils import read_file
 
-def correct_ages(data: pl.DataFrame,
-                 fg_ver) -> pl.DataFrame:
+def add_ages(data: pl.DataFrame,
+             fg_ver) -> pl.DataFrame:
     if fg_ver == "R12" or fg_ver == "r12":
         minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_1.0.txt.gz"
     elif fg_ver == "R13" or fg_ver == "r13":        
@@ -17,10 +17,63 @@ def correct_ages(data: pl.DataFrame,
                 .with_columns(pl.col.APPROX_BIRTH_DATE.cast(pl.Utf8).str.to_date(),
                               pl.col.PRED_DATE.cast(pl.Utf8).str.to_date()))
     data = data.with_columns(
-            ((pl.col.PRED_DATE-pl.col.APPROX_BIRTH_DATE).dt.total_days()/365.25)
+            ((pl.col.START_DATE-pl.col.APPROX_BIRTH_DATE).dt.total_days()/365.25).floor()
             .alias("END_AGE")
     )
     return(data.drop("APPROX_BIRTH_DATE"))
+   
+def add_pred_helpers(data: pl.DataFrame,
+                     fg_ver: str) -> pl.DataFrame:
+    after_pred_data = data.filter(pl.col.DATE>=pl.col.PRED_DATE)
+    after_pred_data = (after_pred_data
+                       .filter((pl.col.DATE==pl.col.DATE.min()).over("FINNGENID"))
+                       .select("FINNGENID", "VALUE")
+                       .rename({"VALUE": "y_MEAN"})
+                      )
+    data = data.join(after_pred_data, on="FINNGENID", how="left")
+    data = add_ages(data, fg_ver)
+    return(data)
+
+
+def remove_future_data(data, 
+                       end_pred_date,
+                       strict=False):
+    data = data.filter(pl.col.DATE<end_pred_date)
+    # Future diagnoses
+    if strict:
+        data = data.with_columns([
+            pl.when(pl.col.FIRST_DIAG_DATE>end_pred_date)
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.DATA_FIRST_DIAG_ABNORM_DATE)
+                .alias("DATA_FIRST_DIAG_ABNORM_DATE"),
+            pl.when(pl.col.FIRST_DIAG_DATE>end_pred_date)
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.FIRST_DIAG_DATE)
+                .alias("FIRST_DIAG_DATE"),
+            pl.when(pl.col.DATA_DIAG_DATE>end_pred_date)
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.DATA_DIAG_DATE)
+                .alias("DATA_DIAG_DATE")
+            ])
+    else:
+        data = data.with_columns([
+            pl.when((pl.col.DATA_FIRST_DIAG_ABNORM_DATE>end_pred_date)|
+                    ((pl.col.FIRST_DIAG_DATE>end_pred_date)&(pl.col.DATA_FIRST_DIAG_ABNORM_DATE.is_null())))
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.FIRST_DIAG_DATE)
+                .alias("FIRST_DIAG_DATE"),
+            pl.when((pl.col.DATA_FIRST_DIAG_ABNORM_DATE>end_pred_date)|
+                    ((pl.col.DATA_DIAG_DATE>end_pred_date)&(pl.col.DATA_FIRST_DIAG_ABNORM_DATE.is_null())))
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.DATA_DIAG_DATE)
+                .alias("DATA_DIAG_DATE"),
+            pl.when(pl.col.DATA_FIRST_DIAG_ABNORM_DATE>end_pred_date)
+                .then(pl.lit(None).cast(pl.Date))
+                .otherwise(pl.col.DATA_FIRST_DIAG_ABNORM_DATE)
+                .alias("DATA_FIRST_DIAG_ABNORM_DATE")
+            ])
+
+    return(data)
     
 def get_controls(data: pl.DataFrame,  
                  no_abnorm=1,
@@ -28,25 +81,23 @@ def get_controls(data: pl.DataFrame,
     """Get controls based on the data.
          Controls are defined as individuals without a diagnosis and data-based diagnosis."""
     # Removing all individuals with a dia   
-    controls = data.filter(pl.col("FIRST_DIAG_DATE").is_null())
+    
+    controls = data.filter(pl.col.FIRST_DIAG_DATE.is_null()&pl.col.DATA_FIRST_DIAG_ABNORM_DATE.is_null())
     # Figuring out their last measurements (mostly for plotting in the end - predicting control status)
-    controls_end_data = (controls.sort(["FINNGENID", "DATE"], descending=True)
-                                 .group_by("FINNGENID")
-                                 .head(1)
-                                 .select(["FINNGENID", "DATE", "EVENT_AGE", "VALUE", "ABNORM_CUSTOM"])
-                                 .rename({"DATE":"PRED_DATE", "EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"}))
+    controls_end_data = (controls.filter(pl.col.DATE==pl.col.DATE.max().over("FINNGENID"))
+                                 .select(["FINNGENID", "DATE", "ABNORM_CUSTOM"])
+                                 .rename({"DATE": "PRED_DATE", "ABNORM_CUSTOM": "LAST_ABNORM"}))
     # Adding buffer time where we remove data
     controls_end_data = controls_end_data.with_columns(
-                                pl.col("PRED_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE")
-                        )
+                                pl.col("PRED_DATE").dt.offset_by(f"-{months_buffer}mo").dt.date().alias("START_DATE"),
+    )
     controls = controls.join(controls_end_data, on="FINNGENID", how="left")
     controls = controls.with_columns(y_DIAG=0)
     # Removing cases with prior abnormal data - if wanted
     if(no_abnorm == 1):
         ctrl_prior_data = controls.filter(pl.col("DATE") < pl.col("START_DATE"))
         remove_fids = (ctrl_prior_data
-                       .group_by("FINNGENID")
-                       .agg(pl.col("ABNORM_CUSTOM").sum().alias("N_PRIOR_ABNORM"))
+                       .agg(pl.col("ABNORM_CUSTOM").sum().over("FINNGENI").alias("N_PRIOR_ABNORM"))
                        .filter(pl.col("N_PRIOR_ABNORM")>=1)
                        .get_column("FINNGENID"))
         controls = controls.filter(~pl.col("FINNGENID").is_in(remove_fids))
@@ -55,7 +106,11 @@ def get_controls(data: pl.DataFrame,
         remove_fids = controls_end_data.filter(pl.col("LAST_ABNORM")>=1).select("FINNGENID")
         remove_fids = set(remove_fids["FINNGENID"])
         controls = controls.filter(~pl.col("FINNGENID").is_in(remove_fids))
-
+        
+    controls = controls.with_columns([
+                    pl.col.PRED_DATE.dt.date().alias("PRED_DATE"),
+                    pl.col.DATE.dt.date().alias("DATE")
+    ])
     return(controls, remove_fids)
 
 def get_cases(data: pl.DataFrame, 
@@ -74,20 +129,20 @@ def get_cases(data: pl.DataFrame,
     # Start date is either the first diag date or the first abnormal that lead to the diagnosis 
     # minus a buffer of `months_buffer` months
     first_measurement = (cases
-                         .sort(["FINNGENID", "DATE"], descending=False)
-                         .group_by("FINNGENID")
-                         .head(1)
+                         .filter(pl.col.DATE==pl.col.DATE.min().over("FINNGENID")).unique()
                          .select(["FINNGENID", "DATE", "ABNORM_CUSTOM"])
-                         .rename({"DATE": "FIRST_MEASUREMENT_DATE", "ABNORM_CUSTOM": "FIRST_MEASUREMENT_ABNORM"}))
-    cases = cases.join(first_measurement, on="FINNGENID", how="left")
+                         .rename({"DATE": "FIRST_MEASUREMENT_DATE", 
+                                  "ABNORM_CUSTOM": "FIRST_MEASUREMENT_ABNORM"}))
+    cases = cases.join(first_measurement, on="FINNGENID", how="left", coalesce=True)
     cases = cases.with_columns(y_DIAG=1, 
-                               PRED_DATE=pl.min_horizontal(["FIRST_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE"]))
+                               PRED_DATE=pl.min_horizontal(["FIRST_DIAG_DATE", 
+                                                            "DATA_FIRST_DIAG_ABNORM_DATE"]))
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # No prior abnormal (if wanted) # # # # # # # # # # # # # #
     # removing individuals whose measurements only start after or with diagnosis
     # either data-based all abnormal or very old ICD-code diagnosis
     remove_fids = set(cases
-                      .filter(pl.col("FIRST_MEASUREMENT_DATE") >= pl.col("FIRST_DIAG_DATE"))
+                      .filter(pl.col("FIRST_MEASUREMENT_DATE") > pl.col("FIRST_DIAG_DATE"))
                       .get_column("FINNGENID")
                       .unique())
     if normal_before_diag == 1:
@@ -101,34 +156,28 @@ def get_cases(data: pl.DataFrame,
     if no_abnorm == 1:
         case_prior_data = cases.filter(pl.col("DATE") < pl.col("PRED_DATE"))
         remove_fids |= set(case_prior_data
-                            .group_by("FINNGENID")
-                            .agg(pl.col("ABNORM_CUSTOM").sum().alias("N_PRIOR_ABNORM"))
+                            .agg(pl.col("ABNORM_CUSTOM").sum().over("FINNGENID").alias("N_PRIOR_ABNORM"))
                             .filter(pl.col("N_PRIOR_ABNORM")>=1)
                             .get_column("FINNGENID"))
     cases = cases.filter(~pl.col("FINNGENID").is_in(remove_fids))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    # # # # # # # # # Age at prediction time # # # # # # # # # # # # # # # # #
-    # Age and value at first abnormality that lead to the data-based diagnosis
-    # it might be that diag earlier TODO deal with later
-    case_ages = (cases.filter(pl.col("DATE")==pl.col("DATA_FIRST_DIAG_ABNORM_DATE"))
-                      .group_by("FINNGENID").head(1) # bug there might be multiple measurements TODO fix later in earlier steps 
-                      .rename({"EVENT_AGE": "END_AGE", "VALUE": "y_MEAN", "ABNORM_CUSTOM": "LAST_ABNORM"})
-                      .select(["FINNGENID", "END_AGE", "y_MEAN", "LAST_ABNORM"])
-                      .unique())
-    cases = cases.join(case_ages, on="FINNGENID", how="left")
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Removing buffer time from start # # # # # # # # # # # # #
     cases = cases.with_columns(
-                    pl.col("PRED_DATE").dt.offset_by(f"-{months_buffer}mo").alias("START_DATE")
+                    pl.col("PRED_DATE").dt.offset_by(f"-{months_buffer}mo").dt.date().alias("START_DATE")
                 )
     cases = cases.drop(["FIRST_MEASUREMENT_DATE", "FIRST_MEASUREMENT_ABNORM"])
+
+    cases = cases.with_columns([
+                    pl.col.PRED_DATE.dt.date().alias("PRED_DATE"),
+                    pl.col.DATE.dt.date().alias("DATE")
+    ])
+
     return(cases, remove_fids)
 
 def sample_controls(cases: pl.DataFrame,
                     controls: pl.DataFrame,
-                    fg_ver: str) -> pl.DataFrame:
+                    months_buffer: int=6) -> pl.DataFrame:
     """Sample controls based on the cases."""
 
     # Example: Step 1: Get the number of cases per year
@@ -154,24 +203,32 @@ def sample_controls(cases: pl.DataFrame,
           .map_elements(generate_random_date, return_dtype=pl.Date)
           .alias("PRED_DATE")
     ])
-
+    control_meta = control_meta.with_columns(
+                    pl.col("PRED_DATE").dt.offset_by(f"-{months_buffer}mo").dt.date().alias("START_DATE")
+    )
     # Step 7: Join back to df_controls and truncate to the window
-    controls = controls.drop(["PRED_DATE"])
+    controls = controls.drop(["PRED_DATE", "START_DATE"])
     controls = controls.join(control_meta, on="FINNGENID", how="inner")
-    controls = correct_ages(controls, fg_ver)
 
     return(controls)
 
 def get_lab_data(data_path: str, 
-                 file_name: str) -> pl.DataFrame:
+                 diags_path: str) -> pl.DataFrame:
     """Get lab data."""
-    data = read_file(data_path + file_name + ".parquet")
-    metadata = read_file(data_path + file_name + "_meta.parquet",
-                         schema={"FIRST_DIAG_DATE": pl.Date, "DATA_FIRST_DIAG_ABNORM_DATE": pl.Date, "DATA_DIAG_DATE": pl.Date})
+    data = read_file(data_path)
+    metadata = read_file(diags_path,
+                         schema={"FIRST_DIAG_DATE": pl.Date, 
+                                 "DATA_FIRST_DIAG_ABNORM_DATE": pl.Date, 
+                                 "DATA_DIAG_DATE": pl.Date,
+                                 "FIRST_ICD_DIAG_DATE": pl.Date,
+                                 "FIRST_MED_DIAG_DATE": pl.Date})
     data = data.join(metadata, on="FINNGENID", how="left")
     data = data.with_columns(
-                    pl.col("DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("DATE"),
-                    pl.col("DATA_FIRST_DIAG_ABNORM_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("DATA_FIRST_DIAG_ABNORM_DATE"),
-                    pl.col("FIRST_DIAG_DATE").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("FIRST_DIAG_DATE")
+                    pl.col("DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATE"),
+                    pl.col("DATA_FIRST_DIAG_ABNORM_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATA_FIRST_DIAG_ABNORM_DATE"),
+                    pl.col("FIRST_DIAG_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("FIRST_DIAG_DATE"),
+                    pl.col("DATA_DIAG_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATA_DIAG_DATE")
+
     )
+
     return(data)

@@ -25,8 +25,7 @@ def get_plot_names(col_names: list[str],
     kanta_omop_map = dict(zip(kanta_omop_map["measurement_concept_id"].to_list(), kanta_omop_map["concept_name"].to_list()))
     new_names = []
     if lab_name == "hba1c": lab_name = "HbA1c"
-    if lab_name == "egfr": lab_name == "eGFR"
-        
+    if lab_name == "egfr": lab_name = "eGFR"
     for col_name in col_names:
         if col_name.split("_")[0] in kanta_omop_map.keys():
             if len(col_name.split("_")) > 2:
@@ -49,7 +48,7 @@ def get_plot_names(col_names: list[str],
             elif col_name == "FIRST_LAST":
                 new_name = "Days between first and last - " + lab_name
             elif col_name == "SEX":
-                new_name = "sex"
+                new_name = "Sex"
             elif col_name == "MIN_LOC":
                 new_name = "Location of min (-days) - " + lab_name
             elif col_name == "MAX_LOC":
@@ -80,6 +79,8 @@ def get_plot_names(col_names: list[str],
                 new_name = "Kurtosis - " + lab_name
             elif col_name == "SEQ_LEN":
                 new_name = "Number of measurements - " + lab_name
+            elif col_name == "YEAR":
+                new_name = "Year"
             else:
                 new_name = col_name
 
@@ -318,6 +319,7 @@ import numpy as np
 from collections.abc import Iterable
 import pandas as pd
 import warnings
+import pandas as pd
 def plot_calibration(y_true: Iterable[int], 
                      y_probs: Iterable[float], 
                      ax1=None, 
@@ -382,8 +384,7 @@ def plot_calibration(y_true: Iterable[int],
             safe = pl.Series((y_probs*100).squeeze())
             labels = pl.Series(y_true.squeeze())
         sns.boxplot(x=safe/100, 
-                    y=pl.Series(labels.map_elements(lambda x: "Control" if x == 0 else "Case", return_dtype=pl.Utf8),
-                                dtype=pl.Enum(["Control", "Case"])), 
+                    y=pd.Categorical(labels.map_elements(lambda x: "Controls" if x == 0 else "Cases", return_dtype=pl.Utf8),categories=["Controls", "Cases"], ordered=True), 
                     ax=ax2, color="black", vert=False, width=.5, whis=(5,95), fill=False, 
                     flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
         ax2.set_xlabel('Predicted Probability')

@@ -48,12 +48,12 @@ if __name__ == "__main__":
     else:
         labels = read_file(args.file_path+args.file_name_start+"_labels.parquet")
     data = data.join(labels, on="FINNGENID", how="right", coalesce=True)
-    print(data)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Summary statistics                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     sumstats = (data
+                .filter((pl.col.VALUE.is_not_null()))
                 .sort(["FINNGENID", "DATE"], descending=False)
                 .group_by(["FINNGENID", "SET"])
                 .agg(
@@ -65,23 +65,19 @@ if __name__ == "__main__":
                 pl.col.VALUE.kurtosis().alias("KURT"),
                 pl.col.VALUE.skew().alias("SKEW"),
                 (pl.col.VALUE**2).sum().alias("ABS_ENERG"),
-                (pl.col.VALUE-pl.col.VALUE.shift(1)).abs().sum().alias("SUM_ABS_CHANGE"),
-                (pl.col.VALUE-pl.col.VALUE.shift(1)).abs().mean().alias("MEAN_ABS_CHANGE"),
-                (pl.col.VALUE-pl.col.VALUE.shift(1)).abs().max().alias("MAX_ABS_CHANGE"),
-                (pl.col.VALUE-pl.col.VALUE.shift(1)).max().alias("MAX_CHANGE"),
-                (pl.col.VALUE-pl.col.VALUE.shift(1)).min().alias("MIN_CHANGE"),
+                (pl.col.VALUE-pl.col.VALUE.shift(1)).sum().alias("SUM_CHANGE"),
                 (pl.col.VALUE-pl.col.VALUE.shift(1)).mean().alias("MEAN_CHANGE"),
-                (pl.col.VALUE.count()).alias("SEQ_LEN"),
+                (pl.col.VALUE.count()).cast(pl.Int64).alias("SEQ_LEN"),
                 (pl.col.VALUE.quantile(0.25)).alias("QUANT_25"),
-                (pl.col.VALUE.quantile(0.5)).alias("QUANT_75"),
+                (pl.col.VALUE.quantile(0.75)).alias("QUANT_75"),
                 (pl.col.VALUE.get(pl.col.DATE.arg_min())).alias("IDX_QUANT_0"),
                 (pl.col.VALUE.get(pl.col.DATE.arg_max())).alias("IDX_QUANT_100"),
-                (pl.col.ABNORM_CUSTOM.sum()).alias("ABNORM"),
+                (pl.col.ABNORM_CUSTOM.sum()).cast(pl.Int64).alias("ABNORM"),
                 # Distance of minimum compared to prediction in days
-                (pl.col.DATE.get(pl.col.VALUE.arg_min())-pl.col.START_DATE).dt.days().alias("MIN_LOC"),
-                (pl.col.DATE.get(pl.col.VALUE.arg_max())-pl.col.START_DATE).dt.days().alias("MAX_LOC"),
-                (pl.col.DATE.max()-pl.col.DATE.min()).dt.total_days().alias("FIRST_LAST"),
-                (pl.col.DATE.max()).dt.to_date().alias("LAST_VAL_DATE")
+                (((pl.col.DATE.get(pl.col.VALUE.arg_min())-pl.col.START_DATE.first()).dt.total_days()/365.25).abs()).alias("MIN_LOC"),
+                (((pl.col.DATE.get(pl.col.VALUE.arg_max())-pl.col.START_DATE.first()).dt.total_days()/365.25).abs()).alias("MAX_LOC"),
+                ((pl.col.DATE.max()-pl.col.DATE.min()).dt.total_days()/365.25).alias("FIRST_LAST"),
+                (pl.col.DATE.max()).alias("LAST_VAL_DATE")
                 )
     )
 
@@ -89,32 +85,30 @@ if __name__ == "__main__":
     #                 Mean for those with missing data                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     sumstats_train = sumstats.filter(pl.col.SET==0)
-    missing_data = data.filter((pl.col.VALUE.is_null())&((pl.len()==1).over("FINNGENID")))
+
+    missing_data = data.filter((pl.col.VALUE.is_null())&((pl.len()==1).over("FINNGENID"))).select("FINNGENID", "SET")
+
     missing_data = (missing_data.with_columns(
-                        sumstats_train["MIN"].mean().alias("MIN"),
-                        sumstats_train["MAX"].mean().alias("MAX"),
-                        sumstats_train.select(pl.col("MEAN")).mean().alias("MEAN"),
-                        sumstats_train.select(pl.col("SUM")).mean().alias("SUM"),
-                        sumstats_train.select(pl.col("ABS_ENERG")).mean().alias("ABS_ENERG"),
-                        sumstats_train.select(pl.col("QUANT_25")).mean().alias("QUANT_25"),
-                        sumstats_train.select(pl.col("QUANT_75")).mean().alias("QUANT_75"),
-                        sumstats_train.select(pl.col("IDX_QUANT_0")).mean().alias("IDX_QUANT_0"),
-                        sumstats_train.select(pl.col("IDX_QUANT_100")).mean().alias("IDX_QUANT_100"),
-                        sumstats_train.select(pl.col("MIN_LOC")).mean().alias("MIN_LOC"),
-                        sumstats_train.select(pl.col("MAX_LOC")).mean().alias("MAX_LOC"),
-                        pl.Null.alias("KURT"),
-                        pl.Null.alias("SKEW"),
-                        pl.Null.alias("SD"),
-                        pl.Null.alias("SUM_ABS_CHANGE"),
-                        pl.Null.alias("MEAN_ABS_CHANGE"),
-                        pl.Null.alias("MAX_CHANGE"),
-                        pl.Null.alias("MIN_CHANGE"),
-                        pl.Null.alias("MAX_ABS_CHANGE"),
-                        pl.Null.alias("MEAN_CHANGE"),
-                        pl.Null.alias("LAST_VAL_DATE"),
-                        pl.Lit(0).alias("SEQ_LEN"),
-                        pl.Lit(0).alias("FIRST_LAST"),
-                        pl.Lit(0).alias("ABNORM"),
+                        pl.Series("MIN", [sumstats_train["MIN"].mean()]*missing_data.height),
+                        pl.Series("MAX", [sumstats_train["MAX"].mean()]*missing_data.height),
+                        pl.Series("MEAN", [sumstats_train["MEAN"].mean()]*missing_data.height),
+                        pl.Series("SUM", [sumstats_train["SUM"].mean()]*missing_data.height),
+                        pl.Series("ABS_ENERG", [sumstats_train["ABS_ENERG"].mean()]*missing_data.height),
+                        pl.Series("QUANT_25", [sumstats_train["QUANT_25"].mean()]*missing_data.height),
+                        pl.Series("QUANT_75", [sumstats_train["QUANT_75"].mean()]*missing_data.height),
+                        pl.Series("IDX_QUANT_0", [sumstats_train["IDX_QUANT_0"].mean()]*missing_data.height),
+                        pl.Series("IDX_QUANT_100", [sumstats_train["IDX_QUANT_100"].mean()]*missing_data.height),
+                        pl.Series("MIN_LOC", [sumstats_train["MIN_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                        pl.Series("MAX_LOC", [sumstats_train["MAX_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                        pl.Series("KURT", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("SKEW", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("SD", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("MEAN_CHANGE", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("SUM_CHANGE", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("LAST_VAL_DATE", [None]*missing_data.height).cast(pl.Date, strict=False),
+                        pl.Series("SEQ_LEN", [0]*missing_data.height).cast(pl.Int64, strict=False),
+                        pl.Series("FIRST_LAST", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                        pl.Series("ABNORM", [0]*missing_data.height).cast(pl.Int64, strict=False),
                     )
     )
     sumstats = pl.concat([sumstats, missing_data.select(sumstats.columns)])

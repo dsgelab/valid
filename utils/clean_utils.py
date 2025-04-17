@@ -217,27 +217,30 @@ def handle_missing_values(data: pl.DataFrame,
        
     return(data, n_indvs_stats)
 
-def handle_same_time_duplicates(data: pl.DataFrame,
-                                n_indvs_stats: pd.DataFrame) -> pl.DataFrame:
+def handle_same_day_duplicates(data: pl.DataFrame,
+                               n_indvs_stats: pd.DataFrame) -> pl.DataFrame:
     """Mean of duplicates at the same time. K"""
     # Stats
     n_indv = len(set(data["FINNGENID"]))
     n_rows = data.height
 
+    # truncating datetime to day
+    data = data.with_columns(
+                pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d %H:%M:%S", strict=False).dt.date()
+                .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False))
+    )
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
     logging_print("{:,} measurements at the exact same time with different values".format(len(dups)))
         
     # Keeping first of exact duplicates
     if "UNIT" in data.columns:
-        data = (data.group_by(["FINNGENID", "DATE"])
-                .agg(pl.col("VALUE").mean().alias("VALUE"))
-                .join(data.select(["FINNGENID", "DATE", "UNIT"]), on=["FINNGENID", "DATE"], how="left"))
+        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "UNIT"])
+                .agg(pl.col("VALUE").mean().alias("VALUE")))
     else:
-        data = (data.group_by(["FINNGENID", "DATE"])
-                .agg(pl.col("VALUE").mean().alias("VALUE"))
-                .join(data.select(["FINNGENID", "DATE"]), on=["FINNGENID", "DATE"], how="left"))
+        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX"])
+                .agg(pl.col("VALUE").mean().alias("VALUE")))
 
-    logging_print("After mean of time duplicates")
+    logging_print("After removing exact duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
     # Stats
@@ -250,8 +253,7 @@ def handle_same_time_duplicates(data: pl.DataFrame,
  
 def handle_exact_duplicates(data: pl.DataFrame,
                             n_indvs_stats: pd.DataFrame) -> pl.DataFrame:
-    """Removes exact duplicates based on FINNGENID, DATE, VALUE and UNIT (if unit avaliable).
-       Keeping the first of exact duplicates."""
+    """Removes exact duplicates based on FINNGENID, DATE, VALUE and UNIT (if unit avaliable)."""
     # Stats
     n_indv = len(set(data["FINNGENID"]))
     n_rows = data.height

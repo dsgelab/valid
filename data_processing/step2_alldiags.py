@@ -66,7 +66,7 @@ def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
                 pl.col("START_DATE").fill_null(strategy="forward").over("FINNGENID")
     )
     # Add time difference between the start of the sequence and the current date
-    data = data.with_columns((pl.col.DATE-pl.col.START_DATE).alias("DIFF"))
+    data = data.with_columns((pl.col.DATE-pl.col.START_DATE).dt.total_days().alias("DIFF"))
 
     return(data)
 
@@ -131,22 +131,27 @@ if __name__ == "__main__":
                 .rename({"DIAG_DATE": "FIRST_ICD_DIAG_DATE"})
                 .select(["FINNGENID", "FIRST_ICD_DIAG_DATE"])
     )
+    all_diags = all_data_diags.join(icd_data, on="FINNGENID", how="full", coalesce=True)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 ATC-based diagnoses                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-    med_data = read_file(args.diags_path_start+"_meds.parquet")
-    med_data = (med_data
-                .sort(["FINNGENID", "MED_DATE"], descending=False)
-                .filter((pl.col.MED_DATE==pl.col.MED_DATE.first()).over("FINNGENID"))
-                .rename({"MED_DATE": "FIRST_MED_DIAG_DATE"})
-                .select(["FINNGENID", "FIRST_MED_DIAG_DATE"])
-    )
+    try:
+        med_data = read_file(args.diags_path_start+"_meds.parquet")
+        med_data = (med_data
+                    .sort(["FINNGENID", "MED_DATE"], descending=False)
+                    .filter((pl.col.MED_DATE==pl.col.MED_DATE.first()).over("FINNGENID"))
+                    .rename({"MED_DATE": "FIRST_MED_DIAG_DATE"})
+                    .select(["FINNGENID", "FIRST_MED_DIAG_DATE"])
+        )
+        all_diags = all_diags.join(med_data, on="FINNGENID", how="full", coalesce=True)
+    except FileNotFoundError:
+        print("No medication-based diagnosis file found")
+        all_diags = all_diags.with_columns(FIRST_MED_DIAG_DATE=None)
+        
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Join data                                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
-    all_diags = all_data_diags.join(icd_data, on="FINNGENID", how="outer")
-    all_diags = all_diags.join(med_data, on="FINNGENID", how="outer")
     # minimum date of diagnosis
     all_diags = (all_diags
                  .with_columns(pl.min_horizontal(
@@ -156,14 +161,21 @@ if __name__ == "__main__":
                                ).alias("FIRST_DIAG_DATE")
                   )
     )
-
+    print(all_diags.select("FINNGENID", "FIRST_DIAG_DATE", "DATA_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE", "FIRST_ICD_DIAG_DATE", "FIRST_MED_DIAG_DATE"))
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
-    logging.info("Data-based diagnosis: " + str(all_data_diags.shape[0]) + " rows")
-    logging.info("ICD-based diagnosis: " + str(icd_data.shape[0]) + " rows")
-    logging.info("ATC-based diagnosis: " + str(med_data.shape[0]) + " rows")
-    logging.info("All diagnoses: " + str(all_diags.shape[0]) + " rows")
-    logging.info("Took " + str(timer.get_time()) + " seconds to process all diagnoses.")
+    logging.info("Data-based diagnosis: " + str(all_data_diags.height) + " rows")
+    logging.info("ICD-based diagnosis: " + str(icd_data.height) + " rows")
+    try:
+        logging.info("ATC-based diagnosis: " + str(med_data.height) + " rows")
+    except:
+        pass
+    logging.info("All diagnoses: " + str(all_diags.height) + " rows")
+    logging.info("Took " + str(timer.get_elapsed()) + " seconds to process all diagnoses.")
 
-    all_diags.write_parquet(args.res_dir + args.file_name + "_diff" + args.diff_days + "_alldiags_" + get_date + ".parquet")
+    (all_diags
+         .select("FINNGENID", "FIRST_DIAG_DATE", "DATA_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE", "FIRST_ICD_DIAG_DATE", "FIRST_MED_DIAG_DATE")
+         .unique()
+         .write_parquet(args.res_dir + args.file_name + "_diff" + str(args.diff_days) + "_alldiags_" + get_date() + ".parquet")
+    )
