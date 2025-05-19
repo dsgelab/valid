@@ -183,7 +183,7 @@ def sample_controls(cases: pl.DataFrame,
     # Example: Step 1: Get the number of cases per year
     case_bins = (cases.with_columns([pl.col("PRED_DATE").dt.year().alias("CASE_BIN")])
                       .group_by("CASE_BIN")
-                      .agg(pl.len().alias("N_CASES"))
+                      .agg(pl.col.FINNGENID.unique().len().alias("N_CASES"))
     )
     # Step 2: Expand case bin counts into a list of index dates
     case_index_pool = (case_bins
@@ -192,11 +192,12 @@ def sample_controls(cases: pl.DataFrame,
                         .rename({"CASE_BIN": "SAMPLED_INDEX_DATE"})
     )
     # Step 3: Get one row per control
-    control_meta = (controls.select("FINNGENID").unique())
-
+    control_meta = (controls.select("FINNGENID", "PRED_DATE").unique().sort("PRED_DATE"))
     # Step 4: Sample index dates for controls from case_index_pool
-    sampled_dates = case_index_pool.sample(control_meta.height, with_replacement=True).to_series()
-
+    sampled_dates = case_index_pool.sample(control_meta.height, 
+                                           with_replacement=True,
+                                           shuffle=True).to_series()
+    sampled_dates = sampled_dates.sort()
     # Vectorized approach to generate random dates for the 'year' column
     control_meta = control_meta.with_columns([
         pl.Series("PRED_DATE", sampled_dates)
@@ -212,10 +213,37 @@ def sample_controls(cases: pl.DataFrame,
 
     return(controls)
 
+
+
+def sample_controls_new(cases: pl.DataFrame,
+                    controls: pl.DataFrame,
+                    months_buffer: int=6) -> pl.DataFrame:
+    """Sample controls based on the cases."""
+
+    # Example: Step 1: Get the number of cases per year
+    case_bins = (cases.with_columns([pl.col("PRED_DATE").dt.year().alias("CASE_BIN")])
+                      .group_by("CASE_BIN")
+                      .agg(pl.col.FINNGENID.unique().len().alias("N_CASES"))
+    )
+    control_meta = (controls.select("FINNGENID", "PRED_DATE").unique())
+    new_controls = set()
+    case_bins = dict(zip(case_bins["CASE_BIN"], case_bins["N_CASES"]))
+    for year, n_cases in case_bins.items():
+        control_options = control_meta.filter(pl.col.PRED_DATE.dt.year()==year)
+        max_sample = min(control_options.height, 4*n_cases)
+        print(f"year {year} max sample {max_sample} controls {control_options.height} cases {n_cases}")
+        control_select = control_options.sample(max_sample, with_replacement=False)
+        new_controls |= set(control_select["FINNGENID"].to_list())
+
+    # Step 7: Join back to df_controls and truncate to the window
+    controls = controls.filter(pl.col.FINNGENID.is_in(new_controls))
+    return(controls)
+
 def get_lab_data(data_path: str, 
                  diags_path: str) -> pl.DataFrame:
     """Get lab data."""
-    data = read_file(data_path)
+    data = read_file(data_path, schema={"DATE": pl.Date})
+    if data.schema["DATE"] == pl.Datetime: data=data.with_columns(pl.col.DATE.dt.date().alias("DATE"))
     metadata = read_file(diags_path,
                          schema={"FIRST_DIAG_DATE": pl.Date, 
                                  "DATA_FIRST_DIAG_ABNORM_DATE": pl.Date, 

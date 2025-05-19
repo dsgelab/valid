@@ -21,23 +21,22 @@ def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    data = data.with_columns(pl.when(pl.col.ABNORM_CUSTOM==0).then(0).otherwise(1).alias("ABNORM_BIN"))
+    #data = data.with_columns(pl.when(pl.col.ABNORM_CUSTOM==0).then(0).otherwise(1).alias("ABNORM_BIN"))
     data = (data
             .filter((pl.len()>1).over("FINNGENID"))
-            .filter(pl.col.ABNORM_BIN.is_not_null())
+            .filter(pl.col.ABNORM_CUSTOM.is_not_null())
             .sort(["FINNGENID", "DATE"], descending=False)
-            .select("FINNGENID", "DATE", "ABNORM_BIN")
+            .select("FINNGENID", "DATE", "ABNORM_CUSTOM")
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Shifting data                                           #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-            .with_columns(pl.col.ABNORM_BIN.shift(1).over("FINNGENID").alias("PREV_ABNORM"))
+            .with_columns(pl.col.ABNORM_CUSTOM.shift(1).over("FINNGENID").alias("PREV_ABNORM"))
     )
     data = (data
             .with_columns(pl.when(pl.col.PREV_ABNORM.is_null())
                           .then(-1)
                           .otherwise(pl.col.PREV_ABNORM)
                           .alias("PREV_ABNORM"),
-
             )
     )
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -47,7 +46,7 @@ def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
     # -1 is used to mark the start of the first sequence
     # Otherwise it will bee some shift from 0 to 1 or 1 to 0 etc.
     data = (data
-            .with_columns(pl.when(pl.col.ABNORM_BIN!=pl.col.PREV_ABNORM)
+            .with_columns(pl.when(pl.col.ABNORM_CUSTOM!=pl.col.PREV_ABNORM)
                             .then(pl.lit("START"))
                             .otherwise(pl.lit("CONTINUE"))
                             .alias("START")
@@ -67,6 +66,8 @@ def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
     )
     # Add time difference between the start of the sequence and the current date
     data = data.with_columns((pl.col.DATE-pl.col.START_DATE).dt.total_days().alias("DIFF"))
+    if data.schema["DATE"] == pl.Datetime: data=data.with_columns(pl.col.DATE.dt.date().alias("DATE"))
+    if data.schema["START_DATE"] == pl.Datetime: data=data.with_columns(pl.col.START_DATE.dt.date().alias("START_DATE"))
 
     return(data)
 
@@ -120,7 +121,8 @@ if __name__ == "__main__":
                       .with_columns(pl.col("DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATA_DIAG_DATE"),
                                     pl.col("START_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATA_FIRST_DIAG_ABNORM_DATE"))
     )
-    
+    print(all_data_diags)
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 ICD-based diagnoses                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
@@ -161,7 +163,6 @@ if __name__ == "__main__":
                                ).alias("FIRST_DIAG_DATE")
                   )
     )
-    print(all_diags.select("FINNGENID", "FIRST_DIAG_DATE", "DATA_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE", "FIRST_ICD_DIAG_DATE", "FIRST_MED_DIAG_DATE"))
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       

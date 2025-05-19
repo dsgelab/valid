@@ -18,6 +18,7 @@ import polars as pl
 from general_utils import read_file
 def get_plot_names(col_names: list[str], 
                    lab_name: str,
+                   lab_name_two: str="",
                    omop_mapping_path="/home/ivm/valid/data/extra_data/upload/kanta_omop_mappings_counts.csv") -> list[str]:
     """Get the plot names for the columns. 
        Prettier/more readable names for output. OMOP mapping is used for lab values."""
@@ -26,59 +27,67 @@ def get_plot_names(col_names: list[str],
     new_names = []
     if lab_name == "hba1c": lab_name = "HbA1c"
     if lab_name == "egfr": lab_name = "eGFR"
+    if lab_name_two == "fgluc": lab_name_two = "Fasting glucose"
     for col_name in col_names:
+        if col_name.startswith("S_"): 
+            crnt_lab_name = lab_name_two
+            col_name = col_name.replace("S_", "")
+        else: 
+            crnt_lab_name = lab_name
         if col_name.split("_")[0] in kanta_omop_map.keys():
-            if len(col_name.split("_")) > 2:
-                new_name = col_name.split("_")[2] + "% " + col_name.split("_")[1].capitalize() + " - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
+            if "QUANT" in col_name:
+                new_name = col_name.split("_")[1].replace("QUANT", "") + "% Quant - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
             else:
                 new_name = col_name.split("_")[1].capitalize() + " - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
         else:
             if col_name.startswith("QUANT"):
-                new_name = col_name.split("_")[1] + "% Quant - " + lab_name
+                new_name = col_name.split("_")[1] + "% Quant - " + crnt_lab_name
             elif col_name in ["MIN", "MEAN", "MAX", "MEDIAN", ]:
-                new_name = col_name.capitalize() + " - " + lab_name
+                new_name = col_name.capitalize() + " - " + crnt_lab_name
+            elif col_name == "LAST_VAL_DIFF":
+                new_name = "Distance of last value - " + crnt_lab_name
             elif col_name == "IDX_QUANT_100":
-                new_name = "Last value - " + lab_name
+                new_name = "Last value - " + crnt_lab_name
             elif col_name == "IDX_QUANT_50":
-                new_name = "Mid value - " + lab_name
+                new_name = "Mid value - " + crnt_lab_name
             elif col_name == "IDX_QUANT_0":
-                new_name = "First value - " + lab_name
+                new_name = "First value - " + crnt_lab_name
             elif col_name == "EVENT_AGE":
                 new_name = "Age"
             elif col_name == "FIRST_LAST":
-                new_name = "Days between first and last - " + lab_name
+                new_name = "Days between first and last - " + crnt_lab_name
             elif col_name == "SEX":
                 new_name = "Sex"
             elif col_name == "MIN_LOC":
-                new_name = "Location of min (-days) - " + lab_name
+                new_name = "Location of min (-days) - " + crnt_lab_name
             elif col_name == "MAX_LOC":
-                new_name = "Location of max (-days) - " + lab_name
+                new_name = "Location of max (-days) - " + crnt_lab_name
             elif col_name == "REG_COEF":
-                new_name = "Regression coef - " + lab_name
+                new_name = "Regression coef - " + crnt_lab_name
             elif col_name == "SUM_ABS_CHANGE":
-                new_name = "Sum of absolute change - " + lab_name
+                new_name = "Sum of absolute change - " + crnt_lab_name
             elif col_name == "MAX_ABS_CHANGE":
-                new_name = "Max of absolute change - " + lab_name
+                new_name = "Max of absolute change - " + crnt_lab_name
             elif col_name == "MEAN_ABS_CHANGE":
-                new_name = "Mean of absolute change - " + lab_name
+                new_name = "Mean of absolute change - " + crnt_lab_name
             elif col_name == "ABNORM":
-                new_name = "Number of prior abnorm - " + lab_name
+                new_name = "Number of prior abnorm - " + crnt_lab_name
             elif col_name == "MEAN_CHANGE":
-                new_name = "Mean change - " + lab_name
+                new_name = "Mean change - " + crnt_lab_name
             elif col_name == "MAX_CHANGE":
-                new_name = "Max change - " + lab_name
+                new_name = "Max change - " + crnt_lab_name
             elif col_name == "SUM":
-                new_name = "Sum - " + lab_name
+                new_name = "Sum - " + crnt_lab_name
             elif col_name == "SD":
-                new_name = "Standard deviation - " + lab_name
+                new_name = "Standard deviation - " + crnt_lab_name
             elif col_name == "ABS_ENERG":
-                new_name = "Absolute energy - " + lab_name
+                new_name = "Absolute energy - " + lab_name_two
             elif col_name == "SKEW":
-                new_name = "Skew - " + lab_name
+                new_name = "Skew - " + lab_name_two
             elif col_name == "KURT":
-                new_name = "Kurtosis - " + lab_name
+                new_name = "Kurtosis - " + lab_name_two
             elif col_name == "SEQ_LEN":
-                new_name = "Number of measurements - " + lab_name
+                new_name = "Number of measurements - " + lab_name_two
             elif col_name == "YEAR":
                 new_name = "Year"
             else:
@@ -391,18 +400,11 @@ def plot_calibration(y_true: Iterable[int],
         ax2.set_ylabel('')
 
 # Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
-from sklearn.metrics import precision_recall_curve
-import matplotlib.pyplot as plt
-import sklearn.metrics as skm
-from collections.abc import Iterable
-import seaborn as sns
-def precision_recall_plot(y_true: Iterable[int], 
-                          y_probs: Iterable[float], 
-                          label: str, 
-                          compare: bool=False, 
-                          ax=None):
+
+def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
     """ Plot Precision-Recall curve.
         Set `compare=True` to use this function to compare classifiers. """
+
     p, r, thresh = precision_recall_curve(y_true, y_probs)
     p, r, thresh = list(p), list(r), list(thresh)
     p.pop()
@@ -494,3 +496,17 @@ def create_report_plots(y_true: Iterable[int],
         fig.tight_layout()
         
     return fig
+
+        
+
+###################### Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
+import timeit
+import pickle
+import sys
+from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, precision_recall_curve, roc_curve, accuracy_score
+from sklearn.exceptions import NotFittedError
+
+import scipy
+
+        
+import sklearn.metrics as skm   

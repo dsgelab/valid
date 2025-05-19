@@ -10,6 +10,7 @@ import argparse
 # Logging
 import logging
 logger = logging.getLogger(__name__)
+from datetime import datetime
 
 def get_out_file_name(file_name_start: str,
                       lab_name: str,
@@ -77,9 +78,8 @@ def get_parser_arguments():
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
     parser.add_argument("--file_path_preds", type=str, help="Full path to the longitduinal ICD or ATC data.", required=True)
-    parser.add_argument("--file_path_long", type=str, help="Full path to the longitduinal measurement data.", required=True)
     parser.add_argument("--dir_path_labels", type=str, help="Path to directory with label data.", required=True)
-    parser.add_argument("--file_path_labels", type=str, help="Path to the diagnosis data file", default="")
+    parser.add_argument("--file_name_labels_start", type=str, help="Path to the diagnosis data file", default="")
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
 
     # Settings
@@ -88,6 +88,7 @@ def get_parser_arguments():
     parser.add_argument("--bin_count", type=int, default=1, help="Whether to count number of occurance or stay binary observed/not observed.")
     parser.add_argument("--months_before", type=int, default=0, help="Months to add before start of measurements for a buffer.")
     parser.add_argument("--start_year", type=int, default=0, help="What year to start the data from. Ignored if 0.")
+    parser.add_argument("--start_date", type=str, default="", help="Date to filter before", required=False)
 
     # Settings
     args = parser.parse_args()
@@ -100,7 +101,7 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     timer = Timer()
     args = get_parser_arguments()
-    out_file_name = get_out_file_name(args.file_path_preds, 
+    out_file_name = get_out_file_name(args.file_name_labels_start, 
                                       args.lab_name, 
                                       args.col_name, 
                                       args.time, 
@@ -119,14 +120,17 @@ if __name__ == "__main__":
     #                 Filter to right time window                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     if args.time != 0:
-        preds_data = get_time_period_data(args.file_path_long,
+        preds_data = get_time_period_data(args.dir_path_labels+args.file_name_labels_start+".parquet",
                                           preds_data,
                                           args.time,
                                           args.months_before)
-    # Filtering out data before start of prediction
-    labels = read_file(args.file_path+args.file_name_start+"_labels.parquet")
-    preds_data = preds_data.join(labels, on="FINNGENID", how="right", coalesce=True)
-    preds_data = preds_data.filter(pl.col.DATE < pl.col.START_DATE)
+    labels = read_file(args.dir_path_labels+args.file_name_labels_start+"_labels.parquet")
+    if args.start_date == "": 
+        # Filtering out data before start of prediction   
+        preds_data = preds_data.join(labels.select("FINNGENID", "START_DATE"), on="FINNGENID", how="left")
+        preds_data = preds_data.filter(pl.col.DATE < pl.col.START_DATE).drop("START_DATE")
+    else:
+        preds_data = preds_data.filter(pl.col.DATE < datetime.strptime(args.start_date, "%Y-%m-%d"))
     # Filtering out data only after what we set as start year
     if args.start_year != 0:
         preds_data = preds_data.filter(pl.col.DATE.dt.year() >= args.start_year)
@@ -136,22 +140,23 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     preds_wider = (preds_data
                     .group_by(["FINNGENID", args.col_name])
-                    .agg(pl.count().alias("N_CODE"))
+                    .agg(pl.len().alias("N_CODE"))
     )
 
     # Making binary 0/1 observed if bin_count is 1
     if args.bin_count == 1:
-        preds_wider = preds_wider.with_columns(pl.when(pl.col.N_CODE>=1).then(1).otherwise(0))
+        preds_wider = preds_wider.with_columns(pl.when(pl.col.N_CODE>=1).then(1).otherwise(0).alias("N_CODE"))
 
     # Making wide
-    preds_wider = preds_wider.pivot(
-                        values="N_CODE",
-                        index="FINNGENID",
-                        columns=args.col_name,
-                        fill_values=0
+    preds_wider = (preds_wider
+                    .pivot(values="N_CODE", index="FINNGENID", on=args.col_name)
+                    .fill_null(0)
     )
-    print(preds_wider)
 
+    # Add people without any codes
+    preds_wider = preds_wider.join(labels[["FINNGENID"]], on="FINNGENID", how="full", coalesce=True)
+    preds_wider = preds_wider.fill_null(0)
+    print(preds_wider)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Date of last code                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   

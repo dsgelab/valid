@@ -127,8 +127,11 @@ def custom_abnorm(data: pl.DataFrame,
     if lab_name == "gluc" or lab_name=="fgluc":
         data = three_level_abnorm(data)  
     else: data = three_level_abnorm(data)
-    
-    data = get_abnorm_func_based_on_name(lab_name)(data, "VALUE")
+
+    try:
+        data = get_abnorm_func_based_on_name(lab_name)(data, "VALUE")
+    except ValueError:
+        data = data.rename({"ABNORM": "ABNORM_CUSTOM"})
 
     return(data)
 
@@ -225,19 +228,27 @@ def handle_same_day_duplicates(data: pl.DataFrame,
     n_rows = data.height
 
     # truncating datetime to day
-    data = data.with_columns(
-                pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d %H:%M:%S", strict=False).dt.date()
-                .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False))
-    )
+    print(data.schema["DATE"]==pl.Datetime)
+    if data.schema["DATE"]==pl.Datetime:
+        data = data.with_columns(
+                    pl.col.DATE.dt.date().alias("DATE")
+        )
+    else:
+        data = data.with_columns(
+                    pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d %H:%M:%S", strict=False).dt.date()
+                    .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False)
+                    .alias("DATE"))
+        )
+    print(data)
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
     logging_print("{:,} measurements at the exact same time with different values".format(len(dups)))
         
     # Keeping first of exact duplicates
     if "UNIT" in data.columns:
-        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "UNIT"])
+        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "ABNORM", "UNIT"])
                 .agg(pl.col("VALUE").mean().alias("VALUE")))
     else:
-        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX"])
+        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "ABNORM"])
                 .agg(pl.col("VALUE").mean().alias("VALUE")))
 
     logging_print("After removing exact duplicates")
@@ -291,17 +302,26 @@ def handle_multi_unit_duplicates(data: pl.DataFrame,
     logging_print("After temporarily removing date duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
     # Keeping mmol/mol if available, otherwise %, otherwise no unit made to priority
-    dups = dups.sort(["FINNGENID", "EVENT_AGE", "UNIT", "VALUE"], nulls_last=True).group_by(["FINNGENID", "DATE"]).first()
+    dups = (dups
+            .sort(["FINNGENID", "EVENT_AGE", "UNIT", "VALUE"], nulls_last=True)
+            .group_by(["FINNGENID", "DATE"])
+            .first())
     dups = dups.with_columns(pl.when(pl.col("UNIT").is_null())
                                .then(pl.lit(unit_priority[0]))
                                .otherwise(pl.col("UNIT"))
                                .alias("UNIT"))
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Adding back top dups and stats                          #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    data = pl.concat([data, dups.select(data.columns)])
+    logging_print("After adding back units")
+    logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
+
     
     return(data)
 
 def handle_different_units(data: pl.DataFrame, 
                            n_indvs_stats: pd.DataFrame, 
-                           logger: logging.Logger,
                            unit_priority=["mmol/mol", "%"]) -> tuple[pl.DataFrame, pd.DataFrame]:
     """This approach to duplicate data, handles the duplicataes based on the unit. If there are
     multiple units for the same individual at the same time, the one with the priority unit is kept.
@@ -311,15 +331,8 @@ def handle_different_units(data: pl.DataFrame,
     n_indv = len(set(data["FINNGENID"]))
     n_rows = data.height
 
-    data = handle_exact_duplicates(data, logger)
+    data, n_indvs_stats = handle_exact_duplicates(data, n_indvs_stats)
     data = handle_multi_unit_duplicates(data, unit_priority)
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Adding back top dups and stats                          #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    data = pl.concat([data, dups.select(data.columns)])
-    logging_print("After adding back units")
-    logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
     # Stats
     n_indvs_stats.loc[n_indvs_stats.STEP == "Dups manual","N_ROWS_NOW"] = data.height

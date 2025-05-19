@@ -6,10 +6,10 @@ def make_dir(dir_path):
     if not os.path.exists(dir_path): os.makedirs(dir_path)
 
 import logging
-def init_logging(out_dir: str, 
-                 lab_name: str, 
-                 logger: logging.Logger, 
-                 args: dict):
+def init_logging(out_dir, 
+                 lab_name, 
+                 logger, 
+                 args):
     log_dir = out_dir + "logs/" + lab_name + "/"
     make_dir(log_dir)
     logging.basicConfig(filename=log_dir+get_datetime()+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
@@ -28,7 +28,7 @@ def get_datetime():
 #                 Printing                                                #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 def print_count(data):
-    print("{:,} individuals with {:,} rows".format(data.FINNGENID.nunique(), data.shape[0]))
+    print("{:,} individuals with {:,} rows".format(data["FINNGENID"].unique().len(), data.shape[0]))
     
 def logging_print(text):
     print(text)
@@ -89,7 +89,7 @@ def query_to_df(query, **job_config_kwargs) -> pl.DataFrame:
     client = bigquery.Client()
     job_config = bigquery.QueryJobConfig(**job_config_kwargs)
     query_result = client.query(query, job_config=job_config)
-    df = pl.DataFrame([dict(row) for row in query_result], infer_schema_length=100000)
+    df = pl.DataFrame([dict(row) for row in query_result], infer_schema_length=10000)
     df = parse_dates(df)
     return(df)
 

@@ -44,12 +44,14 @@ def get_abnorm_func_based_on_name(lab_name,
             return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=True))
         if extra_choice == "KDIGO-soft":
             return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=False))
+        else:
+            return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=True))
     if lab_name == "cyst" or lab_name =="cystc": return(cystc_abnorm)
     if lab_name == "gluc" or lab_name=="fgluc": return(gluc_abnorm)
     if lab_name == "alat": return(alat_abnorm)
     if lab_name == "asat": return(asat_abnorm)
 
-    else: raise("Sorry, no function for this lab name.")
+    else: raise ValueError("Sorry, no function for this lab name.")
         
 """Based on transformed kreatinine to eGFR."""
 def egfr_kdigo_abnorm(data, 
