@@ -1,24 +1,62 @@
-def get_data(lab_name="egfr"):
-    if lab_name == "egfr":
-        data = pl.read_parquet("/home/ivm/valid/data/processed_data/step4_labels/egfr_2025-04-04_data-diag-ctrlsample-start2019_2025-04-07.parquet")
-        labels = pl.read_parquet("/home/ivm/valid/data/processed_data/step4_labels/egfr_2025-04-04_data-diag-ctrlsample-start2019_2025-04-07_labels.parquet")
-    elif lab_name == "hba1c":
-        data = pd.read_csv("/home/ivm/valid/data/processed_data/step4_labels/hba1c_d1_2025-02-10_data-diag-noabnorm_2025-03-06.csv")
-        labels = pd.read_csv("/home/ivm/valid/data/processed_data/step4_labels/hba1c_d1_2025-02-10_data-diag-noabnorm_2025-03-06_labels.csv")
-        
-    data = data.join(labels.select(["FINNGENID", "y_DIAG", "SET"]), on="FINNGENID", how="full")
-    return(data)
+# Utils
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from general_utils import logging_print, init_logging, make_dir, get_date, read_file, Timer
+# Standard stuff
+import numpy as np
+import pandas as pd
+import polars as pl
+# Pickle
+import pickle
+# Time stuff
+from datetime import datetime
+# Logging and input
+import logging
+logger = logging.getLogger(__name__)
+import argparse
 
-def quantile_data(lab_name,
-                  data):
+from collections import defaultdict
+from tqdm import tqdm
+
+def get_parser_arguments():
+    #### Parsing and logging
+    parser = argparse.ArgumentParser()
+    # Data paths
+    parser.add_argument("--res_dir", type=str, help="Path to the directory where results will be saved.", default="/home/ivm/valid/data/processed_data/step5_data/pytorch_ehr/")
+    parser.add_argument("--data_path_dir", type=str, help="Path to the directory where data is stored.", required=True)
+    parser.add_argument("--file_name_start", type=str, help="File name of data without the '.parquet' part", required=True)
+    parser.add_argument("--icd_data_path", type=str, help="Path to data and labels without the '.parquet' part", required= False)
+    parser.add_argument("--atc_data_path", type=str, help="Path to data and labels without the '.parquet' part", required= False)
+
+    parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
+    parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
+    parser.add_argument("--preds", type=str, help="List of predictors. Special options: ICD, ATC, LAB. Taking all columns from the respective data file.", 
+                        default=["LAB"], nargs="+")
+    parser.add_argument("--end_obs_date", type=str, help="Date of the last observation. If not provided, the date of the last observation in the data will be used.", default=None)
+    args = parser.parse_args()
+
+    return(args)
+
+def get_data(data_path_start: str,
+             goal: str) -> pl.DataFrame:
+    lab_data = read_file(data_path_start+".parquet")
+    labels = read_file(data_path_start+"_labels.parquet")
+        
+    labels = labels.with_columns(pl.col("START_DATE").cast(pl.Utf8).str.to_date())
+    lab_data = lab_data.with_columns(pl.col("DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", exact=False))
+
+    lab_data = lab_data.join(labels.select(["FINNGENID", goal, "SET"]), on="FINNGENID", how="full", coalesce=True)
+    return(lab_data, labels)
+
+
+def quantile_data(lab_name: str,
+                  data: pl.DataFrame) -> pl.DataFrame:
     # Defining quantiles
     steps = 0.1
-    if lab_name == "hba1c":
-        steps = 0.2 # size of quantile steps
+    if lab_name == "hba1c": steps = 0.2 
     quants = np.append(np.quantile(data.filter((pl.col.SET==0)&(~pl.col.VALUE.is_null()))["VALUE"], np.arange(0, 1, steps), method="higher"), 
                        data.filter(pl.col.SET==0)["VALUE"].max())
-    
-    #quants = [20, 30, 35, 40, 42, 48]
+    logging_print("Quantiles: ", quants)
     # Adding column with cut data
     data = data.with_columns(pl.when(pl.col("VALUE").is_not_null())
                             .then(pl.col.VALUE.cut(quants))
@@ -42,80 +80,104 @@ def quantile_data(lab_name,
     quant_df = quant_df.filter(~pl.col.UPPER_EDGE.is_infinite())
     quant_df = quant_df.with_columns([(pl.col.LOWER_EDGE+((pl.col.UPPER_EDGE-pl.col.LOWER_EDGE)/2)).round().cast(pl.Int64).alias("MID")])
     
-    quant_map = dict(zip(quant_df["QUANT"], quant_df["IDX"]))
     quant_df = quant_df.with_columns(pl.col.MID.map_elements(lambda x: "_".join([lab_name, str(x)]), return_dtype=pl.Utf8).alias("TEXT"))
     print(quant_df)
     data = data.join(quant_df.select(["QUANT", "TEXT"]).with_columns(pl.col.QUANT.cast((pl.Categorical))), on="QUANT", how="left")
-    # Mapping quantiles to tokens in data
-    
-    labels_dict = dict(zip(labels["FINNGENID"], labels["y_DIAG"]))
-    data["TEXT"].value_counts()
+    return data, quant_df
 
-def get_icd_data():
-    icds = pl.read_csv("/home/ivm/valid/data/extra_data/processed_data/step1_clean/icds_r12_2024-10-18_min1pct_sum_onttop_2025-02-10.csv", infer_schema_length=0)
-    icds = icds.cast({"DATE": pl.Date, "EVENT_AGE": pl.Float64})
-    icds = icds.filter(pl.col("FINNGENID").is_in(data["FINNGENID"].unique()))
-    icds = icds.filter(pl.col("DATE").dt.year() >= 2012)
-    icds = icds.sort(pl.col("DATE")).unique(subset=["DATE", "ICD_THREE"]).select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"])
-    display(icds)
+def get_icd_data(icd_data_path: str) -> pl.DataFrame:
+    icd_data = read_file(icd_data_path)
+    icd_data = icd_data.cast({"DATE": pl.Date, "EVENT_AGE": pl.Float64})
+    icd_data = icd_data.filter(pl.col("FINNGENID").is_in(data["FINNGENID"].unique()))
+    icd_data = icd_data.filter(pl.col("DATE").dt.year() >= 2012)
+    icd_data = icd_data.sort(pl.col("DATE")).unique(subset=["DATE", "ICD_THREE"]).select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"])
+    return(icd_data)
 
-def get_atc_data():
-    atcs = pl.read_csv("/home/ivm/valid/data/extra_data/processed_data/step1_clean/atcs_r12_2025-02-04_min1pct_sum_onttop_2025-02-18.csv")
-    atcs = atcs.cast({"DATE": pl.Date, "EVENT_AGE": pl.Float64})
-    atcs = atcs.filter(pl.col("FINNGENID").is_in(data["FINNGENID"].unique()))
-    atcs = atcs.filter(pl.col("DATE").dt.year() >= 2012)
-    atcs = atcs.sort(pl.col("DATE")).unique(subset=["DATE", "ATC_FIVE"]).select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"])
-    display(atcs)
+def get_atc_data(atc_data_path: str) -> pl.DataFrame:
+    atc_data = read_file(atc_data_path)
+    atc_data = atc_data.cast({"DATE": pl.Date, "EVENT_AGE": pl.Float64})
+    atc_data = atc_data.filter(pl.col("FINNGENID").is_in(data["FINNGENID"].unique()))
+    atc_data = atc_data.filter(pl.col("DATE").dt.year() >= 2012)
+    atc_data = atc_data.sort(pl.col("DATE")).unique(subset=["DATE", "ATC_FIVE"]).select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"])
+    return(atc_data)
 
-def create_map():
-    list_codes = ["female", "male"]
+def create_code_map(preds: list,
+                    data: pl.DataFrame,
+                    icd_data: pl.DataFrame,
+                    atc_data: pl.DataFrame,
+                    res_path_start: str) -> dict:
+    if "SEX" in preds:
+        list_codes = ["female", "male"]
     for code in list(data.filter(~pl.col.TEXT.is_null())["TEXT"].unique()):
         list_codes.append(code) 
-    # for code in list(icds.get_column("ICD_THREE").unique()): 
-    #      list_codes.append(code)
-    # for code in list(atcs.get_column("ATC_FIVE").unique()): 
-    #     list_codes.append(code)
-    data_type = "lab"
+    if "ICD" in preds:
+        for code in list(icd_data.get_column("ICD_THREE").unique()): 
+            list_codes.append(code)
+    if "ATC" in preds:
+        for code in list(atc_data.get_column("ATC_FIVE").unique()): 
+            list_codes.append(code)
     code_map = dict(zip(list_codes, range(2, len(list_codes)+2)))
-    pickle.dump(code_map, open("/home/ivm/valid/data/processed_data/step5_data/pytorch_ehr/" + lab_name + "_" + get_date() + "_" + data_type + "_codemap.pkl", "wb"))
+    pickle.dump(code_map, open(res_path_start + "_codemap.pkl", "wb"))
+    return code_map
 
-def merge_relevant_data():
-    # all_data = pl.concat([pl.DataFrame(data[["FINNGENID", "EVENT_AGE", "DATE", "TEXT"]]).cast({"DATE": pl.Date, "TEXT": str}), 
-    #                       icds.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"}),
-    #                       atcs.select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"]).rename({"ATC_FIVE":"TEXT"})])
-    all_data = pl.DataFrame(data[["FINNGENID", "SEX", "EVENT_AGE", "DATE", "TEXT"]])
-    # all_data = pl.concat([pl.DataFrame(data[["FINNGENID", "EVENT_AGE", "DATE", "TEXT"]]).cast({"DATE": pl.Date, "TEXT": str}), 
-    #                       icds.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"})])
-    #all_data = icds.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"})
-    all_data = all_data.join(pl.DataFrame(labels[["FINNGENID", "START_DATE"]]), how="left", on="FINNGENID")
-    all_data = all_data.filter(pl.col("DATE") < pl.col("START_DATE").cast(pl.Date), pl.col("TEXT").is_not_null())
-    all_data = all_data.with_columns(pl.col("DATE").map_elements(lambda date: datetime.strptime(datetime.strftime(date, "%Y-%m"), "%Y-%m")))
-    all_data
-
-from collections import defaultdict
-from tqdm import tqdm
-import polars
-
-def get_list_data(fids, 
-                  all_data, 
-                  labels, 
-                  code_map):
-    sex = (labels.select(["FINNGENID", "SEX"])
-                 .with_columns(pl.col.SEX.map_elements(lambda x: 0 if x == "female" else 1).alias("SEX_TOKEN")))
-    sex = dict(zip(sex.get_column("FINNGENID"), sex.get_column("SEX_TOKEN")))
+def merge_data(preds: list,
+                lab_data: pl.DataFrame,
+                icd_data: pl.DataFrame,
+                atc_data: pl.DataFrame,
+                end_obs_date=None,
+                labels=None) -> pl.DataFrame:
+    if "ICD" and "ATC" and "LAB" in preds:
+        all_data = pl.concat([lab_data.select(["FINNGENID", "EVENT_AGE", "DATE", "TEXT"]), 
+                            icd_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"}),
+                            atc_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"]).rename({"ATC_FIVE":"TEXT"})])
+    elif "ICD" and "LAB" in preds:
+        all_data = pl.concat([lab_data.select(["FINNGENID", "EVENT_AGE", "DATE", "TEXT"]), 
+                            icd_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"})])
+    elif "ATC" and "LAB" in preds:
+        all_data = pl.concat([lab_data.select(["FINNGENID", "EVENT_AGE", "DATE", "TEXT"]), 
+                            atc_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"]).rename({"ATC_FIVE":"TEXT"})])
+    elif "ICD" in preds:
+        all_data = icd_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_THREE"]).rename({"ICD_THREE":"TEXT"})
+    elif "ATC" in preds:
+        all_data = atc_data.select(["FINNGENID", "EVENT_AGE", "DATE", "ATC_FIVE"]).rename({"ATC_FIVE":"TEXT"})
+    elif "LAB" in preds:
+        all_data = lab_data.select(["FINNGENID", "EVENT_AGE", "DATE", "TEXT"])
+    else:
+        raise ValueError("No valid predictors selected.")
     
-    labels = labels.with_columns(pl.col("START_DATE").cast(pl.Utf8).str.to_date())
-    print(all_data)
-    all_data = all_data.with_columns(pl.col("DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", exact=False))
+    if end_obs_date is None:
+        all_data = all_data.join(pl.DataFrame(labels[["FINNGENID", "START_DATE"]]), how="left", on="FINNGENID")
+        all_data = all_data.filter(pl.col("DATE") < pl.col("START_DATE").cast(pl.Date), pl.col("TEXT").is_not_null())
+    else:
+        all_data = all_data.filter(pl.col("DATE") < end_obs_date, pl.col("TEXT").is_not_null())
+
+    all_data = all_data.with_columns(pl.col("DATE").map_elements(lambda date: datetime.strptime(datetime.strftime(date, "%Y-%m"), "%Y-%m")))
+    return(all_data)
+
+
+def get_list_data(fids: list, 
+                  all_data: pl.DataFrame, 
+                  labels: pl.DataFrame, 
+                  code_map: dict,
+                  preds: list,
+                  end_obs_date=None) -> pl.DataFrame:
+    if "SEX" in preds:
+        sex = (labels.select(["FINNGENID", "SEX"])
+                    .with_columns(pl.col.SEX.map_elements(lambda x: 0 if x == "female" else 1).alias("SEX_TOKEN")))
+        sex = dict(zip(sex.get_column("FINNGENID"), sex.get_column("SEX_TOKEN")))
+
+
     labels_dict = dict(zip(labels["FINNGENID"], labels["y_DIAG"]))
     start_age = dict(zip(labels["FINNGENID"], labels["EVENT_AGE"]))
-    start_date = dict(zip(labels["FINNGENID"], labels["START_DATE"]))
+    if end_obs_date is None:
+        start_date = dict(zip(labels["FINNGENID"], labels["START_DATE"]))
 
     first_age = (all_data.select(["FINNGENID", "EVENT_AGE", "DATE"])
                          .sort(["FINNGENID", "EVENT_AGE", "DATE"], descending=False)
                          .group_by("FINNGENID")
                          .head(1)
                          .rename({"EVENT_AGE": "MIN_AGE", "DATE": "MIN_DATE"}))
+    
     min_age = dict(zip(first_age.get_column("FINNGENID"), first_age.get_column("MIN_AGE")))
     min_date =  dict(zip(first_age.get_column("FINNGENID"), first_age.get_column("MIN_DATE")))
     
@@ -150,24 +212,60 @@ def get_list_data(fids,
             last_date = date
             out_data[fid][2].append([[time_diff], codes])
             last_codes = codes
-                
-        out_data[fid][2].append([[np.round((start_date[fid]-last_date).days/30)], [1]])
+        if end_obs_date is None:
+            out_data[fid][2].append([[np.round((start_date[fid]-last_date).days/30)], [1]])
+        else:
+            out_data[fid][2].append([[np.round((end_obs_date-last_date).days/30)], [1]])
     return(out_data)
 
-train_data = get_list_data(labels.filter(pl.col.SET==0).get_column("FINNGENID").unique(), 
-                           all_data, 
-                           labels, 
-                           code_map)
-pickle.dump(list(train_data.values()), open("/home/ivm/valid/data/processed_data/step5_data/pytorch_ehr/"  + lab_name + "_" + get_date() + "_" + data_type + "_train.pkl", "wb"), -1)
-test_data = get_list_data(labels.filter(pl.col.SET==2).get_column("FINNGENID").unique(), 
-                           all_data, 
-                           labels, 
-                           code_map)
-test_data
-val_data = get_list_data(labels.filter(pl.col.SET==1).get_column("FINNGENID").unique(), 
-                           all_data, 
-                           labels, 
-                           code_map)
-val_data
-pickle.dump(list(val_data.values()), open("/home/ivm/valid/data/processed_data/step5_data/pytorch_ehr/"  + lab_name + "_" + get_date() + "_" + data_type + "_valid.pkl", "wb"), -1)
-pickle.dump(list(test_data.values()), open("/home/ivm/valid/data/processed_data/step5_data/pytorch_ehr/"  + lab_name + "_" + get_date() + "_" + data_type + "_test.pkl", "wb"), -1)
+
+if __name__ == "__main__":
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Initial setup                                           #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+    timer = Timer()
+    args = get_parser_arguments()
+
+    # Setting up logging
+    res_path_start = args.res_dir + args.file_name_start + "_long_" + args.preds.join("_") + "_" + get_date() 
+        
+    make_dir(args.res_dir)
+    init_logging(args.res_dir, args.lab_name, logger, args)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Preparing data                                          #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    lab_data, labels = get_data(file_name_start=args.data_path_dir+args.file_name_start, 
+                                  goal=args.goal)    
+    lab_data, quant_df = quantile_data(args.lab_name, lab_data)
+    if "ICD" in args.preds: icd_data = get_icd_data(args.icd_data_path)
+    if "ATC" in args.preds: atc_data = get_atc_data(args.atc_data_path)
+    
+    code_map = create_code_map(args.preds, lab_data, res_path_start)
+    if args.end_obs_date is not None:
+        end_obs_date = datetime.strptime(args.end_obs_date, "%Y-%m-%d")
+        all_data = merge_data(args.preds, lab_data, icd_data, atc_data, end_obs_date=end_obs_date)
+    else:
+        all_data = merge_data(args.preds, lab_data, icd_data, atc_data, labels=labels)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Creating longitudinal                                   #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    train_data = get_list_data(labels.filter(pl.col.SET==0).get_column("FINNGENID").unique(), 
+                            all_data, 
+                            labels, 
+                            code_map)
+    print(train_data)
+    pickle.dump(list(train_data.values()), open(res_path_start + "_train.pkl", "wb"), -1)
+    test_data = get_list_data(labels.filter(pl.col.SET==2).get_column("FINNGENID").unique(), 
+                            all_data, 
+                            labels, 
+                            code_map)
+    print(test_data)
+    val_data = get_list_data(labels.filter(pl.col.SET==1).get_column("FINNGENID").unique(), 
+                            all_data, 
+                            labels, 
+                            code_map)
+    print(val_data)
+    pickle.dump(list(val_data.values()), open(res_path_start + "_valid.pkl", "wb"), -1)
+    pickle.dump(list(test_data.values()), open(res_path_start + "_test.pkl", "wb"), -1)
