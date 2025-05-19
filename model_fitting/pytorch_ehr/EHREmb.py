@@ -5,9 +5,6 @@ which is the key input for all the deep learning models in this Repo
 @authors: Lrasmy , Jzhu @ DeguiZhi Lab - UTHealth SBMI
 Last revised Feb 20 2020
 
-Changed by KE Detrois
-
-Last updated March 14 2025
 """
 import sys
 sys.path.append(("/home/ivm/valid/scripts/pytorch_ehr/"))

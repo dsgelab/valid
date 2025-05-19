@@ -8,11 +8,10 @@ import sys
 sys.path.append(("/home/ivm/valid/scripts/pytorch_ehr/"))
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, make_dir, init_logging, Timer
-from torch_utils import get_mbs_from_files, get_model, get_torch_optimizer
+from torch_utils import get_mbs_from_files, get_model, get_torch_optimizer, get_out_data
 from optuna_utils import run_optuna_optim
 from utils_final import epochs_run
-from model_fit_utils import save_all_report_plots
-from model_eval_utils import eval_subset, create_report
+from model_eval_utils import save_all_report_plots, get_all_eval_metrics, create_report
 
 # Logging and input
 import argparse
@@ -21,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # General
 import torch
+import polars as pl
 import pickle
 from io import open
 
@@ -37,6 +37,7 @@ def get_parser_arguments():
     # Extra info
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--pred_descriptor", type=str, help="Description of model predictors short.", required=True)
+    parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
 
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
@@ -55,11 +56,8 @@ def get_parser_arguments():
 
     # Hyperparameter optimization parameters
     parser.add_argument("--n_trials", type=int, help="Number of hyperparameter optimizations to run [default: 1 = running based on time_optim instead]", default=1)
+    parser.add_argument("--train_epochs", type=int, help="Number of hyperparameter optimizations to run [default: 10]", default=100)
     parser.add_argument("--time_optim", type=int, help="How long to run hyperparameter optimizations.", default=300)
-
-    parser.add_argument("--epochs", type=int, help="Number of hyperparameter optimizations to run [default: 10]", default=10)
-
-    parser.add_argument("--time_optim", type=int, help="Number of seconds to run hyperparameter optimizations for, instead of basing it on the number of traisl. [run when n_trials=1]", default=300)
     parser.add_argument("--refit", type=int, help="Whether to rerun the hyperparameter optimization", default=1)
     parser.add_argument('--time', type=int, default=0, help='indicator of whether time is incorporated into embedding. [default: False]')
     parser.add_argument('--bii', type=int, default=0, help='indicator of whether Bi-directin is activated. [default: False]')
@@ -71,7 +69,6 @@ def get_parser_arguments():
 
     args = parser.parse_args()
     return(args)
-
 
 #do the main file functions and runs 
 if __name__ == "__main__":
@@ -113,16 +110,16 @@ if __name__ == "__main__":
                        "time": args.time,
                        "preTrainEmb": args.preTrainEmb,
                        "early_stop": args.early_stop,
-                       "epochs": args.epochs,
-                       "eps": args.eps,
-                       "model_name": args.model_name}
+                       "epochs": args.train_epochs,
+                       "model_name": args.model_name,
+                       "eps": args.eps}
         best_params = run_optuna_optim(train=train_mbs, 
                                        valid=valid_mbs, 
                                        test=test_mbs, 
                                        lab_name=args.lab_name,
                                        refit=args.refit,
                                        time_optim=args.time_optim,
-                                       n_trial=args.n_trials,
+                                       n_trials=args.n_trials,
                                        study_name=study_name,
                                        res_dir=args.res_dir,
                                        model_type="torch",
@@ -155,13 +152,12 @@ if __name__ == "__main__":
                                         best_params["optimizer"])
         if torch.cuda.is_available(): ehr_model = ehr_model.cuda() 
         try:
-            _, _, best_model = epochs_run(args.epochs, 
+            _, _, best_model = epochs_run(50, 
                           train = train_mbs, 
                           valid = valid_mbs, 
                           test = test_mbs, 
                           model = ehr_model, 
                           optimizer = optimizer,
-                          shuffle = True, 
                           model_name = args.model_name, 
                           early_stop = 10,
                           model_out=out_model_dir + "final_model")
@@ -175,11 +171,13 @@ if __name__ == "__main__":
     print(colored("\nFinal fitting done!", 'green'))
     print(timer.get_elapsed())
 
+#    train_mbs = list(tqdm(EHRdataloader(train, batch_size = args.batch_size, packPadMode = pack_pad, shuffle=False)))
     out_data = get_out_data(best_model, 
                             train_mbs, 
                             valid_mbs, 
                             test_mbs, 
-                            args.file_path_labels)
+                            args.file_path_labels,
+                            args.goal)
     out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     crnt_report = create_report(best_model, out_data, display_scores=["logloss", "aucpr"], metric="logloss")
     pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
@@ -188,15 +186,10 @@ if __name__ == "__main__":
                           out_plot_path=out_plot_path,
                           out_down_path=out_down_path)
 
-    eval_metrics, all_conf_mats = eval_subset(data=out_data, 
-                                              y_pred_col="ABNORM_PREDS", 
-                                              y_cont_pred_col="ABNORM_PROBS", 
-                                              y_goal_col="TRUE_ABNORM", 
-                                              y_cont_goal_col="TRUE_VALUE",
-                                              plot_path=out_plot_path,
-                                              down_path=out_down_path,
-                                              subset_name="all",
-                                              n_boots=args.n_boots,
-                                              train_type="bin")
+    eval_metrics = get_all_eval_metrics(data=out_data, 
+                                        plot_path=out_plot_path,
+                                        down_path=out_down_path,
+                                        n_boots=args.n_boots,
+                                        train_type="bin")
     if args.save_csv == 1:
         eval_metrics.filter(pl.col("F1").is_not_null()).write_csv(out_down_path + "evals_" + get_date() + ".csv", separator=",")

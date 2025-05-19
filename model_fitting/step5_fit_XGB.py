@@ -5,8 +5,11 @@ from general_utils import get_date, make_dir, init_logging, Timer, read_file
 from model_eval_utils import get_train_type, create_report, eval_subset, get_optim_precision_recall_cutoff
 from processing_utils import get_abnorm_func_based_on_name 
 from plot_utils import get_plot_names
-from model_fit_utils import save_all_report_plots
+from model_fit_utils import get_cont_goal_col_name
+from model_eval_utils import save_all_report_plots, get_all_eval_metrics
 from optuna_utils import run_optuna_optim
+# time
+from datetime import datetime
 # Standard stuff
 import polars as pl
 import numpy as np
@@ -20,28 +23,6 @@ import logging
 logger = logging.getLogger(__name__)
 # Training and eval
 from sklearn.preprocessing import MinMaxScaler, RobustScaler
-
-def get_cont_goal_col_name(goal: str,
-                           col_names: list) -> str:
-    """Returns the column name of the continuous goal.
-       If first part of goal name in column names, i.e. y_MEDIAN in the case of y_MEDIAN_ABNORM, returns the first part.
-       Otherwise returns y_MEAN. If not present, certain plotting will be skipped"""
-    # Binary prediction tasks
-    goal_split = goal.split("_")
-    if goal_split[-1] == "ABNORM" or args.goal == "y_DIAG":
-        new_goal = "_".join(goal_split[0:len(goal_split)-1])
-        if not new_goal in col_names: new_goal = "y_MEAN"
-
-        # If y_MEAN still not in column names, return None
-        if not new_goal in col_names: 
-            print("y_MEAN not in column names. Certain plots cannot be created.")
-            return None
-        else:
-            return(new_goal)
-    # Continuous prediction tasks
-    else:
-        print("Warning: Continuous prediction probably deprecated at the moment.")
-        return None
 
 def get_out_data(data: pl.DataFrame, 
                  model_final: xgb.XGBClassifier, 
@@ -66,9 +47,14 @@ def get_out_data(data: pl.DataFrame,
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Base data                                               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-    out_data = (data.select(["FINNGENID", "EVENT_AGE", "LAST_VAL_DATE", "SET", "ABNORM"])
-                    .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"}))
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    data = data.with_columns([
+        pl.when(pl.col(col)>0).then(1).otherwise(0).alias(col) for col in data.columns if "ABNORM" in col
+    ])
+    out_data = (data
+                .select("FINNGENID", "SEX", "y_MEAN", "y_MEAN_ABNORM", "y_MIN", "y_MIN_ABNORM", "y_NEXT", "y_NEXT_ABNORM", "y_DIAG", "EVENT_AGE", "SET", "LAST_VAL_DATE", "ABNORM")
+                .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
+               )
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Continuous prediction                                   #
@@ -99,10 +85,10 @@ def get_out_data(data: pl.DataFrame,
         # # # # # # # # # Abnormality columns # # # # # # # # # # # # # # # # # # #
         y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
         out_data = out_data.with_columns([
-                        data["y_DIAG"].alias("TRUE_ABNORM"),
+                        pl.col(goal).alias("TRUE_ABNORM"),
                         pl.Series(y_pred).alias("ABNORM_PROBS"),
                     ])
-
+        print(out_data["TRUE_ABNORM"].value_counts())
         # Binary abnormality prediction based on optimal cut-off
         optimal_proba_cutoff = get_optim_precision_recall_cutoff(out_data)
         logging.info(f"Optimal cut-off for prediction based on PR {optimal_proba_cutoff}")
@@ -114,29 +100,39 @@ def get_out_data(data: pl.DataFrame,
 
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
-                         lab_name: str) -> tuple[pl.DataFrame, list]:
+                         lab_name: str,
+                         lab_name_two: str="") -> tuple[pl.DataFrame, list]:
     """Creates a dataframe based on the mean absolute SHAP values of the model. 
        Also returns the (readable) names of the features in the same order as the SHAP values."""
     
-    new_names = get_plot_names(X_in.columns, lab_name)
+    new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
     explanations = explainer.shap_values(X_in)
     mean_shaps = np.abs(explanations).mean(0)
     shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
 
     return(shap_importance, new_names)
 
-def save_importances(X_in: pl.DataFrame, 
+def save_and_calc_importances(X_in: pl.DataFrame, 
                      model_final: xgb.XGBClassifier, 
                      out_down_path: str,
                      lab_name: str,
+                     lab_name_two: str="",
                      subset: str="all") -> None:
     """Saves the feature importances of the model to a csv file. """
 
     shap_explainer = shap.TreeExplainer(model_final)
-    top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name)
+    top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name, lab_name_two)
     logging.info(top_gain.head(10))
     top_gain.write_csv(out_down_path + "shap_importance_" + subset + "_" + get_date() + ".csv")
-      
+    
+def save_importances(top_gain,
+                     out_down_path: str,
+                     subset: str="all") -> None:
+    """Saves the feature importances of the model to a csv file. """
+    print(top_gain)
+    logging.info(top_gain.head(10))
+    top_gain.write_csv(out_down_path + "shap_importance_" + subset + "_" + get_date() + ".csv")
+    
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
                       y_train: pl.DataFrame, 
@@ -226,13 +222,16 @@ def create_xgb_dts(data: pl.DataFrame,
     data = data.with_columns([
         pl.col(col).cast(pl.Float64) for col, dtype in data.schema.items() if isinstance(dtype, pl.Int64)
     ])
+    data = data.with_columns([
+        pl.when(pl.col(col)>0).then(1).otherwise(0).alias(col) for col in data.columns if "ABNORM" in col
+    ])
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     train_data = data.filter(pl.col("SET")==0).drop("SET")
-    valid_data =  data.filter(pl.col("SET")==1).drop("SET")
-    test_data =  data.filter(pl.col("SET")==2).drop("SET")
+    valid_data = data.filter(pl.col("SET")==1).drop("SET")
+    test_data = data.filter(pl.col("SET")==2).drop("SET")
 
     # XGB datatype prep
     X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
@@ -246,10 +245,10 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
     scaler_base = RobustScaler()
     scaler_base.set_output(transform="polars")
-    X_train= pl.DataFrame(scaler_base.fit_transform(X_train), schema=X_train.schema)
-    X_valid= pl.DataFrame(scaler_base.transform(X_valid), schema=X_valid.schema)
-    X_test= pl.DataFrame(scaler_base.transform(X_test), schema=X_test.schema)
-    X_all_scaled = pl.DataFrame(scaler_base.transform(X_all), schema=X_all.schema)
+    X_train=pl.DataFrame(scaler_base.fit_transform(X_train), schema=X_train.schema)
+    X_valid=pl.DataFrame(scaler_base.transform(X_valid), schema=X_valid.schema)
+    X_test=pl.DataFrame(scaler_base.transform(X_test), schema=X_test.schema)
+    X_all_scaled=pl.DataFrame(scaler_base.transform(X_all), schema=X_all.schema)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 XGBoost datatype                                        #
@@ -257,10 +256,8 @@ def create_xgb_dts(data: pl.DataFrame,
     pos_weight = get_weighting(reweight, y_train)
     dtrain = xgb.DMatrix(data=X_train, label=y_train, enable_categorical=True, weight=get_weights(pos_weight, y_train))
     dvalid = xgb.DMatrix(data=X_valid, label=y_valid, enable_categorical=True, weight=get_weights(pos_weight, y_valid))
-    #dtest = xgb.DMatrix(data=X_test, label=y_test, enable_categorical=True, weight=get_weights(pos_weight, y_test))
-    #dall = xgb.DMatrix(data=X_all, label=y_all, enable_categorical=True, weight=get_weights(pos_weight, y_all))
     
-    return(X_train, y_train, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dvalid, scaler_base)
+    return(data["FINNGENID"], X_train, y_train, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dvalid, scaler_base)
 
 def get_relevant_label_data_cols(data: pl.DataFrame, 
                                  goal: str) -> pl.DataFrame:
@@ -269,12 +266,17 @@ def get_relevant_label_data_cols(data: pl.DataFrame,
        If prediction column is ABNORM, keeping column on which ABNORMALITY is based on.
        If prediciton column is y_DIAG, keeping column for mean value of the lab value (y_MEAN)."""
     new_goal = get_cont_goal_col_name(goal, data.columns)
-    data = data.with_columns(pl.col.START_DATE.dt.year().alias("YEAR"))
-
-    if new_goal is not None:
-        data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal, new_goal])
+    if "START_DATE" in data.columns:
+        data = data.with_columns(pl.col.START_DATE.dt.year().alias("YEAR"))
+        if new_goal is not None:
+            data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal, new_goal])
+        else:
+            data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal])
     else:
-        data = data.select(["FINNGENID", "SET", "YEAR", "START_DATE", "EVENT_AGE", "SEX", goal])
+        if new_goal is not None:
+            data = data.select(["FINNGENID", "SET", "EVENT_AGE", "SEX", goal, new_goal])
+        else:
+            data = data.select(["FINNGENID", "SET",  "EVENT_AGE", "SEX", goal])
     return data
 
 def get_data_and_pred_list(file_path_labels: str, 
@@ -284,14 +286,14 @@ def get_data_and_pred_list(file_path_labels: str,
                            file_path_second_sumstats: str,
                            file_path_labs: str,
                            goal: str,
-                           preds: list) -> tuple[pl.DataFrame, list]:
+                           preds: list,
+                           start_date: str) -> tuple[pl.DataFrame, list]:
     """Reads in label data and merges it with other data modalities. Returns the data and the predictors."""
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
-    data = get_relevant_label_data_cols(data, goal)
-    print(data.filter(pl.col("SET") == 2).get_column("y_DIAG").value_counts())
+    #data = get_relevant_label_data_cols(data, goal)
 
     # Adding other data modalities
     if file_path_icds != "": 
@@ -308,11 +310,15 @@ def get_data_and_pred_list(file_path_labels: str,
                                      "FIRST_LAST": pl.Float64})
         if "SET" in sumstats.columns: sumstats = sumstats.drop("SET") # dropping duplicate info if present
         data = data.join(sumstats, on="FINNGENID", how="left")
+        if start_date != "":
+            data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.LAST_VAL_DATE).dt.total_days().alias("LAST_VAL_DIFF"))
     if file_path_second_sumstats != "": 
         second_sumstats = read_file(file_path_second_sumstats)
         if "SET" in second_sumstats.columns: second_sumstats = second_sumstats.drop("SET")
         second_sumstats = second_sumstats.rename({col: f"S_{col}" for col in second_sumstats.columns if col != "FINNGENID"})
         data = data.join(second_sumstats, on="FINNGENID", how="left")
+        if start_date != "":
+            data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.S_LAST_VAL_DATE).dt.total_days().alias("S_LAST_VAL_DIFF"))
     if file_path_labs != "": 
         labs =read_file(file_path_labs)
         data = data.join(labs, on="FINNGENID", how="left")
@@ -330,10 +336,14 @@ def get_data_and_pred_list(file_path_labels: str,
             [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_CODE_DATE"]
         elif pred == "SUMSTATS":
             [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
+        elif pred == "SUMSTATS_MEAN":
+            [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE" and "MEAN" in SUMSTAT]
         elif pred == "SECOND_SUMSTATS":
             [X_cols.append(SUMSTAT) for SUMSTAT, _ in second_sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "S_LAST_VAL_DATE"]
         elif pred == "LAB_MAT":
             [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID"]
+        elif pred == "LAB_MAT_MEAN":
+            [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID" and "MEAN" in LAB_MAT]
         else:
             X_cols.append(pred)
 
@@ -356,7 +366,9 @@ def get_parser_arguments():
 
     # Extra info
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
+    parser.add_argument("--lab_name_two", type=str, help="Readable name of the second most relevant measurement value for file naming.", default="")
     parser.add_argument("--pred_descriptor", type=str, help="Description of model predictors short.", required=True)
+    parser.add_argument("--start_date", type=str, default="", help="Date to filter before")
 
     # Prediction task
     parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
@@ -415,12 +427,16 @@ if __name__ == "__main__":
                                           file_path_second_sumstats=args.file_path_second_sumstats, 
                                           file_path_labs=args.file_path_labs, 
                                           goal=args.goal, 
-                                          preds=args.preds)
-    X_train, y_train, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, dtrain, dvalid, scaler_base = create_xgb_dts(data=data, 
-                                                                                                                                   X_cols=X_cols, 
-                                                                                                                                   y_goal=args.goal, 
-                                                                                                                                   reweight=args.reweight)
-    X_all_unscaled.write_parquet(out_model_dir + "Xall_unscaled_" + get_date() + ".parquet")
+                                          preds=args.preds,
+                                          start_date=args.start_date)
+    fgids, X_train, y_train, X_valid, y_valid, \
+        X_test, y_test, X_all, y_all, X_all_unscaled, \
+        dtrain, dvalid, scaler_base = create_xgb_dts(data=data, 
+                                                     X_cols=X_cols, 
+                                                     y_goal=args.goal, 
+                                                     reweight=args.reweight)
+    print(X_all_unscaled.with_columns(pl.Series("FINNGENID", fgids)).head(2))
+    X_all_unscaled.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_unscaled_" + get_date() + ".parquet")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
@@ -455,22 +471,22 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-            save_importances(X_in=X_train, 
-                             model_final=model_final, 
-                             out_down_path=out_down_path,
-                             lab_name=args.lab_name,
-                             subset="train")
-            save_importances(X_in=X_test, 
-                             model_final=model_final, 
-                             out_down_path=out_down_path,
-                             lab_name=args.lab_name,
-                             subset="test")
+
             pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
             pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
         else:
             model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
         # SHAP explainer for model
         shap_explainer = shap.TreeExplainer(model_final)
+        train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
+        test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
+        if not args.skip_model_fit:
+            save_importances(top_gain=train_importances,
+                             out_down_path=out_down_path,
+                             subset="train")
+            save_importances(top_gain=test_importances,
+                             out_down_path=out_down_path,
+                             subset="test")
         # Model predictions
         out_data = get_out_data(data=data, 
                                 model_final=model_final, 
@@ -485,28 +501,25 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Evaluations                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #         
-        crnt_report = create_report(model_final, out_data, display_scores=[args.metric, "aucpr"], metric=args.metric)
+        crnt_report = create_report(model_final, 
+                                    out_data, 
+                                    display_scores=[args.metric, "aucpr"], 
+                                    metric=args.metric)
         pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
 
-        train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name)
-        valid_importances, _ = get_shap_importances(X_valid, shap_explainer, args.lab_name)
-        test_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name)
 
         save_all_report_plots(out_data=out_data,
                               train_importances=train_importances,
-                              valid_importances=valid_importances,
+                              valid_importances=train_importances,
                               test_importances=test_importances,
                               out_plot_path=out_plot_path,
                               out_down_path=out_down_path)
-        eval_metrics, all_conf_mats = eval_subset(data=out_data, 
-                                                  y_pred_col="ABNORM_PREDS", 
-                                                  y_cont_pred_col="ABNORM_PROBS", 
-                                                  y_goal_col="TRUE_ABNORM", 
-                                                  y_cont_goal_col="TRUE_VALUE", 
-                                                  plot_path=out_plot_path, 
-                                                  down_path=out_down_path, 
-                                                  subset_name="all", 
-                                                  n_boots=args.n_boots, 
-                                                  train_type=get_train_type(args.metric))
+
+        eval_metrics = get_all_eval_metrics(data=out_data,
+                                            plot_path=out_plot_path, 
+                                            down_path=out_down_path, 
+                                            n_boots=args.n_boots,
+                                            train_type=get_train_type(args.metric))
+                                                
         if args.save_csv == 1:
             eval_metrics.filter(pl.col("F1").is_not_null()).write_csv(out_down_path + "evals_" + get_date() + ".csv", separator=",")

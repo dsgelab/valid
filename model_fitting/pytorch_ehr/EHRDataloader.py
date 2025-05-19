@@ -136,6 +136,7 @@ class EHRdataFromPickles(Dataset):
 
 
 
+
 # Dataset class from already  loaded pickled lists
 class EHRdataFromLoadedPickles(Dataset):
     def __init__(self, loaded_list, transform=None, sort = True, model='RNN'):
@@ -325,8 +326,8 @@ class EHRdataloader(DataLoader):
         if shuffle:
             labels = np.array([fg_list[1] for fg_list in dataset.data])
             class_counts = np.bincount(labels)
-            class_weights = 10000.0 / class_counts
-            class_weights = np.array([0.0, 1.0])
+            #class_weights = 1.0 / class_counts
+            class_weights = np.array([1.0, 1.25])
             print(class_weights)
             weights = class_weights[labels]
             sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)

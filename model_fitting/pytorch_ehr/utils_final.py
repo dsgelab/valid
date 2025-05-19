@@ -142,8 +142,8 @@ def get_preds(model, mbs_list):
     all_fids=[]
     all_scores=[]
     for batch in mbs_list:
-        fids, sample, label_tensor, seq_l, mtd = batch
-        with torch.no_grad(): output = torch.sigmoid(model(sample, seq_l, mtd))
+        fids, sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor = batch
+        with torch.no_grad(): output = torch.sigmoid(model(sample, seq_l, mtd, ages_tensor, sexs_tensor))
         all_labels.extend(label_tensor.cpu().data.view(-1).numpy())
         all_fids.extend(fids)
         all_scores.extend(output.detach().numpy())

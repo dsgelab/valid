@@ -193,17 +193,19 @@ def get_crnt_preds(data_mbs,
                                                         crnt_preds["ABNORM_PROBS"])
     optimal_proba_cutoff = sorted(list(zip(np.abs(precision_ - recall_), proba)), key=lambda i: i[0], reverse=False)[0][1]
     logging.info(f"Optimal cut-off set {crnt_set} for prediction based on PR {optimal_proba_cutoff}")
-    crnt_preds = crnt_preds.with_columns((crnt_preds["ABNORM_PROBS"]>optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS"))
-
+    crnt_preds = crnt_preds.with_columns((crnt_preds["ABNORM_PROBS"]>optimal_proba_cutoff).alias("ABNORM_PREDS").cast(pl.Int64))
+    
     return(crnt_preds)
     
 from general_utils import read_file
+from model_fit_utils import get_cont_goal_col_name
 import polars as pl
 def get_out_data(model_final, 
                  train_mbs, 
                  valid_mbs, 
                  test_mbs, 
-                 file_path_labels):
+                 file_path_labels,
+                 goal):
     ###### Predictions
     train_preds = get_crnt_preds(train_mbs, model_final, 0)
     test_preds = get_crnt_preds(test_mbs, model_final, 2)
@@ -211,8 +213,13 @@ def get_out_data(model_final,
     all_preds = pl.concat([train_preds, test_preds, val_preds])
 
     ####### Original data
-    data = read_file(file_path_labels)
-    out_data = data[["FINNGENID", "EVENT_AGE", "SET"]]
-    out_data = out_data.assign(TRUE_VALUE = data["y_MEAN"])
-    out_data = out_data.join(all_preds, on="FINNGENID", how="inner")
-    return(out_data)
+    labels = read_file(file_path_labels)
+    if "y_MEAN_ABNORM" in labels.columns: labels = labels.with_columns(pl.when(pl.col.y_MEAN_ABNORM==0).then(0).otherwise(1).alias("y_MEAN_ABNORM"))
+    if "y_NEXT_ABNORM" in labels.columns: labels = labels.with_columns(pl.when(pl.col.y_NEXT_ABNORM==0).then(0).otherwise(1).alias("y_NEXT_ABNORM"))
+    if "y_MIN_ABNORM" in labels.columns: labels = labels.with_columns(pl.when(pl.col.y_MIN_ABNORM==0).then(0).otherwise(1).alias("y_MIN_ABNORM"))
+    if "y_MAX_ABNORM" in labels.columns: labels = labels.with_columns(pl.when(pl.col.y_MAX_ABNORM==0).then(0).otherwise(1).alias("y_MAX_ABNORM"))
+
+    labels = labels.with_columns(pl.col(get_cont_goal_col_name(goal, labels.columns)).alias("TRUE_VALUE"))
+    labels = labels.with_columns(pl.col(goal).alias("TRUE_ABNORM"))
+    labels = labels.join(all_preds, on="FINNGENID", how="inner")
+    return(labels)
