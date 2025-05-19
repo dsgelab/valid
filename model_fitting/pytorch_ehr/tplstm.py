@@ -56,7 +56,7 @@ class TPLSTM(nn.Module):
             h,c = self.TPLSTMCell(input[i],hx,self.weight_ih, self.weight_hh,self.W_decomp,self.bias_ih, self.bias_hh,self.b_decomp)
             hx=(h,c)
             outputh.append(h)
-            outputc.append (c)
+            outputc.append(c)
         return outputh,hx,outputc
     
     def TPLSTMCell(self,input, hidden, w_ih, w_hh,w_decomp, b_ih=None, b_hh=None,b_decomp=None):

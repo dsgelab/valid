@@ -169,7 +169,6 @@ def optuna_torch_objective(trial: optuna.Trial,
         'dropout_r': trial.suggest_int("dropout_r", 0, 5, 1),
         'L2': trial.suggest_float('L2', 1e-6, 1e-2, log=True),
         'lr': trial.suggest_int('lr', 1, 11, 2),
-        #'optimizer': trial.suggest_categorical('optimizer', ['adam', 'adadelta', 'adagrad', 'adamax', 'asgd', 'rmsprop', 'rprop', 'sgd']),
         'optimizer': trial.suggest_categorical('optimizer', ['adagrad', 'adamax']),
 
     }
@@ -196,7 +195,7 @@ def optuna_torch_objective(trial: optuna.Trial,
                                     base_params["eps"],
                                     params["lr"], 
                                     params["L2"],
-                                    params["optimizer_name"])
+                                    params["optimizer"])
     if torch.cuda.is_available(): ehr_model = ehr_model.cuda() 
     #######Step3. Train, validation and test. default: batch shuffle = true 
     try:
@@ -210,7 +209,7 @@ def optuna_torch_objective(trial: optuna.Trial,
                                 trial=trial,
                                 shuffle = True, 
                                 model_name=base_params["model_name"], 
-                                patience=base_params["patience"])
+                                early_stop=base_params["early_stop"])
         trial.set_user_attr("best_iteration", int(best_val_ep))
         if best_val_loss is not None:
             return best_val_loss

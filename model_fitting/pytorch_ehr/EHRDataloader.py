@@ -50,7 +50,9 @@ class EHRdataFromPickles(Dataset):
                                please create separate instances from this object if your data is split into train, validation and test files.               
             2) data should have the format: pickled, 4 layer of lists, a single patient's history should look at this (use .__getitem__(someindex, seeDescription = True))
                 [310062,
-                 0,
+                 0, - outcome
+                 60, - age
+                 1, - sex
                  [[[0],[7, 364, 8, 30, 10, 240, 20, 212, 209, 5, 167, 153, 15, 3027, 11, 596]],
                   [[66], [590, 596, 153, 8, 30, 11, 10, 240, 20, 175, 190, 15, 7, 5, 183, 62]],
                   [[455],[120, 30, 364, 153, 370, 797, 8, 11, 5, 169, 167, 7, 240, 190, 172, 205, 124, 15]]]]
@@ -66,7 +68,7 @@ class EHRdataFromPickles(Dataset):
             self.file = file
             self.data = pickle.load(open(root_dir + file, 'rb'), encoding='bytes') 
             if sort: 
-                self.data.sort(key=lambda pt:len(pt[2]),reverse=True) 
+                self.data.sort(key=lambda pt:len(pt[4]),reverse=True) 
             self.test_ratio = test_ratio 
             self.valid_ratio = valid_ratio       
         else:
@@ -86,9 +88,9 @@ class EHRdataFromPickles(Dataset):
         train = self.data[nTest+nValid:]
         if sort: 
             #sort train, validation and test again
-            test.sort(key=lambda pt:len(pt[2]),reverse=True) 
-            valid.sort(key=lambda pt:len(pt[2]),reverse=True) 
-            train.sort(key=lambda pt:len(pt[2]),reverse=True) 
+            test.sort(key=lambda pt:len(pt[4]),reverse=True) 
+            valid.sort(key=lambda pt:len(pt[4]),reverse=True) 
+            train.sort(key=lambda pt:len(pt[4]),reverse=True) 
         return train, test, valid
         
                                      
@@ -153,7 +155,7 @@ class EHRdataFromLoadedPickles(Dataset):
             4)test_ratio,  valid_ratio: ratios for splitting the data if needed.
         """
         self.data = loaded_list 
-        if sort: self.data.sort(key=lambda pt:len(pt[2]),reverse=True) 
+        if sort: self.data.sort(key=lambda pt:len(pt[4]),reverse=True) 
         self.transform = transform 
               
                                      
@@ -197,18 +199,22 @@ def preprocess(batch,pack_pad,surv,half): ### LR Sep 30 20 added surv_m
     lbt=[]
     seq_l=[]
     sks=[]
-    bsize=len(batch) ## number of patients in minibatch
+    ages=[]
+    sexs=[]
     lp= len(max(batch, key=lambda xmb: len(xmb[-1]))[-1]) ## maximum number of visits per patients in minibatch
     llv=0
     for x in batch:
         lv= len(max(x[-1], key=lambda xmb: len(xmb[1]))[1])
         if llv < lv: llv=lv     # max number of codes per visit in minibatch        
     for pt in batch:
-        sk,label,ehr_seq_l = pt
+        sk,label,age,sex,ehr_seq_l = pt
+        
         lpx=len(ehr_seq_l) ## no of visits in pt record
         seq_l.append(lpx)
         if surv: lbt.append(Variable(flt_typ([label])))### LR Sep 30 20 added surv_m
         else: lbt.append(Variable(flt_typ([[float(label)]])))
+        ages.append(Variable(flt_typ([[float(age)]])))
+        sexs.append(Variable(flt_typ([[float(sex)]])))
         ehr_seq_tl=[]
         time_dim=[]
         for ehr_seq in ehr_seq_l:
@@ -228,6 +234,8 @@ def preprocess(batch,pack_pad,surv,half): ### LR Sep 30 20 added surv_m
         time_dim_pv= zp(time_dim_v) ## zero pad the visits time diff codes
         mtd.append(time_dim_pv)
         sks.append(sk)
+    ages_t= Variable(torch.stack(ages,0)).view(-1,1)
+    sexs_t= Variable(torch.stack(sexs,0)).view(-1,1)
     lbt_t= Variable(torch.stack(lbt,0))
     mb_t= Variable(torch.stack(mb,0)) 
     if use_cuda:
@@ -236,7 +244,7 @@ def preprocess(batch,pack_pad,surv,half): ### LR Sep 30 20 added surv_m
     if half: 
         mb_t.half()
         mtd.half()
-    return sks, mb_t, lbt_t,seq_l, mtd 
+    return sks, mb_t, lbt_t,seq_l, mtd, ages_t, sexs_t
             
 def preprocess_multilabel(batch,pack_pad,half): ### LR Feb 18 21 for multi-label 
     # Check cuda availability
@@ -295,10 +303,10 @@ def preprocess_multilabel(batch,pack_pad,half): ### LR Feb 18 21 for multi-label
          
 #customized parts for EHRdataloader
 def my_collate(batch):
-    if multilabel_m : sks, mb_t, lbt_t,seq_l, mtd =preprocess_multilabel(batch,pack_pad,half_m) ### LR Sep 30 20 added surv_m
-    else: sks, mb_t, lbt_t,seq_l, mtd = preprocess(batch,pack_pad,surv_m,half_m) ### LR Sep 30 20 added surv_m
+    if multilabel_m : sks, mb_t, lbt_t, seq_l, mtd =preprocess_multilabel(batch,pack_pad,half_m) ### LR Sep 30 20 added surv_m
+    else: sks, mb_t, lbt_t,seq_l, mtd, ages_t, sexs_t = preprocess(batch,pack_pad,surv_m,half_m) ### LR Sep 30 20 added surv_m
     
-    return [sks, mb_t, lbt_t,seq_l, mtd]
+    return [sks, mb_t, lbt_t,seq_l, mtd, ages_t, sexs_t]
             
 
 def iter_batch2(iterable, samplesize):
