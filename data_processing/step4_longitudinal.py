@@ -175,6 +175,7 @@ def merge_data(preds: list,
                               .map_elements(lambda date: datetime.strptime(datetime.strftime(date, "%Y-%m"), "%Y-%m")))
                )
     return(all_data)
+    
 def get_list_data(fids: list, 
                   all_data: pl.DataFrame, 
                   labels: pl.DataFrame, 
@@ -186,7 +187,7 @@ def get_list_data(fids: list,
         sex = (labels.select(["FINNGENID", "SEX"])
                     .with_columns(pl.col.SEX.replace_strict(code_map).alias("SEX_TOKEN")))
         sex = dict(zip(sex.get_column("FINNGENID"), sex.get_column("SEX_TOKEN")))
-
+    
     labels_dict = dict(zip(labels["FINNGENID"], labels["y_DIAG"]))
     start_age = dict(zip(labels["FINNGENID"], labels["EVENT_AGE"]))
     if end_obs_date is None:
@@ -196,47 +197,40 @@ def get_list_data(fids: list,
                          .sort(["FINNGENID", "EVENT_AGE", "DATE"], descending=False)
                          .group_by("FINNGENID")
                          .head(1)
-                         .rename({"EVENT_AGE": "MIN_AGE", "DATE": "MIN_DATE"}))
-    
-    min_age = dict(zip(first_age.get_column("FINNGENID"), first_age.get_column("MIN_AGE")))
-    min_date =  dict(zip(first_age.get_column("FINNGENID"), first_age.get_column("MIN_DATE")))
-    
+                         .rename({"EVENT_AGE": "MIN_AGE", "DATE": "MIN_DATE"}))    
     out_data = defaultdict(list)    
-    last_dates = defaultdict(list)
     time_diffs = defaultdict(list)
     
     for fid in fids:
-        out_data[fid] = [fid, labels_dict[fid], []]
-        out_data[fid][2].append([[0], [sex[fid]]])
-        if fid in min_age:
-            time_diffs[fid] = np.round(round(min_age[fid])*365.25/30)
-            last_dates[fid] = min_date[fid]
-        else:
-            out_data[fid][2].append([[np.round(round(start_age[fid])*365.25/30)], [1]])
-
+        out_data[fid] = [fid, labels_dict[fid], start_age[fid], sex[fid], []]
+        if fid not in all_data["FINNGENID"]:
+            out_data[fid][4].append([[0], [1]])
+   
     all_data = all_data.filter(pl.col("FINNGENID").is_in(fids)).sort("DATE", descending=False).with_columns(pl.col("TEXT").replace_strict(code_map))
     for fid, crnt_data in tqdm(all_data.group_by("FINNGENID"), total=len(fids)):
         fid = fid[0]
-        last_date = last_dates[fid]
-        time_diff = time_diffs[fid]
+        last_date = None
+        time_diff = None
         last_codes = []
         start = True
         for date, date_data in crnt_data.sort("DATE", descending=False).group_by("DATE"):
             date = date[0]
             if not start: time_diff = np.round((date-last_date).days/30)
-            else: start = False
+            else: 
+                start = False
+                time_diff = 0
             try:
                 codes = list(set(date_data.get_column("TEXT").to_list()))
             except:
                 codes = date_data.get_column("TEXT").to_list()
             if (not skip_rep_codes or last_codes != codes):
                 last_date = date
-                out_data[fid][2].append([[time_diff], codes])
+                out_data[fid][4].append([[time_diff], codes])
                 last_codes = codes                
         if end_obs_date is None:
-            out_data[fid][2].append([[np.round((start_date[fid]-last_date).days/30)], [1]])
+            out_data[fid][4].append([[np.round((start_date[fid]-last_date).days/30)], [1]])
         else:
-            out_data[fid][2].append([[np.round((end_obs_date-last_date).days/30)], [1]])
+            out_data[fid][4].append([[np.round((end_obs_date-last_date).days/30)], [1]])
     return(out_data)
 
 if __name__ == "__main__":
@@ -299,6 +293,7 @@ if __name__ == "__main__":
                                args.preds,
                                args.end_obs_date,
                                args.rep_codes)
+    print(test_data)
     val_data = get_list_data(labels.filter(pl.col.SET==1).get_column("FINNGENID").unique(), 
                             all_data, 
                             labels, 
