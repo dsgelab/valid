@@ -391,11 +391,18 @@ def plot_calibration(y_true: Iterable[int],
         ax2.set_ylabel('')
 
 # Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
-
-def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
+from sklearn.metrics import precision_recall_curve
+import matplotlib.pyplot as plt
+import sklearn.metrics as skm
+from collections.abc import Iterable
+import seaborn as sns
+def precision_recall_plot(y_true: Iterable[int], 
+                          y_probs: Iterable[float], 
+                          label: str, 
+                          compare: bool=False, 
+                          ax=None):
     """ Plot Precision-Recall curve.
         Set `compare=True` to use this function to compare classifiers. """
-
     p, r, thresh = precision_recall_curve(y_true, y_probs)
     p, r, thresh = list(p), list(r), list(thresh)
     p.pop()
@@ -487,17 +494,3 @@ def create_report_plots(y_true: Iterable[int],
         fig.tight_layout()
         
     return fig
-
-        
-
-###################### Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
-import timeit
-import pickle
-import sys
-from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, precision_recall_curve, roc_curve, accuracy_score
-from sklearn.exceptions import NotFittedError
-
-import scipy
-
-        
-import sklearn.metrics as skm   
