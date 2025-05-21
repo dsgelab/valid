@@ -194,7 +194,7 @@ def remove_other_exclusion(labels: pl.DataFrame,
                            base_date: datetime,
                            removed_ids_path: str,
                            out_file_name: str) -> pl.DataFrame:
-    exclusion_data = read_file(args.diags_path+args.exclude_file_name)
+    exclusion_data = read_file(diags_path+exclude_file_name)
     # We do not want any of the exclusion individuals in the test set
     excl_remove_fids = (exclusion_data
                             .filter((pl.col("EXCL_DATE") < base_date)&(pl.col.FINNGENID.is_in(labels["FINNGENID"])))
