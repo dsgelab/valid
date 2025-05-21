@@ -2,7 +2,7 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, logging_print
-from labeling_abnorm_utils import get_lab_data, log_print_n, label_cases_and_controls, remove_prior_diags, remove_only_icd_or_atc_diags, remove_buffer_abnorm, remove_last_value_abnormal, remove_age_outliers, remove_other_exclusion
+from labeling_utils import get_lab_data, log_print_n, label_cases_and_controls, remove_prior_diags, remove_only_icd_or_atc_diags, remove_buffer_abnorm, remove_last_value_abnormal, remove_age_outliers, remove_other_exclusion, get_low_bmi_indvs
 # Standard stuff
 import numpy as np
 import pandas as pd
@@ -40,6 +40,7 @@ def get_parser_arguments():
     parser.add_argument("--abnorm_type", type=str, required=True, help="[Options for eGFR: age, KDIGO-strict, KDIGO-soft for HbA1c: strong and soft.]. age: \
                         egfr abnormality based on age. KDIGO-stric: <60 for all. KDIGO-soft: <60 but with 60-65 allowed in between abnormal without disrupting the count.\
                         for HbA1c: strong considers values >47 abnormal and soft considers values >42 abnormal.")
+    
     parser.add_argument("--start_pred_date", type=str, help="Start of prediction period [As string %Y-%m-%d].", default="2023-06-01")
     parser.add_argument("--end_pred_date", type=str, help="End of prediction period [As string %Y-%m-%d].", default="2023-12-31")
     parser.add_argument("--months_buffer", type=int, help="Minimum number months before prediction start to be removed.", default=6)
@@ -50,29 +51,6 @@ def get_parser_arguments():
     args = parser.parse_args()
 
     return(args)
-
-def get_low_bmi_indvs(fg_ver="R13") -> pl.Series:
-    """BMI not recorded or BMI >= 18.5 (low might make eGFR unreliable)."""
-
-    # Read in the minimum data file
-    if fg_ver == "R12" or fg_ver == "r12":
-        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
-    elif fg_ver == "R13" or fg_ver == "r13":        
-        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.txt.gz"
-    min_data = pl.read_csv(minimum_file_name, 
-                           separator="\t",
-                           columns=["FINNGENID", "BMI"])
-    min_data = min_data.with_columns([
-                pl.col.BMI.cast(pl.Float64, strict=False).alias("BMI")
-    ])
-    # Filtering
-    select_fids = (min_data
-                   .filter(# BMI not recorded or BMI >= 18.5 (low might make eGFR unreliable)
-                       ((pl.col.BMI.is_null()) | (pl.col.BMI>=18.5)) 
-                   )
-                   .get_column("FINNGENID")
-    )
-    return(select_fids)
 
 def get_hbb_indvs(fg_ver="R13",
                           end_date=datetime(2023, 1, 1)) -> pl.Series:
