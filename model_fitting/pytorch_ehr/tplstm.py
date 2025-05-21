@@ -1,10 +1,3 @@
-"""
-TPLSTM implementation from https://github.com/ZhiGroup/pytorch_ehr/tree/Tutorial_MIMIC
-
-Changed by KE Detrois
-
-Last updated March 14 2025
-"""
 import torch
 import torch.nn as nn
 from torch.nn import Parameter
@@ -36,7 +29,6 @@ class TPLSTM(nn.Module):
             self.bias_ih = Parameter(torch.Tensor(4 * self.hidden_size))
             self.bias_hh = Parameter(torch.Tensor(4 * self.hidden_size))
             self.b_decomp = Parameter(torch.Tensor(self.hidden_size))
-
         else:
             self.register_parameter('bias_ih', None)
             self.register_parameter('bias_hh', None)
@@ -56,7 +48,7 @@ class TPLSTM(nn.Module):
             h,c = self.TPLSTMCell(input[i],hx,self.weight_ih, self.weight_hh,self.W_decomp,self.bias_ih, self.bias_hh,self.b_decomp)
             hx=(h,c)
             outputh.append(h)
-            outputc.append(c)
+            outputc.append (c)
         return outputh,hx,outputc
     
     def TPLSTMCell(self,input, hidden, w_ih, w_hh,w_decomp, b_ih=None, b_hh=None,b_decomp=None):

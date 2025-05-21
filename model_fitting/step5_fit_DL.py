@@ -134,6 +134,8 @@ if __name__ == "__main__":
                        'optimizer': 'adamax'}
 
     if args.skip_model_fit == 0:
+        timer = Timer()
+
         print(best_params)
         ehr_model = get_model(model_name=base_params["model_name"],
                                 embed_dim_exp=best_params["embed_dim_exp"],
@@ -181,7 +183,7 @@ if __name__ == "__main__":
     out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     crnt_report = create_report(best_model, out_data, display_scores=["logloss", "aucpr"], metric="logloss")
     pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
-
+    
     save_all_report_plots(out_data=out_data,
                           out_plot_path=out_plot_path,
                           out_down_path=out_down_path)

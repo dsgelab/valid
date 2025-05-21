@@ -24,13 +24,15 @@ logger = logging.getLogger(__name__)
 # Training and eval
 from sklearn.preprocessing import MinMaxScaler, RobustScaler
 
+
 def get_out_data(data: pl.DataFrame, 
                  model_final: xgb.XGBClassifier, 
                  X_all: pl.DataFrame, 
                  y_all: pl.DataFrame, 
                  metric: str,
                  lab_name: str,
-                 goal: str) -> pl.DataFrame:
+                 goal: str,
+                 abnorm_extra_choice: str="") -> pl.DataFrame:
     """Returns the relevant columns from the input data with the predictions of the model.
        Not that abnormality here is the case/control status.
        Columns:
@@ -63,12 +65,12 @@ def get_out_data(data: pl.DataFrame,
     if get_train_type(metric) == "cont":    
         y_pred = model_final.predict(X_all.to_numpy())
         out_data = out_data.with_columns([
-                            pl.Series("VALUE", y_pred),
+                            pl.Series("ABNORM_PROBS", y_pred),
                             pl.Series("TRUE_VALUE", y_all),
         ])
         # Abnormality prediction based on the continuous value
-        out_data = get_abnorm_func_based_on_name(lab_name)(out_data, "VALUE").rename(columns={"ABNORM_CUSTOM": "ABNORM_PREDS"})
-        out_data = get_abnorm_func_based_on_name(lab_name)(out_data, "TRUE_VALUE").rename(columns={"ABNORM_CUSTOM": "TRUE_ABNORM"})
+        out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "ABNORM_PROBS").rename({"ABNORM_CUSTOM": "ABNORM_PREDS"}).with_columns(pl.when(pl.col.ABNORM_PREDS==0).then(0).otherwise(1).alias("ABNORM_PREDS"))
+        out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "TRUE_VALUE").rename({"ABNORM_CUSTOM": "TRUE_ABNORM"}).with_columns(pl.when(pl.col.TRUE_ABNORM==0).then(0).otherwise(1).alias("TRUE_ABNORM"))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Binary prediction of "abnormality"                       #
@@ -112,19 +114,6 @@ def get_shap_importances(X_in: pl.DataFrame,
 
     return(shap_importance, new_names)
 
-def save_and_calc_importances(X_in: pl.DataFrame, 
-                     model_final: xgb.XGBClassifier, 
-                     out_down_path: str,
-                     lab_name: str,
-                     lab_name_two: str="",
-                     subset: str="all") -> None:
-    """Saves the feature importances of the model to a csv file. """
-
-    shap_explainer = shap.TreeExplainer(model_final)
-    top_gain, _ = get_shap_importances(X_in, shap_explainer, lab_name, lab_name_two)
-    logging.info(top_gain.head(10))
-    top_gain.write_csv(out_down_path + "shap_importance_" + subset + "_" + get_date() + ".csv")
-    
 def save_importances(top_gain,
                      out_down_path: str,
                      subset: str="all") -> None:
@@ -132,7 +121,14 @@ def save_importances(top_gain,
     print(top_gain)
     logging.info(top_gain.head(10))
     top_gain.write_csv(out_down_path + "shap_importance_" + subset + "_" + get_date() + ".csv")
-    
+
+from model_eval_utils import get_score_func_based_on_metric
+def quantile_eval(metric):
+    def eval_metric(x, y):
+        loss = get_score_func_based_on_metric(metric)(x, y)
+        return np.mean(loss)
+    return eval_metric
+
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
                       y_train: pl.DataFrame, 
@@ -140,7 +136,7 @@ def xgb_final_fitting(best_params: dict,
                       y_valid: pl.DataFrame, 
                       metric: str,
                       low_lr: float,
-                      early_stop: int) -> xgb.XGBClassifier:
+                      early_stop: int):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -156,9 +152,14 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-    clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
-
+    if get_train_type(metric) == "bin":
+        clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
+        clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+    else:
+        if metric in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]: del params_fin["eval_metric"]
+        clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
+        clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+        
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -179,8 +180,21 @@ def get_xgb_base_params(metric: str,
     """Returns the base parameters for the XGBoost model."""
 
     base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
-    
-    if metric == "tweedie":
+    if metric == "q50":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.5, "eval_metric": "q50"})
+    elif metric == "q75":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.75, "eval_metric": metric})
+    elif metric == "q90":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.90, "eval_metric": metric})
+    elif metric == "q95":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.95, "eval_metric": metric})
+    elif metric == "q25":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.25, "eval_metric": "q25"})
+    elif metric == "q05":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.05, "eval_metric": "q05"})
+    elif metric == "q10":
+        base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.1, "eval_metric": "q10"})
+    elif metric == "tweedie":
         base_params.update({"objective": "reg:tweedie", "eval_metric": "tweedie-nloglik@1.99"})
     elif get_train_type(metric) == "cont":
         base_params.update({"objective": "reg:squarederror", "eval_metric": metric})
@@ -372,13 +386,14 @@ def get_parser_arguments():
 
     # Prediction task
     parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
+    parser.add_argument("--abnorm_extra_choice", default="", type=str, help="Extra choice for abnormality prediction. [default: ''] ")
     parser.add_argument("--preds", type=str, help="List of predictors. Special options: ICD_MAT, ATC_MAT, SUMSTATS, SECOND_SUMSTATS, LAB_MAT. Taking all columns from the respective data file.", 
                         default=["SUMSTATS", "EVENT_AGE", "SEX"], nargs="+")
     
     # Model fitting parameters
     parser.add_argument("--lr", type=float, help="Learning rate for hyperparamter optimization, can be high so this goes fast.", default=0.4)
     parser.add_argument("--low_lr", type=float, help="Learning rate for final model training.", default=0.001)
-    parser.add_argument("--reweight", type=int, default=1)
+    parser.add_argument("--reweight", type=int, default=0)
     parser.add_argument("--early_stop", type=int, help="Early stopping for the final fitting round. Currently, early stopping fixed at 5 for hyperparameter optimization.", default=5)
     parser.add_argument("--metric", type=str, help="Which metric to optimize based on.", default="mse")
 
@@ -476,27 +491,33 @@ if __name__ == "__main__":
             pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
         else:
             model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
-        # SHAP explainer for model
-        shap_explainer = shap.TreeExplainer(model_final)
-        train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
-        test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
+
         if not args.skip_model_fit:
+            # SHAP explainer for model
+            shap_explainer = shap.TreeExplainer(model_final)
+            train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
+            test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
             save_importances(top_gain=train_importances,
                              out_down_path=out_down_path,
                              subset="train")
             save_importances(top_gain=test_importances,
                              out_down_path=out_down_path,
                              subset="test")
-        # Model predictions
-        out_data = get_out_data(data=data, 
-                                model_final=model_final, 
-                                X_all=X_all, 
-                                y_all=y_all, 
-                                metric=args.metric,
-                                lab_name=args.lab_name,
-                                goal=args.goal)
+                    # Model predictions
+            out_data = get_out_data(data=data, 
+                                    model_final=model_final, 
+                                    X_all=X_all, 
+                                    y_all=y_all, 
+                                    metric=args.metric,
+                                    lab_name=args.lab_name,
+                                    goal=args.goal,
+                                    abnorm_extra_choice=args.abnorm_extra_choice)
+            out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
+        else:
+            train_importances = pl.read_csv(out_down_path + "shap_importance_train_" + args.model_fit_date + ".csv")
+            test_importances = pl.read_csv(out_down_path + "shap_importance_test_" + args.model_fit_date + ".csv")
+            out_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
 
-        out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Evaluations                                             #
@@ -513,7 +534,9 @@ if __name__ == "__main__":
                               valid_importances=train_importances,
                               test_importances=test_importances,
                               out_plot_path=out_plot_path,
-                              out_down_path=out_down_path)
+                              out_down_path=out_down_path,
+                              train_type=get_train_type(args.metric))
+
 
         eval_metrics = get_all_eval_metrics(data=out_data,
                                             plot_path=out_plot_path, 
