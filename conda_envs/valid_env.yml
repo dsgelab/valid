@@ -1,6 +1,7 @@
 name: optuna_python
 channels:
   - conda-forge
+  - pytorch
   - defaults
 dependencies:
   - python=3.12
@@ -16,7 +17,7 @@ dependencies:
   - conda-pack
   - pip
   - tqdm
-  - pytorch
+  - pytorch-cuda
   - plotly
   - optuna-integration
   - google-cloud-bigquery
