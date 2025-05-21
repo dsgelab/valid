@@ -138,11 +138,11 @@ def create_shap_dir_plot(shap_values: list[float],
     shap.summary_plot(shap_values, max_display=20, feature_names=plot_names, show=False)
     fig = plt.gcf()
     return fig
-
+    
 import seaborn as sns
-def plot_observerd_vs_predicted(data: pl.DataFrame, 
+def plot_observed_vs_predicted(data: pl.DataFrame, 
                                 col_name_x: str, 
-                                col_name_y: str, 
+                                col_name_y: str,
                                 col_name_x_abnorm: str, 
                                 prob=True) -> plt.Figure:
     """Plot observed vs predicted values with a regression line and a 1:1 line."""
@@ -153,12 +153,16 @@ def plot_observerd_vs_predicted(data: pl.DataFrame,
     max_x = data.select(pl.col(col_name_x).max()).to_numpy()[0][0]
     min_y = data.select(pl.col(col_name_y).min()).to_numpy()[0][0]
     max_y = data.select(pl.col(col_name_y).max()).to_numpy()[0][0]
-    axis_limits = [min(min_x, min_y), max(max_x, max_y)]    
 
+    axis_limits = [min(min_x, min_y), max(max_x, max_y)]    
     # Show the joint distribution using kernel density estimation
-    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y]*100, kind="scatter", hue=data[col_name_x_abnorm])
+    if prob:
+        data=data.with_columns((pl.col(col_name_y)*100).alias(col_name_y))
+    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y], kind="scatter", hue=data[col_name_x_abnorm])
+
     g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
     g.ax_joint.set_xlabel("Observed Value")
+
     if prob: 
         g.ax_joint.set_ylabel("Predicted Probability")
         g.ax_marg_y.set_ylim(0, 100)
@@ -172,43 +176,31 @@ def plot_observerd_vs_predicted(data: pl.DataFrame,
 
     return(g)
     
+ 
 import seaborn as sns
-def plot_observerd_vs_predicted_min5(data: pl.DataFrame, 
-                                     col_name_x: str, 
-                                     col_name_y: str) -> tuple[plt.Figure, pl.Series, pl.Series]:
-    """Plot observed vs predicted values but only show values with at least 5 counts.
-       Used for downloading plots."""
-    sns.set_style('whitegrid')
-
-    newcol_x, min_val_x, max_val_x = round_column_min5(data[col_name_x])
-    newcol_y, min_val_y, max_val_y = round_column_min5(data[col_name_y])
-    axis_limits = [min(min_val_x, min_val_y)-3, max(max_val_x, max_val_y)+3]
-    # Show the joint distribution using kernel density estimation
-    g = sns.jointplot(x=newcol_x, y=newcol_y, kind="hex", mincnt=5, cmap="twilight_shifted", marginal_kws=dict(stat="density", kde=True, discrete=True, color="#564D65"))
-    g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
-    g.ax_marg_y.set_ylim(axis_limits[0], axis_limits[1])
-    g.ax_joint.set_xlabel("observed value")
-    g.ax_joint.set_ylabel("predicted value")
-    g.ax_joint.text(3*axis_limits[1]//4, axis_limits[1]-(0.1*axis_limits[1]), "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-    
-    # # This is the x=y line using transforms
-    g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
-    return(g, newcol_x, newcol_y)
-    
-def plot_observed_vs_probability_min5(data: pl.DataFrame, 
-                                     col_name_x: str, 
-                                     col_name_y: str) -> tuple[plt.Figure, pl.Series, pl.Series]:
+def plot_observed_vs_predicted_min5(data: pl.DataFrame, 
+                                    col_name_x: str, 
+                                    col_name_y: str,
+                                    prob=True) -> tuple[plt.Figure, pl.Series, pl.Series]:
     sns.set_style('whitegrid')
     newcol_x, min_val_x, max_val_x = round_column_min5(data[col_name_x])
-    if all(data[col_name_y] <= 1.0): data = data.with_columns(pl.col(col_name_y)*100)
+    if all(data[col_name_y] <= 1.0) and prob: data = data.with_columns(pl.col(col_name_y)*100)
     newcol_y, min_val_y, max_val_y = round_column_min5(data[col_name_y])
 
     # Show the joint distribution using kernel density estimation
     g = sns.jointplot(x=newcol_x, y=newcol_y, kind="hex", mincnt=5, cmap="twilight_shifted", marginal_kws=dict(stat="density", kde=True, discrete=True, color="#564D65"))
-    g.ax_joint.text(max_val_x-(0.2*max_val_x), 90, "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-    g.ax_marg_y.set_ylim(0, 100)
     g.ax_joint.set_xlabel("Observed Value")
-    g.ax_joint.set_ylabel("Predicted Probability")
+    axis_limits = [min(min_val_x, min_val_y)-3, max(max_val_x, max_val_y)+3]
+    g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
+    if prob:
+        g.ax_joint.text(max_val_x-(0.2*max_val_x), 90, "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+        g.ax_marg_y.set_ylim(0, 100)
+        g.ax_joint.set_ylabel("Predicted Probability")
+    else:
+        g.ax_joint.text(3*axis_limits[1]//4, axis_limits[1]-(0.1*axis_limits[1]), "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+        g.ax_joint.set_ylabel("Predicted Value")
+        g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
+
     return(g, newcol_x, newcol_y)
 
 import seaborn as sns
@@ -467,19 +459,26 @@ def create_report_plots(y_true: Iterable[int],
     cal_ax2 = None
     imp_ax = None
     # Fining correct settings, depending on whether we have importance plot
-    if importance_plot and importances is not None:
-        fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1, 0.5]})
-        imp_ax, roc_axes = row_1[0], row_1[1]
-        cal_ax1, pr_axes = row_2[0], row_2[1]
-        cal_ax2, conf_axes = row_3[0], row_3[1]
-        cal_ax1.sharex(cal_ax2)
-    if imp_ax is None: # remove second row axes
-        fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(10, 10), gridspec_kw={'height_ratios': [1, 1, 0.25]})
-        conf_axes, roc_axes = row_1[0], row_1[1]
-        cal_ax1, pr_axes = row_2[0], row_2[1]
-        cal_ax2, delete_axes = row_3[0], row_3[1]
-        delete_axes.remove()
-        cal_ax1.sharex(cal_ax2)
+    if train_type == "bin":
+        if importance_plot and importances is not None:
+            fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1, 0.5]})
+            imp_ax, roc_axes = row_1[0], row_1[1]
+            cal_ax1, pr_axes = row_2[0], row_2[1]
+            cal_ax2, conf_axes = row_3[0], row_3[1]
+            cal_ax1.sharex(cal_ax2)
+        if imp_ax is None: # remove second row axes
+            fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(10, 10), gridspec_kw={'height_ratios': [1, 1, 0.25]})
+            conf_axes, roc_axes = row_1[0], row_1[1]
+            cal_ax1, pr_axes = row_2[0], row_2[1]
+            cal_ax2, delete_axes = row_3[0], row_3[1]
+            delete_axes.remove()
+            cal_ax1.sharex(cal_ax2)
+    if train_type == "cont":
+        if importance_plot and importances is not None:
+            fig, (row_1, row_2) = plt.subplots(2, 2, figsize=(11, 7), gridspec_kw={'height_ratios': [1, 0.3]})
+            imp_ax, conf_axes = row_1[0], row_1[1]
+            delete_ax, cal_ax = row_2[0], row_2[1]
+            delete_ax.remove()
             
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #
@@ -492,9 +491,28 @@ def create_report_plots(y_true: Iterable[int],
         roc_plot(y_true, y_probs, "Test", ax=roc_axes)
         precision_recall_plot(y_true, y_probs, "Test", ax=pr_axes)
         plot_calibration(y_true, y_probs, cal_ax1, cal_ax2, fg_down=fg_down)
-        fig.subplots_adjust(wspace=5)
-        fig.tight_layout()
+    else:
         
+        if fg_down:
+            y_true = np.asarray(y_true)
+            y_probs = np.asarray(y_probs)
+            safe_cases, _, _ = round_column_min5(y_probs[y_true==1].copy())
+            safe_controls, _, _ = round_column_min5(y_probs[y_true==0].copy())
+            safe = pl.Series(np.concatenate([safe_cases, safe_controls]))
+            labels = pl.concat([pl.Series(y_true[y_true == 1]), pl.Series(y_true[y_true == 0])])
+        else:
+            safe = pl.Series(y_probs)
+            labels = pl.Series(y_true)
+        sns.boxplot(x=safe, 
+                    y=pd.Categorical(labels.map_elements(lambda x: "Controls" if x == 0 else "Cases", 
+                                                         return_dtype=pl.Utf8),
+                                     categories=["Controls", "Cases"], ordered=True), 
+                    ax=cal_ax, color="black", vert=False, width=.5, whis=(5,95), fill=False, 
+                    flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
+        cal_ax.set_xlabel('Predicted Value')
+        cal_ax.set_ylabel('')
+    fig.subplots_adjust(wspace=5)
+    fig.tight_layout()
     return fig
 
         

@@ -1,8 +1,6 @@
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from plot_utils import create_report_plots
-from general_utils import get_date
 
 def get_cont_goal_col_name(goal: str,
                            col_names: list) -> str:

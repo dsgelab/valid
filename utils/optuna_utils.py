@@ -5,7 +5,8 @@ def create_optuna_study(study_name: str,
                         sampler: optuna.samplers,
                         model_fit_date: str,
                         res_dir: str,
-                        refit: bool) -> optuna.study.Study:
+                        refit: bool,
+                        metric: str) -> optuna.study.Study:
     """Creates an Optuna study object."""
     store_name = "sqlite:///" + res_dir + file_name + "_" + model_fit_date + "_optuna.db"
     if refit: 
@@ -13,7 +14,9 @@ def create_optuna_study(study_name: str,
             optuna.delete_study(study_name=study_name, storage=store_name)
         except KeyError:
             print("Record not found, have to create new anyways.")
-    study = optuna.create_study(direction='minimize', 
+    if metric=="tweedie": direction="maximize"
+    else: direction='minimize'
+    study = optuna.create_study(direction=direction, 
                                 sampler=sampler, 
                                 study_name=study_name, 
                                 pruner=optuna.pruners.MedianPruner(n_warmup_steps=5),
@@ -54,7 +57,8 @@ def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader],
                                 sampler, 
                                 model_fit_date, 
                                 res_dir, 
-                                refit)
+                                refit,
+                                base_params["eval_metric"])
     tic = time.time()
     timer = Timer()
     np.random.seed(9234)
@@ -98,6 +102,14 @@ def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader],
         
     return(study.best_trial.params)
 
+from model_eval_utils import get_score_func_based_on_metric
+def quantile_eval(metric):
+    def eval_metric(preds, dtrain):
+        y = dtrain.get_label()
+        loss = get_score_func_based_on_metric(metric)(preds, y)
+        return metric, np.mean(loss)
+    return eval_metric
+    
 import xgboost as xgb
 import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
@@ -129,16 +141,27 @@ def optuna_xgb_objective(trial: optuna.Trial,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Train model                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    model = xgb.train(params=params, 
-                      dtrain=dtrain, 
-                      num_boost_round=200, 
-                      evals=[(dtrain, "train"), (dvalid, "valid")], 
-                      evals_result=evals_result,
-                      early_stopping_rounds=5, 
-                      verbose_eval=0,
-                      callbacks=[pruning_callback])
+    if base_params["eval_metric"] in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]:
+        del params["eval_metric"]
+        model = xgb.train(params=params, 
+                          dtrain=dtrain, 
+                          num_boost_round=200, 
+                          evals=[(dtrain, "train"), (dvalid, "valid")], 
+                          evals_result=evals_result,
+                          custom_metric=quantile_eval(base_params["eval_metric"]),
+                          early_stopping_rounds=5, 
+                          verbose_eval=0,
+                          callbacks=[pruning_callback])
+    else:
+        model = xgb.train(params=params, 
+                          dtrain=dtrain, 
+                          num_boost_round=200, 
+                          evals=[(dtrain, "train"), (dvalid, "valid")], 
+                          evals_result=evals_result,
+                          early_stopping_rounds=5, 
+                          verbose_eval=0,
+                          callbacks=[pruning_callback])
     trial.set_user_attr("best_iteration", int(model.best_iteration))
-    
     # Return the last value of the metric on the validation set
     return evals_result["valid"][base_params["eval_metric"]][-1] 
 
@@ -164,12 +187,12 @@ def optuna_torch_objective(trial: optuna.Trial,
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'embed_dim_exp': trial.suggest_int('embed_dim_exp', 7, 15, 1),
+        'embed_dim_exp': trial.suggest_int('embed_dim_exp', 2, 10, 1),
         #'embed_dim_exp': trial.suggest_int('embed_dim_exp', 2, 10, 1),
-        'hidden_size_exp': trial.suggest_int('hidden_size_exp', 7, 15, 1),
-        'dropout_r': trial.suggest_int("dropout_r", 0, 5, 1),
+        'hidden_size_exp': trial.suggest_int('hidden_size_exp', 2, 10, 1),
+        'dropout_r': trial.suggest_int("dropout_r", 0, 10, 1),
         'L2': trial.suggest_float('L2', 1e-6, 1e-2, log=True),
-        'lr': trial.suggest_int('lr', 1, 5, 2),
+        'lr': trial.suggest_int('lr', 5, 13, 2),
         #'optimizer': trial.suggest_categorical('optimizer', ['adam', 'adadelta', 'adagrad', 'adamax', 'asgd', 'rmsprop', 'rprop', 'sgd']),
         'optimizer': trial.suggest_categorical('optimizer', ['adagrad', 'adamax']),
 

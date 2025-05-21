@@ -35,7 +35,9 @@ def egfr_transform(data):
 def get_abnorm_func_based_on_name(lab_name,
                                   extra_choice=""):
     if lab_name == "tsh": return(tsh_abnorm)
-    if lab_name == "hba1c": return(hba1c_abnorm)
+    if lab_name == "hba1c": 
+        if extra_choice == "mild": return(hba1c_mild_abnorm)
+        if extra_choice == "strong": return(hba1c_strong_abnorm)
     if lab_name == "ldl": return(ldl_abnorm)
     if lab_name == "egfr" or lab_name == "krea": 
         if extra_choice == "age":
@@ -116,12 +118,20 @@ def cystc_abnorm(data, value_col_name):
     
 """Individual ABNORMity >42mmol/l also theoretically should be at least 20 but this does not have a 
    diagnostic value aparently"""
-def hba1c_abnorm(data, value_col_name="VALUE"):
+def hba1c_mild_abnorm(data, value_col_name="VALUE"):
     data = data.to_pandas()
 
     data.loc[data[value_col_name] > 42,"ABNORM_CUSTOM"] = 1
-    data.loc[data[value_col_name] > 47,"ABNORM_CUSTOM"] = 2
     data.loc[data[value_col_name] <= 42,"ABNORM_CUSTOM"] = 0
+    return(pl.DataFrame(data))
+
+"""Individual ABNORMity >42mmol/l also theoretically should be at least 20 but this does not have a 
+   diagnostic value aparently"""
+def hba1c_strong_abnorm(data, value_col_name="VALUE"):
+    data = data.to_pandas()
+
+    data.loc[data[value_col_name] > 47,"ABNORM_CUSTOM"] = 1
+    data.loc[data[value_col_name] <= 47,"ABNORM_CUSTOM"] = 0
     return(pl.DataFrame(data))
 
 """Based on FinnGen ABNORMity column have only normal and ABNORM."""

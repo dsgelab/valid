@@ -29,6 +29,7 @@ def get_parser_arguments():
     parser.add_argument("--ref_min", type=float, help="Minimum reasonable value [dafult: None]", default=None)
     parser.add_argument("--ref_max", type=float, help="Maximum reasonable value [dafult: None]", default=None)
     parser.add_argument("--plot", type=int, help="Whether to create plots for quality control (time-consuming).", default=1)
+    parser.add_argument("--abnorm_type", type=str, default="soft", help="[Options: soft, strong]. soft: HbA1c >42 abnormal strong: HbA1c >47 abnormal.")
 
     args = parser.parse_args()
     return(args)
@@ -44,7 +45,7 @@ if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
     # File names and directories
-    file_name = args.lab_name + "_d" + str(args.fill_missing) + "_" + get_date() 
+    file_name = args.lab_name + "_d" + str(args.fill_missing) + "_" + args.abnorm_type + "_" + get_date() 
     count_dir = args.res_dir + "counts/"
     log_file_name = args.lab_name + "_d" + str(args.fill_missing) + "_" + get_datetime()
     make_dir(args.res_dir); make_dir(count_dir)
@@ -121,7 +122,7 @@ if __name__ == "__main__":
     #### Finishing
     print(data)
     try:
-        data =  get_abnorm_func_based_on_name(args.lab_name)(data, "VALUE")
+        data =  get_abnorm_func_based_on_name(args.lab_name, args.abnorm_type)(data, "VALUE")
     except ValueError:
         data = data.rename({"ABNORM": "ABNORM_CUSTOM"})
     logging.info("Min abnorm " + str(data.filter(pl.col("ABNORM_CUSTOM")>0.0).select(pl.col("VALUE").min()).to_numpy()[0][0]) + " max abnorm " + str(data.filter(pl.col("ABNORM_CUSTOM")>0.0).select(pl.col("VALUE").max()).to_numpy()[0][0]))
