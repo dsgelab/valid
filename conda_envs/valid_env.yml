@@ -1,10 +1,11 @@
 name: optuna_python
 channels:
-  - conda-forge
-  - pytorch
   - defaults
+  - pytorch
+  - conda-forge
+  - nvidia
 dependencies:
-  - python=3.12
+  - python=3.8.10
   - pandas
   - numpy
   - optuna
@@ -17,12 +18,12 @@ dependencies:
   - conda-pack
   - pip
   - tqdm
-  - pytorch-cuda
+  - pytorch::pytorch=2.1.0
+  - pytorch::pytorch-cuda=12.1
   - plotly
   - optuna-integration
-  - google-cloud-bigquery
+  - conda-forge::google-cloud-bigquery
   - datasets
-  - xformers 
-  - transformers=4.35.2
+  - transformers
   - polars
   - shap
