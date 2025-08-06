@@ -154,7 +154,6 @@ def label_cases_and_controls(data: pl.DataFrame,
                     pl.when(((pl.col.DATA_FIRST_DIAG_ABNORM_DATE>=start_pred_date)&(pl.col.DATA_FIRST_DIAG_ABNORM_DATE<=end_pred_date)) | \
                             ((pl.col.DATA_DIAG_DATE>=start_pred_date)&(pl.col.DATA_DIAG_DATE<=end_pred_date)))              
                       .then(1).otherwise(0).alias("y_DIAG")
-
                 )
     )
     labels = get_abnorm_func_based_on_name(lab_name, abnorm_type)(labels, "y_MEAN").rename({"ABNORM_CUSTOM": "y_MEAN_ABNORM"})
@@ -207,11 +206,11 @@ def remove_other_exclusion(labels: pl.DataFrame,
     log_print_n(labels, "Exclusion")
     return(labels)
 
-
 def remove_future_diags(data, 
                         end_pred_date,
                         strict=False,
-                        data_diag_excl=True):
+                        data_diag_excl=True,
+                        diff_days=0):
     if data_diag_excl == True:
         # Future diagnoses
         if strict:
@@ -272,6 +271,7 @@ def remove_future_diags(data,
                     .otherwise(pl.col.FIRST_DIAG_DATE)
                     .alias("FIRST_DIAG_DATE")
         )
+
     return(data)
 
 def get_lab_data(data_path: str, 
