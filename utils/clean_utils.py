@@ -1,7 +1,7 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from processing_utils import get_abnorm_func_based_on_name, three_level_abnorm, simple_abnorm, egfr_transform
+from processing_utils import get_abnorm_func_based_on_name, three_level_abnorm, simple_abnorm
 # Standard stuff
 import pandas as pd
 import polars as pl
@@ -30,12 +30,14 @@ def remove_single_value_outliers(data: pl.DataFrame,
     #data = data.join(z_scores.select(["FINNGENID", "Z_indv"]), on="FINNGENID")
     # Outliers
     outliers_high = (data.filter(pl.col("Z_indv")>2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
-    outliers_high = (data.join(outliers_high, on="FINNGENID") # individuals with single severe outliers 
+    outliers_high = (data.join(outliers_high, on="FINNGENID")# individuals with single severe outliers 
                          .filter((pl.col("N_ROW")==1) & (pl.col("Z_indv")>5) & (pl.col("VALUE")>500)))
                          
-    outliers_low = (data.filter(pl.col("Z_indv")<-4)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
+    outliers_low = (data.filter(pl.col("Z_indv")<-4)
+                        .group_by("FINNGENID")
+                        .agg(pl.len().alias("N_ROW")))
     outliers_low = (data.join(outliers_low, on="FINNGENID")
-                        .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")>53)))
+                        .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")<53)))
     outliers = pl.concat([outliers_high, outliers_low])
     print(outliers)
     # Remove
@@ -67,11 +69,15 @@ def remove_severe_value_outliers(data: pl.DataFrame,
     # Make sure not to include single extreme outliers with the value quant. I.e. LDL had one such individual completely skewing the upper box.
     # Log with plots
     if plot:
+        if data.height > 1000000:
+            subset_data = data.sample(1000000)
+        else:
+            subset_data = data
         print("start")
         plt.figure()
         fig, ax = plt.subplots(1,2,figsize=(5,5))
-        sns.scatterplot(data, x="EVENT_AGE", y="VALUE", ax=ax[0], hue="Z")
-        sns.scatterplot(data.filter(pl.col("Z").abs()<max_z), x="EVENT_AGE", y="VALUE", ax=ax[1], hue="Z")
+        sns.scatterplot(subset_data, x="EVENT_AGE", y="VALUE", ax=ax[0], hue="Z")
+        sns.scatterplot(subset_data.filter(pl.col("Z").abs()<max_z), x="EVENT_AGE", y="VALUE", ax=ax[1], hue="Z")
         plt.savefig(out_dir+file_name+"_zs.png")
         print("end")
     # Stats
@@ -180,6 +186,15 @@ def handle_missing_values(data: pl.DataFrame,
                                    .then(dummies[2] if dummies[2] != -1 else None)
                                    .otherwise(pl.col("VALUE"))
                                    .alias("VALUE"))
+        data = data.with_columns(pl.when((pl.col("VALUE").is_null()) & (pl.col("ABNORM") == "LL"))
+                                   .then(dummies[3] if dummies[3] != -1 else None)
+                                   .otherwise(pl.col("VALUE"))
+                                   .alias("VALUE"))
+        data = data.with_columns(pl.when((pl.col("VALUE").is_null()) & (pl.col("ABNORM") == "HH"))
+                                   .then(dummies[4] if dummies[4] != -1 else None)
+                                   .otherwise(pl.col("VALUE"))
+                                   .alias("VALUE"))
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Removing (still) missing values                         #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
@@ -196,38 +211,54 @@ def handle_missing_values(data: pl.DataFrame,
     return(data, n_indvs_stats)
 
 def handle_same_day_duplicates(data: pl.DataFrame,
-                               n_indvs_stats: pd.DataFrame) -> pl.DataFrame:
+                               n_indvs_stats: pd.DataFrame,
+                               keep_last_of_day: int=0) -> pl.DataFrame:
     """Mean of duplicates at the same time. K"""
     # Stats
     n_indv = len(set(data["FINNGENID"]))
     n_rows = data.height
 
     # truncating datetime to day
-    print(data.schema["DATE"]==pl.Datetime)
     if data.schema["DATE"]==pl.Datetime:
-        data = data.with_columns(
-                    pl.col.DATE.dt.date().alias("DATE")
-        )
+        data = data.with_columns(pl.col.DATE.dt.date().alias("DATE_SHORT"))
     else:
+        print(data)
         data = data.with_columns(
                     pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d %H:%M:%S", strict=False).dt.date()
-                    .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False)
-                    .alias("DATE"))
+                    .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False))
+                    .alias("DATE_SHORT")
         )
-    print(data)
+        print(data)
+
+    dups = data.filter(data.select(["FINNGENID", "DATE_SHORT"]).is_duplicated())
+    logging_print("{:,} measurements on the same day".format(len(dups)))
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
     logging_print("{:,} measurements at the exact same time with different values".format(len(dups)))
-        
-    # Using mean of duplicates
-    if "UNIT" in data.columns:
-        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "ABNORM", "UNIT"])
-                .agg(pl.col("VALUE").mean().alias("VALUE")))
-    else:
-        data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "ABNORM"])
-                .agg(pl.col("VALUE").mean().alias("VALUE")))
 
+    if keep_last_of_day == 0:
+        # Averaging
+        if "ABNORM" in data.columns:  
+            if "UNIT" in data.columns:
+                data = (data.group_by(["FINNGENID", "DATE_SHORT", "EVENT_AGE", "SEX", "ABNORM", "UNIT"])
+                        .agg(pl.col("VALUE").mean().alias("VALUE")))
+            else:
+                data = (data.group_by(["FINNGENID", "DATE_SHORT", "EVENT_AGE", "SEX", "ABNORM"])
+                    .agg(pl.col("VALUE").mean().alias("VALUE")))
+        else:
+            data = (data.group_by(["FINNGENID", "DATE_SHORT", "EVENT_AGE", "SEX"])
+                    .agg(pl.col("VALUE").mean().alias("VALUE")))
+        data = data.rename({"DATE_SHORT": "DATE"})
+    else:
+        print(data)
+        # Taking last of days
+        data = (data
+                  .sort("FINNGENID", "DATE")
+                  .filter((pl.col("DATE")==pl.col("DATE").last()).over("FINNGENID", "DATE_SHORT"))
+                  .drop("DATE").rename({"DATE_SHORT": "DATE"})
+               )
     logging_print("After removing exact duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
+    print(data)
 
     # Stats
     n_indvs_stats.loc[n_indvs_stats.STEP == "Dups mean","N_ROWS_NOW"] = data.height
@@ -291,6 +322,7 @@ def handle_multi_unit_duplicates(data: pl.DataFrame,
     data = pl.concat([data, dups.select(data.columns)])
     logging_print("After adding back units")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
+
     
     return(data)
 
