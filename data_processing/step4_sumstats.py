@@ -27,6 +27,7 @@ def get_parser_arguments():
     parser.add_argument("--file_path_data", type=str, help="Path to the diagnosis data file", default="")
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--start_date", type=str, default="", help="Date to filter before")
+    parser.add_argument("--mean_impute", type=int, default=1, help="Whether to impute mean for those with missing.")
 
 
     # Settings
@@ -42,7 +43,11 @@ if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
     init_logging(args.res_dir, args.lab_name, logger, args)
-    out_file_name = args.file_name_start+"_sumstats_"+get_date()
+    if args.mean_impute == 1:
+        out_file_name = args.file_name_start+"_sumstats_"+get_date()
+    else:
+        out_file_name = args.file_name_start+"_sumstats_noimpute_"+get_date()
+
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Get data                                                #
@@ -58,12 +63,12 @@ if __name__ == "__main__":
     data = data.join(labels, on="FINNGENID", how="right", coalesce=True)
     if args.start_date != "": 
         data = data.with_columns(pl.Series("START_DATE", [datetime.strptime(args.start_date, "%Y-%m-%d")]*data.height))
-    data = data.filter(pl.col.DATE<pl.col.START_DATE)
-        
+    
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Summary statistics                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     sumstats = (data
+                .filter(pl.col.DATE<pl.col.START_DATE)
                 .filter((pl.col.VALUE.is_not_null()))
                 .sort(["FINNGENID", "DATE"], descending=False)
                 .group_by(["FINNGENID", "SET"])
@@ -95,7 +100,7 @@ if __name__ == "__main__":
     #                 Mean for those with missing data                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     sumstats_train = sumstats.filter(pl.col.SET==0)
-    if args.file_path_labels=="":
+    if args.file_path_labels=="" and args.mean_impute == 1:
         # atm this only works for the original data as labels then has empty rows. Otherwise we just dont have data.
         missing_data = data.filter((pl.col.VALUE.is_null())&((pl.len()==1).over("FINNGENID"))).select("FINNGENID", "SET")
     
@@ -122,6 +127,7 @@ if __name__ == "__main__":
                             pl.Series("ABNORM", [0]*missing_data.height).cast(pl.Int64, strict=False),
                         )
         )
+        print(missing_data)
         sumstats = pl.concat([sumstats, missing_data.select(sumstats.columns)])
     print(sumstats)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
