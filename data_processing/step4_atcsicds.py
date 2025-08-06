@@ -18,7 +18,8 @@ def get_out_file_name(file_name_start: str,
                       time: int,
                       bin_count: int,
                       months_before: int,
-                      start_year: int) -> str:
+                      start_year: int,
+                     min_pct: str) -> str:
     """
     Function to get the output file name based on the input parameters.
     """
@@ -28,6 +29,7 @@ def get_out_file_name(file_name_start: str,
         out_file_name += "_icds"
     elif col_name == "ATC_FIVE":
         out_file_name += "_atcs"
+    out_file_name += "_"+min_pct+"pct"
     if bin_count == 1:
         out_file_name += "_bin"
     else:
@@ -83,6 +85,7 @@ def get_parser_arguments():
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
 
     # Settings
+    parser.add_argument("--min_pct", type=str, help="Min percentage of inclusion for file name.", required=True)
     parser.add_argument("--col_name", type=str, help="Name of the column to use from the longitduinal data. [i.e. ATC_FIVE or ICD_THREE]", required=True)
     parser.add_argument("--time", type=int, default=0, help="Whether to filter for current and not historical data. -1 = historical, 0 = all, 1 = current")
     parser.add_argument("--bin_count", type=int, default=1, help="Whether to count number of occurance or stay binary observed/not observed.")
@@ -107,7 +110,8 @@ if __name__ == "__main__":
                                       args.time, 
                                       args.bin_count, 
                                       args.months_before, 
-                                      args.start_year)
+                                      args.start_year,
+                                     args.min_pct)
     init_logging(args.res_dir, args.lab_name, logger, args)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
