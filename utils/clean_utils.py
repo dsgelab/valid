@@ -15,6 +15,7 @@ matplotlib.use("Agg")
 sns.set_style("whitegrid")
 # Logging and input
 import logging
+from typing import tuple
 
 def remove_single_value_outliers(data: pl.DataFrame, 
                                  n_indvs_stats: pd.DataFrame) -> tuple[pl.DataFrame, pd.DataFrame]:
@@ -158,7 +159,7 @@ def handle_missing_values(data: pl.DataFrame,
     # Stats
     n_indv = len(set(data["FINNGENID"]))
     if fill_missing:
-        logging_print(f"Number of missing rows with abnorm being filled: {data.filter((pl.col("VALUE").is_null()) & (pl.col("ABNORM").is_not_null())).height}")
+        logging_print(f"Number of missing rows with abnorm being filled: {data.filter((pl.col('VALUE').is_null()) & (pl.col('ABNORM').is_not_null())).height}")
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         #                 Replacing missing                                       #
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #          

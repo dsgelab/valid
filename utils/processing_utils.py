@@ -321,7 +321,7 @@ def add_set(unique_data,
                                    .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(1)
                                    .otherwise(None)
     )
-        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid["FINNGENID"]))}  N mean abnorm train {sum(data_valid["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_valid["y_MEAN_ABNORM"])/len(data_valid), 2)}")
+        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid['FINNGENID']))}  N mean abnorm train {sum(data_valid['y_MEAN_ABNORM'])} pct mean abnorm {round(sum(data_valid['y_MEAN_ABNORM'])/len(data_valid), 2)}")
 
     else:
         unique_data = unique_data.with_columns(
@@ -330,7 +330,7 @@ def add_set(unique_data,
                .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(2)
                .otherwise(None)
         )
-        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train["FINNGENID"]))}  N mean abnorm train {sum(data_train["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_train["y_MEAN_ABNORM"])/len(data_train), 2)}")
+        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train['FINNGENID']))}  N mean abnorm train {sum(data_train['y_MEAN_ABNORM'])} pct mean abnorm {round(sum(data_train['y_MEAN_ABNORM'])/len(data_train), 2)}")
 
     print(unique_data.select(pl.col("SET")).to_series().value_counts())
     return(pl.DataFrame(unique_data))
