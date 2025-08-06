@@ -187,14 +187,15 @@ def optuna_torch_objective(trial: optuna.Trial,
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'embed_dim_exp': trial.suggest_int('embed_dim_exp', 2, 10, 1),
+        'embed_dim_exp': trial.suggest_int('embed_dim_exp', 5, 11, 1),
         #'embed_dim_exp': trial.suggest_int('embed_dim_exp', 2, 10, 1),
-        'hidden_size_exp': trial.suggest_int('hidden_size_exp', 2, 10, 1),
+        'hidden_size_exp': trial.suggest_int('hidden_size_exp', 5, 11, 1),
         'dropout_r': trial.suggest_int("dropout_r", 0, 10, 1),
         'L2': trial.suggest_float('L2', 1e-6, 1e-2, log=True),
         'lr': trial.suggest_int('lr', 5, 13, 2),
         #'optimizer': trial.suggest_categorical('optimizer', ['adam', 'adadelta', 'adagrad', 'adamax', 'asgd', 'rmsprop', 'rprop', 'sgd']),
         'optimizer': trial.suggest_categorical('optimizer', ['adagrad', 'adamax']),
+        'final_embed_dim_exp': trial.suggest_int('final_embed_dim_exp', 1, 7, 1)
 
     }
     if base_params["model_name"] == 'RNN': 
@@ -216,7 +217,8 @@ def optuna_torch_objective(trial: optuna.Trial,
                           bii=base_params["bii"],
                           time=base_params["time"],
                           preTrainEmb=base_params["preTrainEmb"],
-                          input_size=base_params["input_size"])    
+                          input_size=base_params["input_size"],
+                          final_embed_dim_exp=params["final_embed_dim_exp"])    
     optimizer = get_torch_optimizer(ehr_model, 
                                     base_params["eps"],
                                     params["lr"], 
