@@ -142,21 +142,15 @@ if __name__ == "__main__":
                                   fg_ver=args.fg_ver)
         icd_excls = (get_codes_first(diags, args.diag_excl_regex)
                      .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
+        if args.lab_name == "egfr":
+            kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
+            icd_excls = pl.concat([icd_excls, kd_data.select(icd_excls.columns)])
         if args.med_excl_regex != "":
             med_excls = (get_codes_first(diags, args.med_excl_regex)
                         .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
             excls = pl.concat([icd_excls, med_excls])
         else:
             excls = icd_excls
-        if args.lab_name == "egfr":
-            # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-            # # # # # # # Kidney-specific # # # # # # # # # # # # # # # # # # # # # # #                                  
-            kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
-            excls = pl.concat([excls, kd_data.select(excls.columns)])
-
-            canc_data = get_canc_register_data(fg_ver=args.fg_ver)
-            excls = pl.concat([excls, canc_data.select(excls.columns)])
-
         excls.write_parquet(out_file_path + "_excls.parquet")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

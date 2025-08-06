@@ -7,6 +7,8 @@ from labeling_utils import get_lab_data, remove_prior_diags, \
                             remove_only_icd_or_atc_diags, remove_buffer_abnorm, \
                             remove_last_value_abnormal, remove_other_exclusion, \
                             remove_age_outliers, label_cases_and_controls
+from diag_utils import relabel_data_diag
+
 # Standard stuff
 import numpy as np
 import pandas as pd
@@ -76,6 +78,9 @@ def get_parser_arguments():
     # Settings for data-processing
     parser.add_argument("--exclude_diags", type=int, default=0, help="Whether to exclude individuals with prior diags or not. 0 = no, 1 = yes")
     parser.add_argument("--data_diag_excl", type=int, default=0, help="Whether to remove individuals with only a data-based diagnosis prior to the start.")
+    parser.add_argument("--shorten_diag_pred", type=int, default=0, help="Whether to relabel all diags based on a different window than the exclusion one.")
+    parser.add_argument("--diff_days", type=int, default=None, help="Minimum number of days between measurements needed for diagnosis. Needed when relabeling data-based diagnoses to after start-date.")
+
     parser.add_argument("--remove_low_bmi", type=int, help="Whether to remove individuals with a BMI<18.5", default=0)
     parser.add_argument("--no_prior_diag_start", type=int, help="Whether to only consider cases who has first abnormal after the baseline. Removing those with first data-base abnormal before.", default=0)
     parser.add_argument("--abnorm_type", type=str, required=True, help="[Options for eGFR: age, KDIGO-strict, KDIGO-soft for HbA1c: strong and soft.]. age: \
@@ -143,9 +148,15 @@ if __name__ == "__main__":
                               data_diag_excl=args.data_diag_excl,
                               removed_ids_path=removed_ids_path,
                               out_file_name=out_file_name)
-    data = remove_only_icd_or_atc_diags(data=data,
-                                        removed_ids_path=removed_ids_path,
-                                        out_file_name=out_file_name)
+    if args.data_diag_excl == 0:
+        data = relabel_data_diag(data=data,
+                                 start_pred_date=start_pred_date,
+                                 diff_days=args.diff_days)
+    if args.shorten_diag_pred == 1:
+        data = relabel_data_diag(data=data,
+                                 start_pred_date=end_pred_date,
+                                 diff_days=args.diff_days)
+
     
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Remove prior abnormal                                   #
