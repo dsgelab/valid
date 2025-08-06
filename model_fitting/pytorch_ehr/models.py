@@ -25,20 +25,9 @@ use_cuda = torch.cuda.is_available()
 # Model 1:RNN & Variations: GRU, LSTM, Bi-RNN, Bi-GRU, Bi-LSTM
 class EHR_RNN(EHREmbeddings):
     def __init__(self,input_size,embed_dim, hidden_size, n_layers=1,dropout_r=0.1,cell_type='GRU',bii=False ,time=False, preTrainEmb='',packPadMode = True, surv=False, hlf=False, cls_dim=1):
-        EHREmbeddings.__init__(self,
-                               input_size, 
-                               embed_dim ,
-                               hidden_size, 
-                               n_layers=n_layers, 
-                               dropout_r=dropout_r, 
-                               cell_type=cell_type, 
-                               bii=bii, 
-                               time=time, 
-                               preTrainEmb=preTrainEmb, 
-                               packPadMode=packPadMode, 
-                               surv=surv,
-                               hlf=hlf, 
-                               cls_dim=cls_dim)
+
+       	EHREmbeddings.__init__(self,input_size, embed_dim ,hidden_size, n_layers=n_layers, dropout_r=dropout_r, cell_type=cell_type, bii=bii, time=time , preTrainEmb=preTrainEmb, packPadMode=packPadMode, surv=surv,hlf=hlf, cls_dim=cls_dim)
+
 
     #embedding function goes here 
     def EmbedPatient_MB(self, input, mtd):
@@ -78,20 +67,22 @@ class EHR_RNN(EHREmbeddings):
             else: output = (self.out(hidden[-1])) ## if multiclass will be softmax
                 
         return output.squeeze()
-    
+
 # Model 4: T-LSTM
 class EHR_TLSTM(EHREmbeddings):
-    def __init__(self,input_size,embed_dim, hidden_size, n_layers =1, dropout_r=0.1, cell_type='TLSTM', bii=False, time=True, preTrainEmb=''):
+    def __init__(self,input_size,embed_dim, hidden_size, n_layers =1, dropout_r=0.1, cell_type='TLSTM', bii=False, time=True, preTrainEmb='', final_embed_dim_exp=5):
 
         EHREmbeddings.__init__(self,input_size, embed_dim ,hidden_size, n_layers, dropout_r, cell_type, time , preTrainEmb)
-        EHREmbeddings.__init__(self,input_size, embed_dim ,hidden_size, n_layers=n_layers, dropout_r=dropout_r, cell_type=cell_type, bii=False, time=True , preTrainEmb=preTrainEmb, packPadMode=False)
+       	EHREmbeddings.__init__(self,input_size, embed_dim ,hidden_size, n_layers=n_layers, dropout_r=dropout_r, cell_type=cell_type, bii=False, time=True , preTrainEmb=preTrainEmb, packPadMode=False)
         
         if self.cell_type !='TLSTM' or self.bi != 1:
             print("TLSTM only supports Time aware LSTM cell type and 1 direction. Implementing corrected parameters instead")
         self.cell_type = 'TLSTM'
         self.bi = 1 #enforcing 1 directional
         self.packPadMode = False
-        self.final_head = nn.Sequential(nn.Linear(3, 32), nn.ReLU(), nn.Linear(32,1))
+        self.final_head = nn.Sequential(nn.Linear(3, 2**final_embed_dim_exp), 
+                                        nn.ReLU(), 
+                                        nn.Linear(2**final_embed_dim_exp, 1))
         
     #embedding function goes here 
     def EmbedPatient_MB(self, input, mtd):
@@ -171,6 +162,8 @@ class EHR_MLP(EHREmbeddings):
         else:    
             output = self.sigmoid(self.out(torch.sum(self.sequential(x_in),1)))
         return output.squeeze()
+
+    
 
 # Model 6:Retain Model
 class RETAIN(EHREmbeddings):
