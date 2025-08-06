@@ -12,7 +12,7 @@ import argparse
 # Statistics/Processing
 import scipy.stats as st
 from general_utils import get_date, make_dir, init_logging, Timer
-from clean_utils import remove_severe_value_outliers, remove_single_value_outliers, handle_exact_duplicates, handle_same_day_duplicates
+from clean_utils import remove_severe_value_outliers, remove_single_value_outliers, handle_exact_duplicates, handle_same_day_duplicates, remove_known_outliers
 from processing_utils import get_abnorm_func_based_on_name
 
 def get_parser_arguments():
@@ -24,7 +24,10 @@ def get_parser_arguments():
     parser.add_argument("--max_z", type=int, help="Maximum z-score among all measurements. [dafult: 10]", default=10)
     parser.add_argument("--plot", type=int, help="Minimum reasonable value [dafult: None]", default=1)
     parser.add_argument("--abnorm_type", type=str, default="KDIGO-strict", help="[Options: age, KDIGO-strict, KDIGO-soft]. age: egfr abnormality based on age. KDIGO-stric: <60 for all. KDIGO-soft: <60 but with 60-65 allowed in between abnormal without disrupting the count.")
-
+    parser.add_argument("--keep_last_of_day", help="Keeping last value taken in a day, if at same time will just be random.", default=0)
+    parser.add_argument("--ref_min", type=float, help="Minimum reasonable value [dafult: None]", default=None)
+    parser.add_argument("--ref_max", type=float, help="Maximum reasonable value [dafult: None]", default=None)
+    
     args = parser.parse_args()
     return(args)
 
@@ -35,7 +38,15 @@ if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
     
-    file_name = args.lab_name + "_" + args.abnorm_type + "_" + get_date() 
+    args = get_parser_arguments()
+    file_name = args.lab_name + "_d0"
+    # File names and directories
+    if args.abnorm_type != "":
+         file_name = file_name + "_" + args.abnorm_type
+    if args.keep_last_of_day:
+        file_name = file_name + "_ld"
+    file_name = file_name + "_" + get_date() 
+    
     count_dir = args.res_dir + "counts/"
     make_dir(args.res_dir); make_dir(count_dir)
     
@@ -45,8 +56,13 @@ if __name__ == "__main__":
     #                 Getting data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
     data = pl.DataFrame(pd.read_csv(args.file_path, sep="\t", compression="gzip"))
+    # Data in at least 1% of individuals
+    ages = pl.read_csv("/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_1.0.txt.gz",
+                       separator="\t",
+                       columns=["FINNGENID", "APPROX_BIRTH_DATE"])
+    data = data.filter(pl.col.FINNGENID.is_in(ages["FINNGENID"]))
     # Prep
-    n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Dups exact", "Dups mean", "Outliers", "Outliers_single"]})
+    n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Dups exact", "Dups mean", "Outliers_known", "Outliers", "Outliers_single"]})
     n_indv = len(set(data["FINNGENID"]))
 
     n_indvs_stats.loc[n_indvs_stats.STEP == "Start","N_ROWS_NOW"] = data.shape[0]
@@ -58,10 +74,19 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Processing                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
+    r13_indivs = pl.read_csv("/finngen/library-red/all_allowed_ids_to_sb/finngen_R13_finngenid_actual_inclusion_list.txt", has_header=False)
+    print(f"Removing individuals not in R13: {data.filter(~pl.col.FINNGENID.is_in(r13_indivs["column_1"]))["FINNGENID"].unique().len()}")
+    data = data.filter(pl.col.FINNGENID.is_in(r13_indivs["column_1"]))
+    
     data, n_indvs_stats = handle_exact_duplicates(data=data, 
                                                   n_indvs_stats=n_indvs_stats)
     data, n_indvs_stats = handle_same_day_duplicates(data=data,
-                                                     n_indvs_stats=n_indvs_stats)
+                                                     n_indvs_stats=n_indvs_stats,
+                                                     keep_last_of_day=args.keep_last_of_day)
+    data, n_indvs_stats = remove_known_outliers(data=data, 
+                                                n_indvs_stats=n_indvs_stats, 
+                                                ref_min=args.ref_min, 
+                                                ref_max=args.ref_max)
     data, n_indvs_stats = remove_severe_value_outliers(data=data,
                                                        n_indvs_stats=n_indvs_stats, 
                                                        max_z=args.max_z, 
