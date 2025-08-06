@@ -66,6 +66,7 @@ def get_parser_arguments():
     parser.add_argument("--skip_model_fit", type=int, help="Whether to rerun the final model fitting, or load a prior model fit.", default=0)
     parser.add_argument("--save_csv", type=int, help="Whether to save the eval metrics file. If false can do a rerun on low boots.", default=1)
     parser.add_argument("--n_boots", type=int, help="Number of random samples for bootstrapping of metrics.", default=500)
+    parser.add_argument("--min_batch_cases", type=int, help="Minimum number of cases in a batch", default=0)
 
     args = parser.parse_args()
     return(args)
@@ -79,6 +80,7 @@ if __name__ == "__main__":
     args = get_parser_arguments()
     
     study_name = args.model_name + "_" + args.cell_type + "_" + args.pred_descriptor
+    if args.min_batch_cases>0: study_name += "_min"+str(args.min_batch_cases)
     if args.bii == 1 and args.model_name != "TLSTM": study_name += "_bii"
     if args.time == 1 and args.model_name != "TLSTM": study_name += "_time"
     if args.model_fit_date == "": args.model_fit_date = get_date()
@@ -99,7 +101,8 @@ if __name__ == "__main__":
     train_mbs, valid_mbs, test_mbs = get_mbs_from_files(args.file_path,
                                                         args.file_name_start,
                                                         args.model_name,
-                                                        args.batch_size)
+                                                        args.batch_size,
+                                                        args.min_batch_cases)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Model loding                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #        
@@ -112,7 +115,8 @@ if __name__ == "__main__":
                        "early_stop": args.early_stop,
                        "epochs": args.train_epochs,
                        "model_name": args.model_name,
-                       "eps": args.eps}
+                       "eps": args.eps,
+                       "eval_metric": "logloss"}
         best_params = run_optuna_optim(train=train_mbs, 
                                        valid=valid_mbs, 
                                        test=test_mbs, 
@@ -126,12 +130,22 @@ if __name__ == "__main__":
                                        model_fit_date=args.model_fit_date,
                                        base_params=base_params)
     else:
-        best_params = {'embed_dim_exp': 7, 
-                       'hidden_size_exp': 7, 
-                       'dropout_r': 4,
-                       'L2': 0.0009451300184944492, 
-                       'lr': 8, 
-                       'optimizer': 'adamax'}
+        base_params = {"cell_type": args.cell_type,
+                       "input_size": args.input_size,
+                       "bii": args.bii,
+                       "time": args.time,
+                       "preTrainEmb": args.preTrainEmb,
+                       "early_stop": args.early_stop,
+                       "epochs": args.train_epochs,
+                       "model_name": args.model_name,
+                       "eps": args.eps,
+                       "eval_metric": "logloss"}
+        best_params = {'embed_dim_exp': 11, 
+                       'hidden_size_exp': 11, 
+                       'dropout_r': 1,
+                       'L2': 1e-5, 
+                       'lr': 11, 
+                       'optimizer': 'adagrad'}
 
     if args.skip_model_fit == 0:
         timer = Timer()
@@ -146,7 +160,8 @@ if __name__ == "__main__":
                                 bii=base_params["bii"],
                                 time=base_params["time"],
                                 preTrainEmb=base_params["preTrainEmb"],
-                                input_size=base_params["input_size"])   
+                                input_size=base_params["input_size"],
+                                final_embed_dim_exp=best_params["final_embed_dim_exp"])   
         optimizer = get_torch_optimizer(ehr_model, 
                                         base_params["eps"],
                                         best_params["lr"], 
@@ -155,14 +170,14 @@ if __name__ == "__main__":
         if torch.cuda.is_available(): ehr_model = ehr_model.cuda() 
         try:
             _, _, best_model = epochs_run(50, 
-                          train = train_mbs, 
-                          valid = valid_mbs, 
-                          test = test_mbs, 
-                          model = ehr_model, 
-                          optimizer = optimizer,
-                          model_name = args.model_name, 
-                          early_stop = 10,
-                          model_out=out_model_dir + "final_model")
+                                          train = train_mbs, 
+                                          valid = valid_mbs, 
+                                          test = test_mbs, 
+                                          model = ehr_model, 
+                                          optimizer = optimizer,
+                                          model_name = args.model_name, 
+                                          early_stop = 5,
+                                          model_out=out_model_dir + "final_model")
         except KeyboardInterrupt:
             print(colored('-' * 89, 'green'))
             print(colored('Exiting from training early','green'))
@@ -181,17 +196,17 @@ if __name__ == "__main__":
                             args.file_path_labels,
                             args.goal)
     out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
-    crnt_report = create_report(best_model, out_data, display_scores=["logloss", "aucpr"], metric="logloss")
-    pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
+    # crnt_report = create_report(best_model, out_data, display_scores=["logloss", "aucpr"], metric="logloss")
+    # pickle.dump(crnt_report, open(out_model_dir + "report_" + get_date() + ".pkl", "wb"))  
     
     save_all_report_plots(out_data=out_data,
                           out_plot_path=out_plot_path,
                           out_down_path=out_down_path)
 
-    eval_metrics = get_all_eval_metrics(data=out_data, 
-                                        plot_path=out_plot_path,
-                                        down_path=out_down_path,
-                                        n_boots=args.n_boots,
-                                        train_type="bin")
-    if args.save_csv == 1:
-        eval_metrics.filter(pl.col("F1").is_not_null()).write_csv(out_down_path + "evals_" + get_date() + ".csv", separator=",")
+    # eval_metrics = get_all_eval_metrics(data=out_data, 
+    #                                     plot_path=out_plot_path,
+    #                                     down_path=out_down_path,
+    #                                     n_boots=args.n_boots,
+    #                                     train_type="bin")
+    # if args.save_csv == 1:
+    #     eval_metrics.filter(pl.col("F1").is_not_null()).write_csv(out_down_path + "evals_" + get_date() + ".csv", separator=",")

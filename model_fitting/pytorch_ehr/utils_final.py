@@ -101,36 +101,43 @@ def trainbatches(train_mbs_list,
     ######### training loop
     case_pcts = []
     n_case = []
+    case_fids = set()
     for i, batch in enumerate(train_mbs_list):
         fids, sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor = batch
         case_pcts.append(sum(label_tensor)/len(label_tensor))
         n_case.append(sum(label_tensor))
-        #print(f"cases {label_tensor.sum()} controls {(label_tensor==0).sum()}")
-        output, loss = trainsample(sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor, model, optimizer) ### LR amended Sep 30 2020 to make sure we can change the loss function for survival
+        case_fids = case_fids.union(set([fid for fid, label in zip(fids, label_tensor.cpu().data.view(-1).numpy()) if label==1]))
+        output, loss = trainsample(sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor, model, optimizer) 
         train_loss += loss
         n_iter +=1
         if n_iter % plot_every == 0:
             train_losses.append(train_loss/plot_every)
             train_loss = 0  
-    print(f"train average cases: {(np.mean(case_pcts)*100).round()}% (min N={np.min(n_case)})")
+    print(f"train total cases: {len(case_fids)}")
+    print(f"train average cases: {(np.mean(case_pcts)*100).round(2)}% (min N={np.min(n_case)})")
     ######### validation loop
     n_iter = 0   
     val_loss = 0
     val_losses = []
     case_pcts = []
     n_case = []
+    case_fids = set()
+
     for i, batch in enumerate(val_mbs_list):
         fids, sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor = batch
         #print(f"cases {label_tensor.sum()} controls {(label_tensor==0).sum()}")
         case_pcts.append(sum(label_tensor)/len(label_tensor))
         n_case.append(sum(label_tensor))
+        case_fids = case_fids.union(set([fid for fid, label in zip(fids, label_tensor.cpu().data.view(-1).numpy()) if label==1]))
+
         loss = get_val_loss(sample, label_tensor, seq_l, mtd, ages_tensor, sexs_tensor, model)
         val_loss += loss
         n_iter +=1
         if n_iter % plot_every == 0:
             val_losses.append(val_loss/plot_every)
             val_loss = 0
-    print(f"valid average cases: {(np.mean(case_pcts)*100).round()}% (min N={np.min(n_case)})")
+    print(f"valid total cases: {len(case_fids)}")
+    print(f"valid average cases: {(np.mean(case_pcts)*100).round(2)}% (min N={np.min(n_case)})")
 
     return train_losses, val_losses 
 

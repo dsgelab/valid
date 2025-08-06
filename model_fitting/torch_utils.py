@@ -15,17 +15,17 @@ def read_files(root_dir: str,
     """Read files and create dataloaders."""
 
     train = EHRdataFromPickles(root_dir=root_dir, 
-                                   file=file_name_start+"_train.pkl", 
-                                   sort=True,
-                                   model=model_name)
+                               file=file_name_start+"_train.pkl", 
+                               sort=True,
+                               model=model_name)
     valid = EHRdataFromPickles(root_dir=root_dir, 
-                                   file=file_name_start+"_valid.pkl", 
-                                   sort=True,
-                                   model=model_name)
+                               file=file_name_start+"_valid.pkl", 
+                               sort=True,
+                               model=model_name)
     test = EHRdataFromPickles(root_dir=root_dir, 
-                                   file=file_name_start+"_test.pkl", 
-                                  sort=True,
-                                  model=model_name)
+                              file=file_name_start+"_test.pkl", 
+                              sort=True,
+                              model=model_name)
 
     print(colored("\nSee an example data structure from training data:", 'green'))
     print(train.__getitem__(40, seeDescription = True))
@@ -43,15 +43,17 @@ def create_mbs_from_dataloader(train,
                                valid, 
                                test, 
                                model_name: str,
-                               batch_size: int = 365):
+                               batch_size: int = 365,
+                               min_batch_cases: int=0):
         # packPadMode is used to pack the padded sequences
     if model_name == "RNN": pack_pad = True
     else: pack_pad = False
-
+    
     train_mbs = list(tqdm(EHRdataloader(train, 
                                         batch_size=batch_size, 
                                         packPadMode=pack_pad, 
-                                        shuffle=False)))
+                                        min_batch_cases=min_batch_cases,
+                                        shuffle=True)))
     print (' creating the list of valid minibatches')
     valid_mbs = list(tqdm(EHRdataloader(valid, 
                                         batch_size=batch_size, 
@@ -70,7 +72,8 @@ def create_mbs_from_dataloader(train,
 def get_mbs_from_files(root_dir: str,
                        file_name_start: str,
                        model_name: str,
-                       batch_size: int = 365):   
+                       batch_size: int = 365,
+                        min_batch_cases: int=0):   
     """Read files and create dataloaders."""
     #####Step1. read files and create dataloaders
     train, valid, test = read_files(root_dir = root_dir,
@@ -83,7 +86,8 @@ def get_mbs_from_files(root_dir: str,
                                                                 valid, 
                                                                 test, 
                                                                 model_name,
-                                                                batch_size)
+                                                                batch_size,
+                                                                min_batch_cases)
     
     return train_mbs, valid_mbs, test_mbs
     
@@ -143,7 +147,8 @@ def get_model(model_name,
               bii,
               time,
               preTrainEmb,
-              input_size):
+              input_size,
+              final_embed_dim_exp):
     """Get the model."""
     if model_name == 'RNN': 
         ehr_model = EHR_RNN(input_size=input_size, 
@@ -164,7 +169,8 @@ def get_model(model_name,
                               cell_type= 'TLSTM', #doesn't support normal cell types
                               bii=False, 
                               time=time, 
-                              preTrainEmb=preTrainEmb)  
+                              preTrainEmb=preTrainEmb,
+                             final_embed_dim_exp=final_embed_dim_exp)  
     elif model_name == 'RETAIN': 
         ehr_model = RETAIN(embed_dim=2**embed_dim_exp, 
                            hidden_size=2**hidden_size_exp,

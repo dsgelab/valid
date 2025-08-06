@@ -36,7 +36,8 @@ plt.ion()
 #torch libraries 
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-
+#### Minimum sampler from Maxim
+from MinPosBatchSampler import MinPosBatchSampler
 use_cuda = torch.cuda.is_available()
 #use_cuda=False
 
@@ -181,7 +182,7 @@ class EHRdataFromLoadedPickles(Dataset):
             '''
             print(tabulate([['patient_id', desc['patient_id']], ['label', desc['label']], 
                             ['visit_time', desc['visit_time']], ['visit_codes', desc['visit_codes']]], 
-                           headers=['data_description', 'data'], tablefmt='orgtbl'))
+                            headers=['data_description', 'data'], tablefmt='orgtbl'))
         return sample
 
     def __len__(self):
@@ -319,25 +320,36 @@ def iter_batch2(iterable, samplesize):
     random.shuffle(results)  
     return results
 
+
 class EHRdataloader(DataLoader):
     def __init__(self, dataset, batch_size=128, shuffle=False, sampler=None, batch_sampler=None,
                  num_workers=0, collate_fn=my_collate, pin_memory=False, drop_last=False,
-                 timeout=0, worker_init_fn=None, packPadMode = False , surv=False,multilbl=False,half=False): ### LR Sep 30 20 added surv
-        if shuffle:
-            labels = np.array([fg_list[1] for fg_list in dataset.data])
-            class_counts = np.bincount(labels)
-            #class_weights = 1.0 / class_counts
-            class_weights = np.array([1.0, 1.25])
-            print(class_weights)
-            weights = class_weights[labels]
-            sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
-            DataLoader.__init__(self, dataset, batch_size=batch_size, shuffle=False, sampler=sampler, batch_sampler=None,
-                     num_workers=0, collate_fn=my_collate, pin_memory=False, drop_last=False,
-                     timeout=0, worker_init_fn=None)
+                 timeout=0, worker_init_fn=None, packPadMode = False , surv=False,multilbl=False,half=False, min_batch_cases=0): ### LR Sep 30 20 added surv
+        if min_batch_cases>0:
+            sampler =  MinPosBatchSampler([fg_list[1] for fg_list in dataset.data], batch_size, min_batch_cases)
+            DataLoader.__init__(self, 
+                                dataset, 
+                                shuffle=False, 
+                                sampler=None, 
+                                batch_sampler=sampler,
+                                num_workers=0, 
+                                collate_fn=my_collate, 
+                                pin_memory=False, 
+                                timeout=0, 
+                                worker_init_fn=None)
         else:
-            DataLoader.__init__(self, dataset, batch_size=batch_size, shuffle=False, sampler=None, batch_sampler=None,
-                     num_workers=0, collate_fn=my_collate, pin_memory=False, drop_last=False,
-                     timeout=0, worker_init_fn=None)
+            DataLoader.__init__(self, 
+                                dataset, 
+                                batch_size=batch_size, 
+                                shuffle=False, 
+                                sampler=None, 
+                                batch_sampler=None,
+                                num_workers=0, 
+                                collate_fn=my_collate, 
+                                pin_memory=False, 
+                                drop_last=False,
+                                timeout=0, 
+                                worker_init_fn=None)
         
         self.collate_fn = collate_fn
         global pack_pad
