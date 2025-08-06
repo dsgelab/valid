@@ -60,13 +60,15 @@ if __name__ == "__main__":
     #                 Removing duplicate predictors                           #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     if args.lab_name == "krea" or args.lab_name == "egfr":
-        # krea, egfr
-        labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "3020564"]))
+        # krea, egfr, cystatin c
+        labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "3020564", "3030366"]))
     if args.lab_name == "hba1c":
-        labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3004410"]))
+        labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3004410", "3018251"])) # hba1c and fasting glucose
     if args.lab_name == "alatasat":
         # ALAT, ASATs
         labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3006923", "3013721"]))
+    if args.lab_name == "tsh":
+        labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3009201", "3008486"]))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Stats for labs                                          #
