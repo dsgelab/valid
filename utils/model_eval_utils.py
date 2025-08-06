@@ -132,7 +132,9 @@ def set_metrics(pred_data: pl.DataFrame,
                                        col_name_y=y_cont_pred_col, 
                                        col_name_x_abnorm=y_goal_col, 
                                        prob = (train_type=="bin"))
-        if plot_path: g.savefig(plot_path + subset_name + "_scatter_" + get_date() + "_" + set_names[set] + ".png", dpi=300)
+        if plot_path: 
+            g.savefig(plot_path + subset_name + "_scatter_" + set_names[set] + "_" + y_goal_col + get_date() + ".png", dpi=300)
+            plt.close()
         g, _, _ = plot_observed_vs_predicted_min5(data=set_data, 
                                                   col_name_x=y_cont_goal_col, 
                                                   col_name_y=y_cont_pred_col,
@@ -146,9 +148,12 @@ def set_metrics(pred_data: pl.DataFrame,
                                                   col_name_y=y_cont_pred_col,
                                                   prob=(train_type=="bin"))
         if down_path:
-            g.savefig(down_path + subset_name + "_scatter_min5_" + get_date() +  "_" + set_names[set] + ".png", dpi=300)
-            g_case.savefig(down_path + subset_name + "_scatter_min5_cases_" + get_date() +  "_" + set_names[set] + ".png", dpi=300)
-            g_controls.savefig(down_path + subset_name + "_scatter_min5_controls_" + get_date() +  "_" + set_names[set] + ".png", dpi=300)
+            g.savefig(down_path + subset_name + "_scatter_min5_"+ set_names[set] + "_" + y_goal_col + get_date() + ".png", dpi=300)
+            plt.close()
+            g_case.savefig(down_path + subset_name + "_scatter_min5_cases_" + set_names[set] + "_" + y_goal_col + get_date() + ".png", dpi=300)
+            plt.close()
+            g_controls.savefig(down_path + subset_name + "_scatter_min5_controls_" + set_names[set] + "_" + y_goal_col + get_date() + ".png", dpi=300)
+            plt.close()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Simple stats # # # # # # # # # # # # # # # # # # # # # # 
@@ -237,28 +242,28 @@ def get_all_eval_metrics(data: pl.DataFrame,
     if "y_MEAN_ABNORM" in data.columns and "y_DIAG" in data.columns and "y_MIN_ABNORM" in data.columns and "y_NEXT_ABNORM" in data.columns:
         print("Diag")
         eval_metrics = eval_subset(data=data, 
-                                                      y_pred_col="ABNORM_PREDS", 
-                                                      y_cont_pred_col="ABNORM_PROBS", 
-                                                      y_goal_col="y_DIAG", 
-                                                      y_cont_goal_col="y_MEAN", 
-                                                      plot_path=plot_path, 
-                                                      down_path=down_path, 
-                                                      subset_name="all", 
-                                                      n_boots=n_boots, 
-                                                      train_type=train_type)
+                                   y_pred_col="ABNORM_PREDS", 
+                                   y_cont_pred_col="ABNORM_PROBS", 
+                                   y_goal_col="y_DIAG", 
+                                   y_cont_goal_col="y_MEAN", 
+                                   plot_path=plot_path, 
+                                   down_path=down_path, 
+                                   subset_name="all", 
+                                   n_boots=n_boots, 
+                                   train_type=train_type)
         eval_metrics = eval_metrics.insert_column(3, pl.Series("GOAL", ["y_DIAG"]*eval_metrics.height))
 
         print("\nMean abnorm")
         crnt_eval_metrics = eval_subset(data=data, 
-                                                          y_pred_col="ABNORM_PREDS", 
-                                                          y_cont_pred_col="ABNORM_PROBS", 
-                                                          y_goal_col="y_MEAN_ABNORM", 
-                                                          y_cont_goal_col="y_MEAN", 
-                                                          plot_path=plot_path, 
-                                                          down_path=down_path, 
-                                                          subset_name="all", 
-                                                          n_boots=n_boots, 
-                                                          train_type=train_type)
+                                        y_pred_col="ABNORM_PREDS", 
+                                        y_cont_pred_col="ABNORM_PROBS", 
+                                        y_goal_col="y_MEAN_ABNORM", 
+                                        y_cont_goal_col="y_MEAN", 
+                                        plot_path=plot_path, 
+                                        down_path=down_path, 
+                                        subset_name="all", 
+                                        n_boots=n_boots, 
+                                        train_type=train_type)
         crnt_eval_metrics = crnt_eval_metrics.insert_column(3, pl.Series("GOAL", ["y_MEAN_ABNORM"]*crnt_eval_metrics.height))
         eval_metrics = pl.concat([eval_metrics, crnt_eval_metrics])
 

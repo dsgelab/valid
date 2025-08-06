@@ -30,7 +30,7 @@ def remove_single_value_outliers(data: pl.DataFrame,
     #data = data.join(z_scores.select(["FINNGENID", "Z_indv"]), on="FINNGENID")
     # Outliers
     outliers_high = (data.filter(pl.col("Z_indv")>2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
-    outliers_high = (data.join(outliers_high, on="FINNGENID")# individuals with single severe outliers 
+    outliers_high = (data.join(outliers_high, on="FINNGENID") # individuals with single severe outliers 
                          .filter((pl.col("N_ROW")==1) & (pl.col("Z_indv")>5) & (pl.col("VALUE")>500)))
                          
     outliers_low = (data.filter(pl.col("Z_indv")<-4)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
@@ -109,31 +109,6 @@ def remove_known_outliers(data: pl.DataFrame,
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_known","N_INDVS_REMOVED"] = n_indv-len(set(data["FINNGENID"]))
 
     return(data, n_indvs_stats)
-
-def custom_abnorm(data: pl.DataFrame, 
-                  lab_name: str) -> pl.DataFrame:
-    """Chooses abnormality function based on lab name and applies it to data"""
-    if lab_name == "tsh":
-        data = three_level_abnorm(data)
-    if lab_name == "hba1c": 
-        data = simple_abnorm(data)
-    if lab_name == "ldl":
-        data = simple_abnorm(data)
-    if lab_name == "egfr" or lab_name == "krea": 
-        data = egfr_transform(data)
-        data = simple_abnorm(data)
-    if lab_name == "cyst":
-        data = simple_abnorm(data)
-    if lab_name == "gluc" or lab_name=="fgluc":
-        data = three_level_abnorm(data)  
-    else: data = three_level_abnorm(data)
-
-    try:
-        data = get_abnorm_func_based_on_name(lab_name)(data, "VALUE")
-    except ValueError:
-        data = data.rename({"ABNORM": "ABNORM_CUSTOM"})
-
-    return(data)
 
 def convert_hba1c_data(data: pl.DataFrame, 
                        n_indvs_stats: pd.DataFrame) -> tuple[pl.DataFrame, pd.DataFrame]:
@@ -243,7 +218,7 @@ def handle_same_day_duplicates(data: pl.DataFrame,
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
     logging_print("{:,} measurements at the exact same time with different values".format(len(dups)))
         
-    # Keeping first of exact duplicates
+    # Using mean of duplicates
     if "UNIT" in data.columns:
         data = (data.group_by(["FINNGENID", "DATE", "EVENT_AGE", "SEX", "ABNORM", "UNIT"])
                 .agg(pl.col("VALUE").mean().alias("VALUE")))
@@ -316,7 +291,6 @@ def handle_multi_unit_duplicates(data: pl.DataFrame,
     data = pl.concat([data, dups.select(data.columns)])
     logging_print("After adding back units")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
-
     
     return(data)
 

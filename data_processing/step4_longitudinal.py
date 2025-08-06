@@ -27,13 +27,14 @@ def get_parser_arguments():
     parser.add_argument("--file_name_start", type=str, help="File name of data without the '.parquet' part", required=True)
     parser.add_argument("--icd_data_path", type=str, help="Path to data and labels without the '.parquet' part", required= False)
     parser.add_argument("--atc_data_path", type=str, help="Path to data and labels without the '.parquet' part", required= False)
+    parser.add_argument("--extra_lab_data_path", type=str, help="Path to full kanta lab data.", default="")
 
     parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--preds", type=str, help="List of predictors. Special options: ICD, ATC, LAB. Taking all columns from the respective data file.", 
                         default=["LAB"], nargs="+")
     parser.add_argument("--end_obs_date", type=str, help="Date of the last observation. If not provided, the date of the last observation in the data will be used.", default=None)
-    parser.add_argument("--rep_codes", type=int, default=0, help="Whether to skip months with exact same codes as last.")
+    parser.add_argument("--skip_rep_codes", type=int, default=0, help="Whether to skip months with exact same codes as last.")
     parser.add_argument("--quant_step_size", type=float, default=None, help="Size for even quantile steps.")
     parser.add_argument("--quant_steps", type=int, nargs="+", default=None, help="Steps for quantiles")
 
@@ -101,6 +102,34 @@ def quantile_data(lab_name: str,
     print(data["TEXT"].value_counts().sort("TEXT"))
 
     return data, quant_df
+
+def quantile_all_lab_data(data: pl.DataFrame,
+                          lab_name: str):
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Removing duplicate predictors                           #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    if args.lab_name == "krea" or args.lab_name == "egfr":
+        # krea, egfr
+        data = data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "3020564"]))
+    if args.lab_name == "hba1c":
+        data = data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3004410"]))
+    if args.lab_name == "alatasat":
+        # ALAT, ASATs
+        data = data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3006923", "3013721"]))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Quantiling separately                                   #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    for lab_name in data["LAB_NAME"].unique():
+        crnt_lab_data = data.filter(pl.col.LAB_NAME == lab_name)
+        lab_data, quant_df = quantile_data(lab_name, lab_data, step_size=0.1)
+        if "all_lab_data" in locals():
+            all_lab_data = pl.concat([all_lab_data, lab_data])
+            all_quant_df = pl.concat([all_quant_df, quant_df])
+        else:
+            all_lab_data = lab_data
+            all_quant_df = quant_df
+    return all_lab_data, all_quant_df
 
 def get_icd_data(icd_data_path: str,
                  labels: pl.DataFrame) -> pl.DataFrame:
@@ -182,7 +211,7 @@ def get_list_data(fids: list,
                   code_map: dict,
                   preds: list,
                   end_obs_date=None,
-                  skip_rep_codes=False) -> pl.DataFrame:
+                  skip_skip_rep_codes=False) -> pl.DataFrame:
     if "SEX" in preds:
         sex = (labels.select(["FINNGENID", "SEX"])
                     .with_columns(pl.col.SEX.replace_strict(code_map).alias("SEX_TOKEN")))
@@ -223,7 +252,7 @@ def get_list_data(fids: list,
                 codes = list(set(date_data.get_column("TEXT").to_list()))
             except:
                 codes = date_data.get_column("TEXT").to_list()
-            if (not skip_rep_codes or last_codes != codes):
+            if (not skip_skip_rep_codes or last_codes != codes):
                 last_date = date
                 out_data[fid][4].append([[time_diff], codes])
                 last_codes = codes                
@@ -246,7 +275,7 @@ if __name__ == "__main__":
         res_path_start += "_manualquants"
     else:
         res_path_start += "_quantstep"+str(args.quant_step_size*10)
-    if args.rep_codes == 1:
+    if args.skip_rep_codes == 1:
         res_path_start += "_norep" 
     res_path_start += "_" + get_date() 
         
@@ -257,8 +286,14 @@ if __name__ == "__main__":
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     lab_data, labels = get_data(file_path_start=args.data_path_dir+args.file_name_start, 
-                                goal=args.goal)    
+                                goal=args.goal) 
     lab_data, quant_df = quantile_data(args.lab_name, lab_data, args.quant_step_size, args.quant_steps)
+
+    if args.extra_lab_data_path != "":
+        extra_lab_data = read_file(args.extra_lab_data_path)
+        extra_lab_data = quantile_all_lab_data(extra_lab_data, args.lab_name)
+        extra_lab_data = pl.concat([lab_data, extra_lab_data])   
+
     if "ICD" in args.preds: 
         icd_data = get_icd_data(args.icd_data_path, labels)
     else:
@@ -284,7 +319,7 @@ if __name__ == "__main__":
                                code_map,
                                args.preds,
                                args.end_obs_date,
-                               args.rep_codes)
+                               args.skip_rep_codes)
     pickle.dump(list(train_data.values()), open(res_path_start + "_train.pkl", "wb"), -1)
     test_data = get_list_data(labels.filter(pl.col.SET==2).get_column("FINNGENID").unique(), 
                             all_data, 
@@ -292,7 +327,7 @@ if __name__ == "__main__":
                             code_map,
                                args.preds,
                                args.end_obs_date,
-                               args.rep_codes)
+                               args.skip_rep_codes)
     print(test_data)
     val_data = get_list_data(labels.filter(pl.col.SET==1).get_column("FINNGENID").unique(), 
                             all_data, 
@@ -300,6 +335,6 @@ if __name__ == "__main__":
                             code_map,
                                args.preds,
                                args.end_obs_date,
-                               args.rep_codes)
+                               args.skip_rep_codes)
     pickle.dump(list(val_data.values()), open(res_path_start + "_valid.pkl", "wb"), -1)
     pickle.dump(list(test_data.values()), open(res_path_start + "_test.pkl", "wb"), -1)
