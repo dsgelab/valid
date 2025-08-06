@@ -45,7 +45,7 @@ def get_extract_omop_id_data_parquet(omop_concept_id = "3020564",
     data = (data.filter(pl.col("IS_VALUE_EXTRACTED") == "1")
                 .with_columns(MEASUREMENT_VALUE=pl.col("MEASUREMENT_VALUE_EXTRACTED"),
                               MEASUREMENT_UNIT=None,
-                              MEASUREMENT_VALUE_HARMONIZED=None,
+                              MEASUREMENT_VALUE_HARMONIZED=pl.col("MEASUREMENT_VALUE_EXTRACTED"),
                               MEASUREMENT_UNIT_HARMONIZED=None,
                               TEST_OUTCOME_IMPUTED=None)
                 .drop(["MEASUREMENT_VALUE_EXTRACTED", "IS_VALUE_EXTRACTED"]))
@@ -67,10 +67,9 @@ if __name__ == "__main__":
     args = get_parser_arguments()
     ## Paths
     file_name = args.lab_name + "_" + get_date()
-    log_file_name = args.lab_name + "_" + get_datetime()
     make_dir(args.res_dir)
     ## Logging
-    init_logging(args.res_dir, log_file_name, logger, args)
+    init_logging(args.res_dir, args.lab_name, logger, args)
     
     #### Data processing
     ## Raw data
@@ -78,10 +77,14 @@ if __name__ == "__main__":
                                          columns=["FINNGENID", "SEX", "EVENT_AGE", "TEST_OUTCOME", "TEST_OUTCOME_IMPUTED", "MEASUREMENT_VALUE_HARMONIZED", "MEASUREMENT_UNIT_HARMONIZED", "MEASUREMENT_VALUE", "MEASUREMENT_UNIT", "APPROX_EVENT_DATETIME"])
     extract_data, extracted_info = get_extract_omop_id_data_parquet(omop_concept_id=args.omop)
     # remove rows without values but extracted info from data
-    data = data.filter(~(pl.col("FINNGENID").is_in(extracted_info["FINNGENID"]) & pl.col("APPROX_EVENT_DATETIME").is_in(extracted_info["APPROX_EVENT_DATETIME"]) & pl.col("MEASUREMENT_VALUE").is_null()))
-    # Now we can join
-    extract_data = extract_data.select(data.columns)
-    data = pl.concat([data, extract_data])
+    logging.info("Have " + str(data.height) + " data points for " + str(data["FINNGENID"].unique().len()) + " with value or abnormality.")
+    data = (data
+            .join(extract_data.select("FINNGENID", "APPROX_EVENT_DATETIME", "MEASUREMENT_VALUE"), on=["FINNGENID", "APPROX_EVENT_DATETIME"], how="full", coalesce=True)
+            .with_columns(pl.when((pl.col.MEASUREMENT_VALUE.is_null()&~pl.col.MEASUREMENT_VALUE_right.is_null())).then(pl.col.MEASUREMENT_VALUE_right).otherwise(pl.col.MEASUREMENT_VALUE).alias("MEASUREMENT_VALUE"))
+            .drop("MEASUREMENT_VALUE_right")
+    )
+    logging.info("Total " + str(data.height) + " data points for " + str(data["FINNGENID"].unique().len()) + " individuals after adding extracted data.")
+
     ## Sorting
     data = data.sort(["FINNGENID", "APPROX_EVENT_DATETIME"], descending=True)
     data = data.rename({"APPROX_EVENT_DATETIME": "DATE", "MEASUREMENT_VALUE": "VALUE", "TEST_OUTCOME": "ABNORM", "MEASUREMENT_UNIT": "UNIT", "MEASUREMENT_VALUE_HARMONIZED": "VALUE_FG", "MEASUREMENT_UNIT_HARMONIZED": "UNIT_FG", "TEST_OUTCOME_IMPUTED":"ABNORM_FG"})
