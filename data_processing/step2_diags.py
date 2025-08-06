@@ -12,9 +12,9 @@ import argparse
 from datetime import datetime
 
 
-def get_diag_med_data(diag_regex,
+def get_diag_med_data(diag_regex="",
                       med_regex="",
-                      fg_ver = "R12"):
+                      fg_ver = "R13"):
     """Get medication and diagnosis information based on the diagnosis and medication regex given."""
 
     if fg_ver == "R12":
@@ -25,22 +25,37 @@ def get_diag_med_data(diag_regex,
         raise ValueError("Finngen version must be R12 or R13.")
     timer = Timer()
 
-    if med_regex != "":
+    if diag_regex != "":
+        if med_regex != "":
+            query = f"""SELECT FINNGENID, SOURCE, EVENT_AGE, APPROX_EVENT_DAY, CODE1, CODE2
+                             FROM {table}
+                             WHERE (((SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT", "REIMB") AND REGEXP_CONTAINS(CODE2, "{diag_regex}")) OR 
+                                   (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT") AND REGEXP_CONTAINS(CODE1, "{diag_regex}"))) AND
+                                   (NOT (REGEXP_CONTAINS(CATEGORY, "^ICP") OR REGEXP_CONTAINS(CATEGORY, "^OP") OR REGEXP_CONTAINS(CATEGORY, "^MOP") OR CATEGORY = "None"))) OR
+                                   (SOURCE = "PURCH" AND REGEXP_CONTAINS(CODE1, "{med_regex}"))
+                                   """
+        else:
+            query = f"""SELECT FINNGENID, SOURCE, EVENT_AGE, APPROX_EVENT_DAY, CODE1, CODE2
+                             FROM {table}
+                             WHERE (((SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT", "REIMB") AND REGEXP_CONTAINS(CODE2, "{diag_regex}")) OR 
+                                   (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT") AND REGEXP_CONTAINS(CODE1, "{diag_regex}"))) AND
+                                   (NOT (REGEXP_CONTAINS(CATEGORY, "^ICP") OR REGEXP_CONTAINS(CATEGORY, "^OP") OR REGEXP_CONTAINS(CATEGORY, "^MOP") OR CATEGORY = "None")))
+                                   """
+    elif med_regex != "":
+        print(med_regex)
         query = f"""SELECT FINNGENID, SOURCE, EVENT_AGE, APPROX_EVENT_DAY, CODE1, CODE2
-                         FROM {table}
-                         WHERE (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT", "REIMB") AND REGEXP_CONTAINS(CODE2, "{diag_regex}")) OR 
-                               (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT") AND REGEXP_CONTAINS(CODE1, "{diag_regex}")) OR 
-                               (SOURCE = "PURCH" AND REGEXP_CONTAINS(CODE1, "{med_regex}"))"""
+                             FROM {table}
+                             WHERE (SOURCE = "PURCH" AND REGEXP_CONTAINS(CODE1, "{med_regex}")) 
+                                   """
     else:
-        query = f"""SELECT FINNGENID, SOURCE, EVENT_AGE, APPROX_EVENT_DAY, CODE1, CODE2
-                         FROM {table}
-                         WHERE (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT", "REIMB") AND REGEXP_CONTAINS(CODE2, "{diag_regex}")) OR 
-                               (SOURCE IN ("INPAT", "OUTPAT", "PRIM_OUT") AND REGEXP_CONTAINS(CODE1, "{diag_regex}"))"""
+        raise Exception("Have to either provide diag_regex or med_regex at minimum.")
     diags = query_to_df(query)
+
     # CODE1 is diagnosis and CODE2 symptom
-    diags = diags.unpivot(index=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY"])
+    diags = diags.unpivot(index=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "SOURCE"])
     diags = diags.drop(["variable"]).unique()
     diags = diags.rename({"value":"CODE"})
+    print(diags)
     # Other codes are numbers
     diags = diags.filter(pl.col("CODE").is_not_null())
     diags = diags.filter(pl.col("CODE").str.contains("^[A-Z][0-9]"))
@@ -51,10 +66,11 @@ def get_codes_first(data: pl.DataFrame,
                     crnt_regex: str) -> pl.DataFrame:
     """Get the first occurance of a code for each individual and code."""
     data = data.filter(pl.col("CODE").str.contains(crnt_regex))
-    data = (data
-            .sort(["FINNGENID", "APPROX_EVENT_DAY"], descending=False)
-            .group_by(["FINNGENID", "CODE"])
-            .head(1))
+    data = data.unique()
+    # data = (data
+    #         .sort(["FINNGENID", "APPROX_EVENT_DAY"], descending=False)
+    #         .group_by(["FINNGENID", "CODE"])
+    #         .head(1))
     return(data)
 
 def get_kidney_register_data(fg_ver = "R12"):
@@ -132,7 +148,7 @@ if __name__ == "__main__":
     out_file_path = args.res_dir + args.lab_name + "_" + args.fg_ver + "_" + get_date()
     make_dir(args.res_dir)
     init_logging(args.res_dir, args.lab_name, logger, args)
-
+    
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Exclusion data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
@@ -142,9 +158,6 @@ if __name__ == "__main__":
                                   fg_ver=args.fg_ver)
         icd_excls = (get_codes_first(diags, args.diag_excl_regex)
                      .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
-        if args.lab_name == "egfr":
-            kd_data = get_kidney_register_data(fg_ver=args.fg_ver)
-            icd_excls = pl.concat([icd_excls, kd_data.select(icd_excls.columns)])
         if args.med_excl_regex != "":
             med_excls = (get_codes_first(diags, args.med_excl_regex)
                         .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
@@ -163,7 +176,9 @@ if __name__ == "__main__":
         if args.diag_regex != "": 
             icd_diags = (get_codes_first(all_diags, args.diag_regex)
                          .rename({"APPROX_EVENT_DAY": "DIAG_DATE", "CODE":"DIAG"}))
-            print(icd_diags)
+            if args.lab_name == "egfr":
+                kd_data = get_kidney_register_data(fg_ver=args.fg_ver).rename({"EXCL_DATE": "DIAG_DATE", "EXCL_CODE": "DIAG"})
+                icd_diags = pl.concat([icd_diags, kd_data.select(icd_diags.columns)])
             icd_diags.write_parquet(out_file_path + "_diags.parquet")
         if args.med_regex != "": 
             med_diags = (get_codes_first(all_diags, args.med_regex)
