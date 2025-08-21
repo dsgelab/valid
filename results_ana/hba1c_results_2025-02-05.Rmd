@@ -1,0 +1,66 @@
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data <- tibble::tibble(
+           MODEL=c(rep("age+sex", 5), rep("last value", 5), rep("sumstats", 5), rep("sumstats+ICD", 5), rep("sumstats+ICD+ATC", 5)),
+           SCORE=c(0.429,0.62,0.1,0.79,0.18, 0.82, 0.9, 0.28, 0.80, 0.42, 0.825, 0.9, 0.29, 0.82, 0.43, 0.834, 0.91, 0.30, 0.81, 0.44, NA, NA,  0.31, 0.82, 0.45),
+           SCORE_TYPE=rep(c("Accuracy", "ROC", "Precision", "Recall", "F1"), 5))
+data <- data %>% group_by(SCORE_TYPE) %>% mutate(MODEL_NO=1:5) %>% ungroup()
+data
+```
+
+```{r}
+ggplot(data %>% filter(SCORE_TYPE%in%c("Precision", "Recall", "F1")), aes(x=MODEL_NO, y=SCORE)) +
+    geom_point(size=5, aes(color=MODEL)) +
+    geom_line() +
+   # geom_col(position="dodge", width=0.3) +
+    theme_custom(plot_top_margin=0) +
+    scale_fill_manual(values=custom_colors_brewer(10)) +
+    facet_wrap(~SCORE_TYPE) +
+    scale_y_continuous(labels=function(x){so_formatter(x)}) +
+   # labs(y="Percent of individuals", x="", fill="") +
+     theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.ticks.x=element_blank()) +
+    scale_color_manual(values=custom_colors_brewer(5)) 
+
+ 
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/hba1c_metrics_2025-02-05.pdf", width=10, height=6)
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/hba1c_metrics_2025-02-05.png", width=10, height=6, dpi=600)
+
+```
+
+
+
+```{r}
+data <- tibble::tibble(
+           MODEL=c(rep("age+sex", 3), rep("last value", 3), rep("sumstats", 3), rep("sumstats+ICD", 3)),
+           SCORE=c(0.05, 0.76, 0.098, 0.1556,0.597, 0.25,0.17,0.62,0.266,0.1775,0.6000,0.27),
+           SCORE_TYPE=rep(c("Precision", "Recall", "F1"), 4))
+data <- data %>% group_by(SCORE_TYPE) %>% mutate(MODEL_NO=1:4) %>% ungroup()
+data
+```
+
+```{r}
+ggplot(data %>% filter(SCORE_TYPE%in%c("Precision", "Recall", "F1")), aes(x=MODEL_NO, y=SCORE)) +
+    geom_point(size=5, aes(color=MODEL)) +
+    geom_line() +
+   # geom_col(position="dodge", width=0.3) +
+    theme_custom(plot_top_margin=0) +
+    scale_fill_manual(values=custom_colors_brewer(10)) +
+    facet_wrap(~SCORE_TYPE) +
+    scale_y_continuous(labels=function(x){so_formatter(x)}) +
+   # labs(y="Percent of individuals", x="", fill="") +
+     theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.ticks.x=element_blank()) +
+    scale_color_manual(values=custom_colors_brewer(4)) 
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/hba1c_metrics_noabnorm_2025-02-05.pdf", width=10, height=6)
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/hba1c_metrics_noabnorm_2025-02-05.png", width=10, height=6, dpi=600)
+
+```
+

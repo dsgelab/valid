@@ -1,0 +1,27 @@
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data <- tibble::tibble(
+            CLUSTER=c(1,2,3,1,2,3,1,2,3,1,2,3,1,2,3,1,2,3),
+            LAB=c("eGFR", "eGFR", "eGFR", "cystatin c", "cystatin c", "cystatin c", "TSH", "TSH", "TSH", "HbA1c", "HbA1c", "HbA1c", "Fasting glucose", "Fasting glucose", "Fasting glucose", "LDL", "LDL", "LDL"),
+            VALUE=c(40,25,35,10,10,80,16,26,58,13,22,65,12,27,61,17,29,54)
+)
+data$LAB <- factor(data$LAB, levels=c("eGFR", "HbA1c", "LDL", "TSH", "Fasting glucose", "cystatin c"))
+```
+
+```{r}
+ggplot(data, aes(x=as.factor(CLUSTER), y=VALUE, fill=LAB)) +
+    geom_col(position="dodge", width=0.5) +
+    theme_custom(plot_top_margin=0) +
+    scale_fill_manual(values=custom_colors_brewer(10)) +
+    #facet_wrap(~LAB) +
+    scale_y_continuous(labels=function(x){so_formatter(x)}) +
+    labs(y="Percent of individuals", x="", fill="") +
+    scale_x_discrete(labels=c("Very dense+long", "shorter/less dense", "no longitudinal"))
+  
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/cluster_percentages_2025-02-05.pdf", width=10, height=6)
+ggsave("/home/kira/Dokumente/DSGE/projects/VALID/results/plots/cluster_percentages_2025-02-05.png", width=10, height=6, dpi=600)
+```
+
