@@ -5,31 +5,7 @@ from general_utils import Timer
 import logging
 import numpy as np
 import xgboost as xgb
-from model_eval_utils import get_train_type, get_score_func_based_on_metric
-
-def get_cont_goal_col_name(goal: str,
-                           col_names: list) -> str:
-    """Returns the column name of the continuous goal.
-       If first part of goal name in column names, i.e. y_MEDIAN in the case of y_MEDIAN_ABNORM, returns the first part.
-       Otherwise returns y_MEAN. If not present, certain plotting will be skipped"""
-    # Binary prediction tasks
-    goal_split = goal.split("_")
-    if goal_split[-1] == "ABNORM" or goal == "y_DIAG":
-        new_goal = "_".join(goal_split[0:len(goal_split)-1])
-        if not new_goal in col_names: new_goal = "y_MEAN"
-
-        # If y_MEAN still not in column names, return None
-        if not new_goal in col_names: 
-            print("y_MEAN not in column names. Certain plots cannot be created.")
-            return None
-        else:
-            return(new_goal)
-    # Continuous prediction tasks
-    else:
-        print("Warning: Continuous prediction probably deprecated at the moment.")
-        return None
-    
-
+from model_eval_utils import get_train_type
 
 """Returns the base parameters for the XGBoost model.
 
@@ -71,6 +47,28 @@ def get_xgb_base_params(metric: str,
         base_params.update({"objective": "multi:softprob", "num_class": n_classes, "eval_metric": metric})
     return(base_params)
 
+def get_cont_goal_col_name(goal: str,
+                           col_names: list) -> str:
+    """Returns the column name of the continuous goal.
+       If first part of goal name in column names, i.e. y_MEDIAN in the case of y_MEDIAN_ABNORM, returns the first part.
+       Otherwise returns y_MEAN. If not present, certain plotting will be skipped"""
+    # Binary prediction tasks
+    goal_split = goal.split("_")
+    if goal_split[-1] == "ABNORM" or goal == "y_DIAG":
+        new_goal = "_".join(goal_split[0:len(goal_split)-1])
+        if not new_goal in col_names: new_goal = "y_MEAN"
+
+        # If y_MEAN still not in column names, return None
+        if not new_goal in col_names: 
+            print("y_MEAN not in column names. Certain plots cannot be created.")
+            return None
+        else:
+            return(new_goal)
+    # Continuous prediction tasks
+    else:
+        print("Warning: Continuous prediction probably deprecated at the moment.")
+        return None
+    
 
 """Fits the final XGB model with the best hyperparameters found in the optimization step.
 
@@ -96,7 +94,8 @@ def xgb_final_fitting(best_params: dict,
                       metric: str,
                       low_lr: float,
                       early_stop: int,
-                      n_classes: int=2):
+                      n_classes: int=2,
+                      fit_cv: int=1):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -105,6 +104,8 @@ def xgb_final_fitting(best_params: dict,
     timer = Timer()
     params_fin = {}
     params_fin.update(get_xgb_base_params(metric, low_lr, n_classes))
+    print(params_fin)
+
     params_fin.update(best_params)
     print(params_fin)
     np.random.seed(9234)
@@ -112,13 +113,87 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    X = pl.concat([X_train, X_valid])
+    y = pl.concat([y_train, y_valid])
     if get_train_type(metric) == "bin" or get_train_type(metric) == "multi":
-        clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-        clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+        # Use Option 4 to find best num_boost_round
+        if fit_cv:
+            cv_clf = xgb.cv(params=params_fin, 
+                            dtrain=xgb.DMatrix(X, y), 
+                            early_stopping_rounds=early_stop, 
+                            stratified=True, 
+                            num_boost_round=10000, 
+                            nfold=10,
+                            seed=1241,
+                            shuffle=True,
+                            verbose_eval=100)
+            clf = xgb.XGBClassifier(**params_fin, n_estimators=len(cv_clf))
+            clf.fit(X, y, verbose=100)
+        else:
+            clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
+            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
     else:
         if metric in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]: del params_fin["eval_metric"]
-        clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-        clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+        if fit_cv:
+            cv_clf = xgb.cv(params=params_fin, 
+                            dtrain=xgb.DMatrix(X, y), 
+                            early_stopping_rounds=early_stop, 
+                            #stratified=True, 
+                            num_boost_round=10000, 
+                            nfold=10,
+                            seed=1241,
+                            shuffle=True,
+                            verbose_eval=100)
+            clf = xgb.XGBRegressor(**params_fin, n_estimators=10000)
+            clf.fit(X, y, verbose=100)       
+        else:
+            clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
+            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Logging info                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    logging.info(timer.get_elapsed())
+    # Get the best model
+    logging.info('Final fitting ==============================')
+    logging.info('Number of estimators ---------------------------')
+    if not fit_cv:
+        logging.info(f'best boosting round: {clf.best_iteration}')
+    else:
+        logging.info(len(cv_clf))
+    logging.info('Time ---------------------------')
+    logging.info(timer.get_elapsed())
+    logging.info('Best params ---------------------------')
+    logging.info(f'fixed learning rate: {params_fin["learning_rate"]}')
+
+    logging.info("time taken {timer.get_elapsed()}")
+
+    return(clf)   
+
+from sklearn.linear_model import LogisticRegression
+def elr_final_fitting(best_params: dict, 
+                      X_train: pl.DataFrame, 
+                      y_train: pl.DataFrame,
+                      X_valid: pl.DataFrame,
+                      y_valid: pl.DataFrame):
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Study setup                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    timer = Timer()
+    print(best_params)
+    np.random.seed(9234)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Fitting                                                 #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    X = pl.concat([X_train, X_valid])
+    y = pl.concat([y_train, y_valid])
+    enet = LogisticRegression(penalty="elasticnet", 
+                              solver="saga",
+                              l1_ratio=best_params["l1_ratio"],
+                              C=1/best_params["alpha"],
+                              max_iter=5000)
+    enet.fit(X.to_numpy(), y.to_numpy().ravel())
         
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
@@ -128,12 +203,60 @@ def xgb_final_fitting(best_params: dict,
     logging.info('Final fitting ==============================')
     logging.info('Time ---------------------------')
     logging.info(timer.get_elapsed())
-    logging.info('boosting params ---------------------------')
-    logging.info(f'fixed learning rate: {params_fin["learning_rate"]}')
-    logging.info(f'best boosting round: {clf.best_iteration}')
-    logging.info("time taken {timer.get_elapsed()}")
 
-    return(clf)    
+    return(enet)   
+
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import log_loss
+def lr_fitting(X_train: pl.DataFrame, 
+               y_train: pl.DataFrame,
+               X_valid: pl.DataFrame,
+               y_valid: pl.DataFrame):
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Study setup                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    timer = Timer()
+    np.random.seed(9234)
+    X = pl.concat([X_train, X_valid])
+    y = pl.concat([y_train, y_valid])
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Fitting                                                 #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    lr = LogisticRegression(solver="saga")
+    lr.fit(X.to_numpy(), y.to_numpy().ravel())
+
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Variance explained                                      #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # predicted probabilities
+    probs = lr.predict_proba(X.to_numpy())[:, 1]
+    # log-likelihood of fitted model
+    LL_model = -log_loss(y.to_numpy().ravel(), probs, normalize=False)
+    
+    # same for null model (model without PGS")
+    null_model = LogisticRegression(solver="saga")
+    null_model.fit(X.select("EVENT_AGE", "SEX").to_numpy(), y.to_numpy().ravel())
+    null_probs = null_model.predict_proba(X.select("EVENT_AGE", "SEX").to_numpy())[:, 1]
+    LL_null = -log_loss(y.to_numpy().ravel(), null_probs, normalize=False)
+
+    # McFadden's pseudo-R2
+    R2_McF = 1 - (LL_model / LL_null)
+    print(f"McFadden pseudo-R2 on training set: {R2_McF:.4f}")
+
+    logging.info("McFadden pseudo-R2 over baseline age+sex on training set:"+str(R2_McF))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Logging info                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    logging.info(timer.get_elapsed())
+    # Get the best model
+    logging.info('Final fitting ==============================')
+    logging.info('Time ---------------------------')
+    logging.info(timer.get_elapsed())
+
+    return(lr)   
 
 """Quantile evaluation function for XGBoost models.
     Args:
