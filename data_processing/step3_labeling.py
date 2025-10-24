@@ -2,7 +2,7 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, logging_print, read_file
-from labeling_utils import  log_print_n, label_cases_and_controls,  remove_age_outliers, get_hbb_indvs, get_extra_file_descr
+from labeling_utils import log_print_n, label_cases_and_controls,  remove_age_outliers, get_extra_file_descr, get_bbs_indvs
 from processing_utils import add_set
 
 # Standard stuff
@@ -43,6 +43,7 @@ def get_parser_arguments():
     parser.add_argument("--max_age", type=float, help="Maximum age at prediction time", default=70)
     parser.add_argument("--test_pct", type=float, help="Percentage of test data.", default=0.2)
     parser.add_argument("--valid_pct", type=float, help="Percentage of validation data.", default=0.2)
+    parser.add_argument("--test_bbs", type=str, default=["HELSINKI BIOBANK"], nargs="+", help="Cohorts that should be part of the test set i.e. HELSINKI BIOBANK")
 
     args = parser.parse_args()
 
@@ -108,7 +109,7 @@ if __name__ == "__main__":
     #                 Selecting relevant individuals                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # Selecting in HBB, correct age at end, not dead, and BMI >= 18.5
-    select_fids = get_hbb_indvs(fg_ver=args.fg_ver, end_date=end_pred_date)
+    select_fids = get_bbs_indvs(fg_ver=args.fg_ver, bbs=args.test_bbs)
     n_nothbb = labels.filter(~pl.col("FINNGENID").is_in(select_fids)).height
     test_labels = labels.filter(pl.col("FINNGENID").is_in(select_fids))
     test_labels = test_labels.with_columns(pl.lit(2).alias("SET"))
@@ -122,7 +123,6 @@ if __name__ == "__main__":
     log_print_n(other_labels.filter(pl.col.SET==0), "Train")
 
     labels = pl.concat([other_labels, test_labels])
-    
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Data before start                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

@@ -25,10 +25,10 @@ def get_parser_arguments():
     parser.add_argument("--file_name_start", type=str, help="Name of the data file", required=True)
     parser.add_argument("--file_path_labels", type=str, help="Path to the diagnosis data file", default="")
     parser.add_argument("--file_path_data", type=str, help="Path to the diagnosis data file", default="")
+    parser.add_argument("--file_path_data_2", type=str, help="Path to the diagnosis data file", default="")
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--start_date", type=str, default="", help="Date to filter before")
-    parser.add_argument("--mean_impute", type=int, default=1, help="Whether to impute mean for those with missing.")
-
+    parser.add_argument("--mean_impute", type=int, default=1, help="Whether to impute mean for those with missing. [Options: 0 (No), 1 (Yes some), 2 (Yes all)]")
 
     # Settings
     args = parser.parse_args()
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
     init_logging(args.res_dir, args.lab_name, logger, args)
-    if args.mean_impute == 1:
+    if args.mean_impute >= 1:
         out_file_name = args.file_name_start+"_sumstats_"+get_date()
     else:
         out_file_name = args.file_name_start+"_sumstats_noimpute_"+get_date()
@@ -56,6 +56,9 @@ if __name__ == "__main__":
     
     if args.file_path_labels != "":
         data = read_file(args.file_path_data)
+        if args.file_path_data_2 != "":
+            data_2 = read_file(args.file_path_data_2)
+            data = pl.concat([data, data_2])
         labels = read_file(args.file_path_labels)
     else:
         data = read_file(args.file_path+args.file_name_start+".parquet")
@@ -74,6 +77,7 @@ if __name__ == "__main__":
                 .group_by(["FINNGENID", "SET"])
                 .agg(
                 pl.col.VALUE.mean().alias("MEAN"),
+                pl.lit(0).alias("NO_HISTORY"),
                 pl.col.VALUE.std().alias("SD"),
                 pl.col.VALUE.min().alias("MIN"),
                 pl.col.VALUE.max().alias("MAX"),
@@ -100,33 +104,62 @@ if __name__ == "__main__":
     #                 Mean for those with missing data                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     sumstats_train = sumstats.filter(pl.col.SET==0)
-    if args.file_path_labels=="" and args.mean_impute == 1:
+    if args.file_path_labels=="" and args.mean_impute >= 1:
         # atm this only works for the original data as labels then has empty rows. Otherwise we just dont have data.
         missing_data = data.filter((pl.col.VALUE.is_null())&((pl.len()==1).over("FINNGENID"))).select("FINNGENID", "SET")
-    
-        missing_data = (missing_data.with_columns(
-                            pl.Series("MIN", [sumstats_train["MIN"].mean()]*missing_data.height),
-                            pl.Series("MAX", [sumstats_train["MAX"].mean()]*missing_data.height),
-                            pl.Series("MEAN", [sumstats_train["MEAN"].mean()]*missing_data.height),
-                            pl.Series("SUM", [sumstats_train["SUM"].mean()]*missing_data.height),
-                            pl.Series("ABS_ENERG", [sumstats_train["ABS_ENERG"].mean()]*missing_data.height),
-                            pl.Series("QUANT_25", [sumstats_train["QUANT_25"].mean()]*missing_data.height),
-                            pl.Series("QUANT_75", [sumstats_train["QUANT_75"].mean()]*missing_data.height),
-                            pl.Series("IDX_QUANT_0", [sumstats_train["IDX_QUANT_0"].mean()]*missing_data.height),
-                            pl.Series("IDX_QUANT_100", [sumstats_train["IDX_QUANT_100"].mean()]*missing_data.height),
-                            pl.Series("MIN_LOC", [sumstats_train["MIN_LOC"].mean()]*missing_data.height).cast(pl.Float64),
-                            pl.Series("MAX_LOC", [sumstats_train["MAX_LOC"].mean()]*missing_data.height).cast(pl.Float64),
-                            pl.Series("KURT", [None]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("SKEW", [None]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("SD", [None]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("MEAN_CHANGE", [None]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("SUM_CHANGE", [0]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("LAST_VAL_DATE", [None]*missing_data.height).cast(pl.Date, strict=False),
-                            pl.Series("SEQ_LEN", [0]*missing_data.height).cast(pl.Int64, strict=False),
-                            pl.Series("FIRST_LAST", [0]*missing_data.height).cast(pl.Float64, strict=False),
-                            pl.Series("ABNORM", [0]*missing_data.height).cast(pl.Int64, strict=False),
-                        )
-        )
+
+        if args.mean_impute == 1:
+            missing_data = (missing_data.with_columns(
+                                pl.Series("MIN", [sumstats_train["MIN"].mean()]*missing_data.height),
+                                pl.Series("MAX", [sumstats_train["MAX"].mean()]*missing_data.height),
+                                pl.Series("MEAN", [sumstats_train["MEAN"].mean()]*missing_data.height),
+                                pl.Series("NO_HISTORY", [1]*missing_data.height).cast(pl.Int32, strict=False),
+                                pl.Series("SUM", [sumstats_train["SUM"].mean()]*missing_data.height),
+                                pl.Series("ABS_ENERG", [sumstats_train["ABS_ENERG"].mean()]*missing_data.height),
+                                pl.Series("QUANT_25", [sumstats_train["QUANT_25"].mean()]*missing_data.height),
+                                pl.Series("QUANT_75", [sumstats_train["QUANT_75"].mean()]*missing_data.height),
+                                pl.Series("IDX_QUANT_0", [sumstats_train["IDX_QUANT_0"].mean()]*missing_data.height),
+                                pl.Series("IDX_QUANT_100", [sumstats_train["IDX_QUANT_100"].mean()]*missing_data.height),
+                                pl.Series("MIN_LOC", [sumstats_train["MIN_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                                pl.Series("MAX_LOC", [sumstats_train["MAX_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                                pl.Series("KURT", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SKEW", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SD", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("MEAN_CHANGE", [None]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SUM_CHANGE", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("LAST_VAL_DATE", [None]*missing_data.height).cast(pl.Date, strict=False),
+                                pl.Series("SEQ_LEN", [0]*missing_data.height).cast(pl.Int64, strict=False),
+                                pl.Series("FIRST_LAST", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("ABNORM", [0]*missing_data.height).cast(pl.Int64, strict=False),
+                            )
+            )
+        elif args.mean_impute == 2:
+           missing_data = (missing_data.with_columns(
+                                pl.Series("MIN", [sumstats_train["MIN"].mean()]*missing_data.height),
+                                pl.Series("MAX", [sumstats_train["MAX"].mean()]*missing_data.height),
+                                pl.Series("MEAN", [sumstats_train["MEAN"].mean()]*missing_data.height),
+                                pl.Series("NO_HISTORY", [1]*missing_data.height).cast(pl.Int32, strict=False),
+                                pl.Series("SUM", [sumstats_train["SUM"].mean()]*missing_data.height),
+                                pl.Series("ABS_ENERG", [sumstats_train["ABS_ENERG"].mean()]*missing_data.height),
+                                pl.Series("QUANT_25", [sumstats_train["QUANT_25"].mean()]*missing_data.height),
+                                pl.Series("QUANT_75", [sumstats_train["QUANT_75"].mean()]*missing_data.height),
+                                pl.Series("IDX_QUANT_0", [sumstats_train["IDX_QUANT_0"].mean()]*missing_data.height),
+                                pl.Series("IDX_QUANT_100", [sumstats_train["IDX_QUANT_100"].mean()]*missing_data.height),
+                                pl.Series("MIN_LOC", [sumstats_train["MIN_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                                pl.Series("MAX_LOC", [sumstats_train["MAX_LOC"].mean()]*missing_data.height).cast(pl.Float64),
+                                pl.Series("KURT", [sumstats_train["KURT"].mean()]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SKEW", [sumstats_train["SKEW"].mean()]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SD", [sumstats_train["SD"].mean()]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("MEAN_CHANGE", [sumstats_train["MEAN_CHANGE"].mean()]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("SUM_CHANGE", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("LAST_VAL_DATE", [datetime(2013,1,1)]*missing_data.height).cast(pl.Date, strict=False),
+                                pl.Series("SEQ_LEN", [0]*missing_data.height).cast(pl.Int64, strict=False),
+                                pl.Series("FIRST_LAST", [0]*missing_data.height).cast(pl.Float64, strict=False),
+                                pl.Series("ABNORM", [0]*missing_data.height).cast(pl.Int64, strict=False),
+                            )
+            )
+            
+            
         print(missing_data)
         sumstats = pl.concat([sumstats, missing_data.select(sumstats.columns)])
     print(sumstats)

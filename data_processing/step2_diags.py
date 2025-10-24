@@ -85,41 +85,20 @@ def get_kidney_register_data(fg_ver = "R12"):
         raise ValueError("Finngen version must be R12 or R13.")
 
     kd_data = (pl.read_csv(table, separator="\t")
-                 .select(["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "KIDNEY_DISEASE_DIAGNOSIS_1", "KIDNEY_DISEASE_DIAGNOSIS_2"])
+                 .select(["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "CURRENT_FORM_OF_TREATMENT"])
+                 # All dialysis or transplant
+                 .filter(pl.col.CURRENT_FORM_OF_TREATMENT.str.to_integer(strict=False)<52)
                  .filter(pl.col("EVENT_AGE").is_not_null())
                  # pviot longer to combine diagnosis columns
                  .unpivot(index=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY"], value_name="EXCL_CODE")
                  .drop(["variable"])
                  .rename({"APPROX_EVENT_DAY":"EXCL_DATE"})
-                 .filter(pl.col("EXCL_CODE") != "NA")
                   # string to datetime
                  .with_columns(pl.col("EXCL_DATE").str.to_date("%Y-%m-%d", strict=False),
                                pl.col("EVENT_AGE").cast(pl.Float64))
                 )
 
     return(kd_data)
-
-def get_canc_register_data(fg_ver = "R12"):
-    """Get kidney register data."""
-    if fg_ver == "R12":
-        table = "/finngen/library-red/finngen_R12/cancer_detailed_1.0/data/finngen_R12_cancer_detailed_1.0.txt"
-    elif fg_ver == "R13":
-        table = "/finngen/library-red/finngen_R13/cancer_detailed_1.0/data/finngen_R13E_cancer_detailed_1.0.txt"
-    else:
-        raise ValueError("Finngen version must be R12 or R14.")
-
-    canc_data = (pl.read_csv(table, separator="\t")
-                 .select(["FINNGENID", "EVENT_AGE", "EVENT_YEAR", "topo"])
-                 .filter(pl.col("EVENT_AGE").is_not_null())
-                 .rename({"EVENT_YEAR":"EXCL_DATE",
-                          "topo":"EXCL_CODE"})
-                  # string to datetime
-                 .with_columns(pl.col("EXCL_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False),
-                               pl.col("EVENT_AGE").cast(pl.Float64))
-                )
-
-    return(canc_data)
-
 
 def get_parser_arguments():
     #### Parsing and logging
@@ -173,18 +152,20 @@ if __name__ == "__main__":
         all_diags = get_diag_med_data(diag_regex=args.diag_regex, 
                                       med_regex=args.med_regex, 
                                       fg_ver=args.fg_ver)
-        if args.diag_regex != "": 
-            icd_diags = (get_codes_first(all_diags, args.diag_regex)
-                         .rename({"APPROX_EVENT_DAY": "DIAG_DATE", "CODE":"DIAG"}))
-            if args.lab_name == "egfr":
-                kd_data = get_kidney_register_data(fg_ver=args.fg_ver).rename({"EXCL_DATE": "DIAG_DATE", "EXCL_CODE": "DIAG"})
-                icd_diags = pl.concat([icd_diags, kd_data.select(icd_diags.columns)])
-            icd_diags.write_parquet(out_file_path + "_diags.parquet")
         if args.med_regex != "": 
             med_diags = (get_codes_first(all_diags, args.med_regex)
                          .rename({"APPROX_EVENT_DAY": "MED_DATE", "CODE":"MED"}))
             print(med_diags)
             med_diags.write_parquet(out_file_path + "_meds.parquet")
+        if args.diag_regex != "": 
+            icd_diags = (get_codes_first(all_diags, args.diag_regex)
+                         .rename({"APPROX_EVENT_DAY": "DIAG_DATE", "CODE":"DIAG"}))
+            if args.lab_name == "egfr":
+                kd_data = get_kidney_register_data(fg_ver=args.fg_ver).rename({"EXCL_DATE": "DIAG_DATE", "EXCL_CODE": "DIAG"})
+                kd_data = kd_data.with_columns(pl.lit("KD_REGISTER").alias("SOURCE"))
+                icd_diags = pl.concat([icd_diags, kd_data.select(icd_diags.columns)])
+            icd_diags.write_parquet(out_file_path + "_diags.parquet")
+
 
 
     #Final logging
