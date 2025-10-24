@@ -55,7 +55,8 @@ def read_file(full_file_path,
         return pl.read_parquet(full_file_path)
     else:
         raise ValueError("File type not supported: " + full_file_path)
-    
+
+
 ### Going through all years function created with help of Claude AI
 import os
 from datetime import datetime, timedelta
@@ -76,7 +77,7 @@ def get_all_dates_in_year(year=2025):
 def check_dated_path(file_path_start,
                      year=2025):
     dates = get_all_dates_in_year(year=year)
-    for date in dates:
+    for date in reversed(dates):
         if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
             return True
     return False
@@ -84,7 +85,7 @@ def check_dated_path(file_path_start,
 def get_dated_path(file_path_start,
                      year=2025):
     dates = get_all_dates_in_year(year=year)
-    for date in dates:
+    for date in reversed(dates):
         if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
             return file_path_start+date+"/preds_"+date+".parquet"
     return None
