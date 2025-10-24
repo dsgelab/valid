@@ -4,7 +4,6 @@ sns.set_style('whitegrid')
 from sklearn.metrics import confusion_matrix, roc_auc_score, precision_recall_curve, roc_curve
 import sklearn.metrics as skm   
 import scipy
-
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Util functions                                          #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -32,9 +31,11 @@ def get_plot_names(col_names: list[str],
     if lab_name == "egfr": lab_name = "eGFR"
     if lab_name == "ana": lab_name = "ANA"
     if lab_name == "tsh": lab_name = "TSH"
+    if lab_name == "ldl": lab_name = "LDL"
+    if lab_name_two == "ftri": lab_name_two == "Fasting TG"
     if lab_name_two == "t4": lab_name_two == "fT4"
     if lab_name_two == "cystc": lab_name_two == "Cystatin C"
-    if lab_name_two == "fgluc": lab_name_two = "Fasting glucose"
+    if lab_name_two == "fgluc": lab_name_two = "Fasting Glucose"
     for col_name in col_names:
         if col_name.startswith("S_"): 
             crnt_lab_name = lab_name_two
@@ -123,6 +124,7 @@ def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
     # min and max values with at least 5 counts
     min_val = mean_freqs.filter(pl.col("COUNT") >= 5).select(pl.col("VALUE").min()).to_numpy()[0][0]
     max_val = mean_freqs.filter(pl.col("COUNT") >= 5).select(pl.col("VALUE").max()).to_numpy()[0][0]
+
     # finding mapping
     for row in mean_freqs.rows():
         crnt_value = row[0]
@@ -135,7 +137,7 @@ def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
         else: # No new mapping needed
             value_map[crnt_value] = crnt_value
     # mapping the values
-    newcol = col_data.map_elements(lambda x: value_map.get(x.round(), x.round()), return_dtype=pl.Float64)
+    newcol = col_data.map_elements(lambda x: value_map.get(np.round(x), np.round(x)), return_dtype=pl.Float64)
 
     return(newcol, min_val, max_val)
 
@@ -170,7 +172,7 @@ def plot_observed_vs_predicted(data: pl.DataFrame,
     # Show the joint distribution using kernel density estimation
     if prob:
         data=data.with_columns((pl.col(col_name_y)*100).alias(col_name_y))
-    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y], kind="scatter", hue=data[col_name_x_abnorm])
+    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y], kind="scatter", hue=data[col_name_x_abnorm], marginal_kws=dict(common_norm=False))
 
     g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
     g.ax_joint.set_xlabel("Observed Value")
@@ -278,13 +280,18 @@ from typing import Union
 def feature_importance_plot(importances: list[float], 
                             feature_labels: list[str], 
                             ax=None, 
-                            n_import=10) -> Union[plt.Axes, plt.Figure]:
+                            n_import=10,
+                            model_type: str="xgb") -> Union[plt.Axes, plt.Figure]:
     """ Plot feature importances using SHAP values """
     fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1, figsize=(5, 10))
     sns.barplot(x=importances[0:n_import], y=feature_labels[0:n_import], hue=feature_labels[0:n_import], ax=axis)
     axis.set_title('Feature Importances')
     axis.set_ylabel("")
-    axis.set_xlabel("mean(|SHAP value|)")
+    if model_type == "xgb":
+        axis.set_xlabel("mean(|SHAP value|)")
+    elif model_type == "elr" or model_type == "lr":
+        axis.set_xlabel("odds ratio")
+        axis.set_xlim(left=1)
 
     plt.close()
     
@@ -392,7 +399,6 @@ def plot_calibration(y_true: Iterable[int],
         if fg_down:
             safe_cases, _, _ = round_column_min5(y_probs[y_true==1]*100)
             safe_controls, _, _ = round_column_min5(y_probs[y_true==0]*100)
-            print(safe_cases)
             safe = pl.Series(np.concatenate([safe_cases, safe_controls]))
             labels = pl.concat([pl.Series(y_true[y_true == 1]), pl.Series(y_true[y_true == 0])])
         else:
@@ -405,8 +411,9 @@ def plot_calibration(y_true: Iterable[int],
         ax2.set_xlabel('Predicted Probability')
         ax2.set_ylabel('')
 
-# Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
 
+# Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
+from sklearn.metrics import precision_recall_curve
 def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
     """ Plot Precision-Recall curve.
         Set `compare=True` to use this function to compare classifiers. """
@@ -461,7 +468,8 @@ def create_report_plots(y_true: Iterable[int],
                        train_type="bin", 
                        importance_plot=True, 
                        importances=None, 
-                       confusion_labels=["Controls", "Cases"]) -> plt.Figure:
+                       confusion_labels=["Controls", "Cases"],
+                       model_type: str="xgb") -> plt.Figure:
     """Create a report plot with confusion matrix, ROC and Precision-Recall curves, and calibration plot."""
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Figuring out axes # # # # # # # # # # # # # # # # # # # # 
@@ -496,9 +504,17 @@ def create_report_plots(y_true: Iterable[int],
             
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #
-    if imp_ax is not None: feature_importance_plot(importances=importances["mean_shap"], 
-                                                   feature_labels=importances["labels"], 
-                                                   ax=imp_ax)
+    if imp_ax is not None: 
+        if model_type == "xgb": 
+            feature_importance_plot(importances=importances["mean_shap"], 
+                                    feature_labels=importances["labels"], 
+                                    ax=imp_ax,
+                                    model_type=model_type)
+        if model_type == "elr" or model_type == "lr":
+            feature_importance_plot(importances=importances["odds_ratio"], 
+                                    feature_labels=importances["labels"], 
+                                    ax=imp_ax,
+                                    model_type=model_type)
     confusion_plot(confusion_matrix(y_true, y_preds), labels=confusion_labels, ax=conf_axes)
     if train_type == "bin" or train_type == "multi":
         ## ROC and Precision-Recall curves
@@ -506,7 +522,6 @@ def create_report_plots(y_true: Iterable[int],
         precision_recall_plot(y_true, y_probs, "Test", ax=pr_axes)
         plot_calibration(y_true, y_probs, cal_ax1, cal_ax2, fg_down=fg_down)
     else:
-        
         if fg_down:
             y_true = np.asarray(y_true)
             y_probs = np.asarray(y_probs)
@@ -528,5 +543,3 @@ def create_report_plots(y_true: Iterable[int],
     fig.subplots_adjust(wspace=5)
     fig.tight_layout()
     return fig
-
-    
