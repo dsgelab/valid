@@ -6,10 +6,12 @@ from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
 from input_utils import get_data_and_pred_list   
-from model_fit_utils import xgb_final_fitting, get_xgb_base_params
+from model_fit_utils import xgb_final_fitting, get_xgb_base_params, elr_final_fitting, lr_fitting
+from plot_utils import get_plot_names
 
 # Standard stuff
 import polars as pl
+import numpy as np
 
 import pickle
 import shap
@@ -34,6 +36,8 @@ def get_parser_arguments():
     parser.add_argument("--file_path_labs", type=str, help="Path to Lab data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_sumstats", type=str, help="Path to summary statistics of a single lab value data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_second_sumstats", type=str, help="Path to summary statistics of a another lab value data. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--file_path_pgs1", type=str, help="PGS scores - 1/2", default="")
+    parser.add_argument("--file_path_pgs2", type=str, help="PGS scores - 2/2", default="")
 
     # Extra info
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
@@ -48,6 +52,8 @@ def get_parser_arguments():
                         default=["SUMSTATS", "EVENT_AGE", "SEX"], nargs="+")
     
     # Model fitting parameters
+    parser.add_argument("--model_type", type=str, help="XGBoost or elastic net. [default: 'xgb'] options: xgb or elr ", default="xgb")
+
     parser.add_argument("--lr", type=float, help="Learning rate for hyperparamter optimization, can be high so this goes fast.", default=0.4)
     parser.add_argument("--low_lr", type=float, help="Learning rate for final model training.", default=0.001)
     parser.add_argument("--early_stop", type=int, help="Early stopping for the final fitting round. Currently, early stopping fixed at 5 for hyperparameter optimization.", default=5)
@@ -62,10 +68,12 @@ def get_parser_arguments():
     parser.add_argument("--skip_model_fit", type=int, help="Whether to rerun the final model fitting, or load a prior model fit.", default=0)
     parser.add_argument("--save_csv", type=int, help="Whether to save the eval metrics file. If false can do a rerun on low boots.", default=1)
     parser.add_argument("--n_boots", type=int, help="Number of random samples for bootstrapping of metrics.", default=500)
+    parser.add_argument("--fit_cv", type=int, help="Do final fit on all of training with cross-validation. Otherwise fit only on training with early stopping on validation.", default=500)
 
     args = parser.parse_args()
 
     return(args)
+
 
 if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -75,15 +83,16 @@ if __name__ == "__main__":
     args = get_parser_arguments()
 
     # File names
-    study_name = "xgb_" + str(args.metric) + "_" + args.pred_descriptor
+    study_name = args.model_type + "_" + str(args.metric) + "_" + args.pred_descriptor
     if args.model_fit_date == "": args.model_fit_date = get_date()
 
     out_dir = args.res_dir + study_name + "/"; 
     out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.model_fit_date + "/" 
     out_plot_dir = out_dir + "plots/" + args.model_fit_date + "/"
-    out_plot_path = out_plot_dir + args.lab_name + "_"
-    out_down_dir = out_dir + "down/" + args.model_fit_date + "/"
-    out_down_path = out_down_dir + args.lab_name + "_" + study_name + "_"
+    out_plot_path = out_plot_dir + args.lab_name 
+    out_down_dir = out_dir + "down/" + args.model_fit_date + "/" 
+    out_down_path = out_down_dir + args.lab_name 
+
     init_logging(out_dir, args.lab_name, logger, args)
     make_dir(out_model_dir); make_dir(out_plot_dir); make_dir(out_down_dir)
     
@@ -96,8 +105,11 @@ if __name__ == "__main__":
                                           file_path_sumstats=args.file_path_sumstats, 
                                           file_path_second_sumstats=args.file_path_second_sumstats, 
                                           file_path_labs=args.file_path_labs, 
+                                          file_path_pgs1=args.file_path_pgs1,
+                                          file_path_pgs2=args.file_path_pgs2,
                                           preds=args.preds,
-                                          start_date=args.start_date)
+                                          start_date=args.start_date,
+                                          fill_missing=0 if args.model_type=="xgb" else 1)
     fgids, X_train, y_train, X_valid, y_valid, \
         X_test, y_test, X_all, y_all, X_all_unscaled, \
         dtrain, dvalid, scaler_base = create_xgb_dts(data=data, 
@@ -110,29 +122,56 @@ if __name__ == "__main__":
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if not args.skip_model_fit:
-        base_params = get_xgb_base_params(metric=args.metric, 
-                                          lr=args.lr, 
-                                          n_classes=len(y_train.unique()))
-        best_params = run_optuna_optim(train=dtrain, 
-                                       valid=dvalid, 
-                                       test=None,
-                                       lab_name=args.lab_name, 
-                                       refit=args.refit, 
-                                       time_optim=args.time_optim, 
-                                       n_trials=args.n_trials, 
-                                       study_name=study_name,
-                                       res_dir=args.res_dir,
-                                       model_type="xgb",
-                                       model_fit_date=args.model_fit_date,
-                                       base_params=base_params)
-        logging.info(timer.get_elapsed())
-        model_final = xgb_final_fitting(best_params=best_params, 
-                                        X_train=X_train, y_train=y_train, 
-                                        X_valid=X_valid, y_valid=y_valid, 
-                                        metric=args.metric,
-                                        low_lr=args.low_lr,
-                                        early_stop=args.early_stop,
-                                        n_classes=len(y_train.unique()))
+        if args.model_type=="xgb":
+            base_params = get_xgb_base_params(metric=args.metric, 
+                                              lr=args.lr, 
+                                              n_classes=len(y_train.unique()))
+            best_params = run_optuna_optim(train=dtrain, 
+                                           valid=dvalid, 
+                                           test=None,
+                                           lab_name=args.lab_name, 
+                                           refit=args.refit, 
+                                           time_optim=args.time_optim, 
+                                           n_trials=args.n_trials, 
+                                           study_name=study_name,
+                                           res_dir=args.res_dir,
+                                           model_type="xgb",
+                                           model_fit_date=args.model_fit_date,
+                                           base_params=base_params)
+            logging.info(timer.get_elapsed())
+            model_final = xgb_final_fitting(best_params=best_params,
+                                            X_train=X_train, y_train=y_train, 
+                                            X_valid=X_valid, y_valid=y_valid, 
+                                            metric=args.metric,
+                                            low_lr=args.low_lr,
+                                            early_stop=args.early_stop,
+                                            n_classes=len(y_train.unique()),
+                                            fit_cv=args.fit_cv)
+        elif args.model_type=="elr":
+            best_params = run_optuna_optim(train=(X_train, y_train), 
+                                           valid=(X_valid, y_valid), 
+                                           test=None,
+                                           lab_name=args.lab_name, 
+                                           refit=args.refit, 
+                                           time_optim=args.time_optim, 
+                                           n_trials=args.n_trials, 
+                                           study_name=study_name,
+                                           res_dir=args.res_dir,
+                                           model_type="elr",
+                                           model_fit_date=args.model_fit_date,
+                                          base_params={"eval_metric": args.metric})
+            logging.info(timer.get_elapsed())
+            model_final = elr_final_fitting(best_params=best_params, 
+                                            X_train=X_train, 
+                                            y_train=y_train,
+                                            X_valid=X_valid,
+                                            y_valid=y_valid)
+        elif args.model_type=="lr":
+            model_final = lr_fitting(X_train=X_train, 
+                                     y_train=y_train,
+                                     X_valid=X_valid,
+                                     y_valid=y_valid)
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -143,16 +182,41 @@ if __name__ == "__main__":
         model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
 
     if not args.skip_model_fit:
-        # SHAP explainer for model
-        shap_explainer = shap.TreeExplainer(model_final)
-        train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
-        test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
+        if args.model_type == "xgb":
+            # SHAP explainer for model
+            shap_explainer = shap.TreeExplainer(model_final)
+            train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
+            test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
+            save_importances(top_gain=test_importances,
+                             out_down_path=out_down_path,
+                             study_name=study_name,
+                             lab_name=args.lab_name,
+                             goal=args.goal,
+                             subset="test")
+        elif args.model_type == "elr" or args.model_type == "lr":
+            coefs = model_final.coef_[0]
+            train_importances = pl.DataFrame({
+                                    "labels": get_plot_names(X_cols, args.lab_name, args.lab_name_two),
+                                    "log_odds_coef": coefs,
+                                    "odds_ratio": np.exp(coefs)
+            })
+            train_importances = (train_importances
+                                 .with_columns(pl.when(pl.col.labels=="Last value - eGFR")
+                                               .then(-1*pl.col.log_odds_coef)
+                                               .otherwise(pl.col.log_odds_coef)
+                                               .alias("log_odds_coef"))
+                                )
+            train_importances = train_importances.with_columns(np.exp(pl.col.log_odds_coef).alias("odds_ratio"))
+            train_importances = train_importances.sort("odds_ratio", descending=True)
+            test_importances = train_importances
+    
         save_importances(top_gain=train_importances,
                          out_down_path=out_down_path,
+                         study_name=study_name,
+                         lab_name=args.lab_name,
+                         goal=args.goal,
                          subset="train")
-        save_importances(top_gain=test_importances,
-                         out_down_path=out_down_path,
-                         subset="test")
+
         # Model predictions
         out_data = get_out_data(data=data, 
                                 model_final=model_final, 
@@ -162,21 +226,26 @@ if __name__ == "__main__":
                                 lab_name=args.lab_name,
                                 goal=args.goal,
                                 abnorm_extra_choice=args.abnorm_extra_choice)
+        out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     else:
-        train_importances = pl.read_csv(out_down_path + "shap_importance_train_" + args.model_fit_date + ".csv")
-        test_importances = pl.read_csv(out_down_path + "shap_importance_test_" + args.model_fit_date + ".csv")
-        out_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
-
+        if args.model_type == "xgb":
+            train_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_train_" + get_date() + ".csv")
+            test_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_test_" + get_date() + ".csv")
+        out_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
+        out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # #                 Plotting                                                #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #         
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     save_all_report_plots(out_data=out_data,
+                          out_plot_path=out_plot_path,
+                          out_down_path=out_down_path,
+                          study_name=study_name,
                           train_importances=train_importances,
                           valid_importances=train_importances,
                           test_importances=test_importances,
-                          out_plot_path=out_plot_path,
-                          out_down_path=out_down_path,
-                          train_type=get_train_type(args.metric))
+                          train_type=get_train_type(args.metric),
+                          model_type=args.model_type,
+                          fit_cv=args.fit_cv)
 
