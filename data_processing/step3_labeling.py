@@ -2,8 +2,7 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, logging_print, read_file
-from labeling_utils_new import get_lab_data, log_print_n, label_cases_and_controls,  remove_age_outliers
-from diag_utils import relabel_data_diag
+from labeling_utils import  log_print_n, label_cases_and_controls,  remove_age_outliers, get_hbb_indvs, get_extra_file_descr
 from processing_utils import add_set
 
 # Standard stuff
@@ -48,46 +47,6 @@ def get_parser_arguments():
     args = parser.parse_args()
 
     return(args)
-
-def get_hbb_indvs(fg_ver="R13",
-                          end_date=datetime(2023, 1, 1)) -> pl.Series:
-    """Selecting individuals in FinnGen that are in Helsinki Biobank, not dead before end date."""
-
-    # Read in the minimum data file
-    if fg_ver == "R12" or fg_ver == "r12":
-        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
-    elif fg_ver == "R13" or fg_ver == "r13":        
-        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.txt.gz"
-    min_data = pl.read_csv(minimum_file_name, 
-                           separator="\t",
-                           columns=["FINNGENID",  "COHORT"])
-    # Filtering
-    select_fids = (min_data
-                   .filter(
-                       # In Helsinki Biobank
-                       (pl.col.COHORT == "HELSINKI BIOBANK") 
-                   )
-                   .get_column("FINNGENID")
-    )
-    return(select_fids)
-
-
-def get_extra_file_descr(start_pred_date: pl.Date,
-                         end_pred_date: pl.Date,
-                         months_buffer: int,
-                         test_version: str)-> str:
-    extra = "test" + test_version
-    if start_pred_date == datetime(2022, 6, 1) and end_pred_date == datetime(2022, 12, 31):
-        extra += "_end2022"
-    elif start_pred_date == datetime(2022, 1, 1) and end_pred_date == datetime(2022, 12, 31):
-        extra += "_2022"
-    elif start_pred_date == datetime(2022, 1, 1) and end_pred_date == datetime(2024, 12, 31):
-        extra += "_2022t2024"
-    else:
-        raise("Please description of this prediction time period to the function 'get_extra_file_descr'.")
-    if months_buffer != 0:
-        extra += "_w" + str(months_buffer)
-    return(extra)
 
 
 if __name__ == "__main__":
