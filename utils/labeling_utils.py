@@ -36,8 +36,8 @@ def add_ages(data: pl.DataFrame,
     return(data.drop("APPROX_BIRTH_DATE"))
 
 
-def get_hbb_indvs(fg_ver="R13",
-                          end_date=datetime(2023, 1, 1)) -> pl.Series:
+def get_bbs_indvs(fg_ver="R13",
+                   bbs=["HELSINKI BIOBANK"]) -> pl.Series:
     """Selecting individuals in FinnGen that are in Helsinki Biobank, not dead before end date."""
 
     # Read in the minimum data file
@@ -52,7 +52,7 @@ def get_hbb_indvs(fg_ver="R13",
     select_fids = (min_data
                    .filter(
                        # In Helsinki Biobank
-                       (pl.col.COHORT == "HELSINKI BIOBANK") 
+                       (pl.col.COHORT.is_in(bbs))
                    )
                    .get_column("FINNGENID")
     )
