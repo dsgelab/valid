@@ -24,11 +24,7 @@ def remove_single_value_outliers(data: pl.DataFrame,
     data = (data.with_columns(
                     ((pl.col("VALUE") - pl.col("VALUE").mean().over("FINNGENID")) /
                      pl.col("VALUE").std().over("FINNGENID")).alias("Z_indv")))
-    # with warnings.catch_warnings(action="ignore"):
-    #     z_scores = (data.group_by("FINNGENID", maintain_order=True)
-    #                 .agg(pl.col("VALUE").map_elements(lambda group_values: st.zscore(group_values.to_numpy())).alias("Z_indv").explode()))
-    #     print(z_scores)
-    #data = data.join(z_scores.select(["FINNGENID", "Z_indv"]), on="FINNGENID")
+
     # Outliers
     outliers_high = (data.filter(pl.col("Z_indv")>2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
     outliers_high = (data.join(outliers_high, on="FINNGENID")# individuals with single severe outliers 
@@ -37,13 +33,99 @@ def remove_single_value_outliers(data: pl.DataFrame,
     outliers_low = (data.filter(pl.col("Z_indv")<-4)
                         .group_by("FINNGENID")
                         .agg(pl.len().alias("N_ROW")))
-    outliers_low = (data.join(outliers_low, on="FINNGENID")
-                        .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")<53)))
+    outliers_low = (data.join(outliers_low, on=["FINNGENID", "DATE"])
+                        .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")<50)))
     outliers = pl.concat([outliers_high, outliers_low])
-    print(outliers)
     # Remove
     data = data.filter(~pl.col("FINNGENID").is_in(outliers["FINNGENID"]))
     data = data.drop("Z_indv")
+
+import polars as pl
+import pandas as pd
+from typing import Tuple
+
+def remove_single_value_outliers(data: pl.DataFrame, 
+                                n_indvs_stats: pd.DataFrame) -> Tuple[pl.DataFrame, pd.DataFrame]:
+    """
+    Remove single severe outliers from individual value distributions.
+    This is geared towards eGFR but can be adapted for other lab values.
+    
+    Args:
+        data: Polars DataFrame with columns FINNGENID, VALUE, DATE
+        n_indvs_stats: Pandas DataFrame for tracking statistics
+    
+    Returns:
+        Tuple of (cleaned_data, updated_stats)
+    """
+    
+    # Calculate Z-scores for each individual's value distribution
+    data = data.with_columns(
+        ((pl.col("VALUE") - pl.col("VALUE").mean().over("FINNGENID")) /
+         pl.col("VALUE").std().over("FINNGENID")).alias("Z_indv")
+    )
+    
+    # Find high outliers - individuals who have only 1 measurement with Z > 2.5
+    high_outlier_candidates = (
+        data
+        .filter(pl.col("Z_indv") > 2.5)
+        .group_by("FINNGENID")
+        .agg(pl.len().alias("N_HIGH_OUTLIERS"))
+        .filter(pl.col("N_HIGH_OUTLIERS") == 1)  # Only individuals with single high outlier
+    )
+    
+    # Get the actual outlier rows that meet all criteria
+    outliers_high = (
+        data
+        .join(high_outlier_candidates, on="FINNGENID", how="inner")
+        .filter(
+            (pl.col("Z_indv") > 5) & 
+            (pl.col("VALUE") > 175)
+        )
+        .select(["FINNGENID", "DATE", "VALUE", "Z_indv"])
+    )
+    
+    # Find low outliers - individuals who have only 1 measurement with Z < -4
+    low_outlier_candidates = (
+        data
+        .filter(pl.col("Z_indv") < -4)
+        .group_by("FINNGENID")
+        .agg(pl.len().alias("N_LOW_OUTLIERS"))
+        .filter(pl.col("N_LOW_OUTLIERS") == 1)  # Only individuals with single low outlier
+    )
+    
+    # Get the actual outlier rows that meet all criteria
+    outliers_low = (
+        data
+        .join(low_outlier_candidates, on="FINNGENID", how="inner")
+        .filter(
+            (pl.col("Z_indv") < -4) &
+            (pl.col("VALUE") < 50)
+        )
+        .select(["FINNGENID", "DATE", "VALUE", "Z_indv"])
+    )
+    
+    # Combine outliers
+    outliers = pl.concat([outliers_high, outliers_low])
+    
+    # Remove outlier rows from data (not entire individuals unless they only have outlier values)
+    if outliers.height > 0:
+        # Create a unique identifier for rows to remove
+        outliers_to_remove = outliers.select([
+            "FINNGENID", "DATE", "VALUE"
+        ])
+        
+        # Remove specific rows, not entire individuals
+        data = (
+            data
+            .join(
+                outliers_to_remove, 
+                on=["FINNGENID", "DATE", "VALUE"], 
+                how="anti"
+            )
+            .drop("Z_indv")
+        )
+    else:
+        data = data.drop("Z_indv")
 
     # Stats   
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_single","N_ROWS_NOW"] = data.height
@@ -223,13 +305,11 @@ def handle_same_day_duplicates(data: pl.DataFrame,
     if data.schema["DATE"]==pl.Datetime:
         data = data.with_columns(pl.col.DATE.dt.date().alias("DATE_SHORT"))
     else:
-        print(data)
         data = data.with_columns(
                     pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d %H:%M:%S", strict=False).dt.date()
                     .fill_null(pl.col.DATE.cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False))
                     .alias("DATE_SHORT")
         )
-        print(data)
 
     dups = data.filter(data.select(["FINNGENID", "DATE_SHORT"]).is_duplicated())
     logging_print("{:,} measurements on the same day".format(len(dups)))
@@ -250,7 +330,6 @@ def handle_same_day_duplicates(data: pl.DataFrame,
                     .agg(pl.col("VALUE").mean().alias("VALUE")))
         data = data.rename({"DATE_SHORT": "DATE"})
     else:
-        print(data)
         # Taking last of days
         data = (data
                   .sort("FINNGENID", "DATE")
@@ -259,7 +338,6 @@ def handle_same_day_duplicates(data: pl.DataFrame,
                )
     logging_print("After removing exact duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
-    print(data)
 
     # Stats
     n_indvs_stats.loc[n_indvs_stats.STEP == "Dups mean","N_ROWS_NOW"] = data.height

@@ -1,6 +1,9 @@
 
 import seaborn as sns
 sns.set_style('whitegrid')
+from sklearn.metrics import confusion_matrix, roc_auc_score, precision_recall_curve, roc_curve
+import sklearn.metrics as skm   
+import scipy
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Util functions                                          #
@@ -27,6 +30,10 @@ def get_plot_names(col_names: list[str],
     new_names = []
     if lab_name == "hba1c": lab_name = "HbA1c"
     if lab_name == "egfr": lab_name = "eGFR"
+    if lab_name == "ana": lab_name = "ANA"
+    if lab_name == "tsh": lab_name = "TSH"
+    if lab_name_two == "t4": lab_name_two == "fT4"
+    if lab_name_two == "cystc": lab_name_two == "Cystatin C"
     if lab_name_two == "fgluc": lab_name_two = "Fasting glucose"
     for col_name in col_names:
         if col_name.startswith("S_"): 
@@ -37,8 +44,11 @@ def get_plot_names(col_names: list[str],
         if col_name.split("_")[0] in kanta_omop_map.keys():
             if "QUANT" in col_name:
                 new_name = col_name.split("_")[1].replace("QUANT", "") + "% Quant - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
+                
             else:
                 new_name = col_name.split("_")[1].capitalize() + " - " + kanta_omop_map[col_name.split("_")[0]].split("[")[0]
+            if len(kanta_omop_map[col_name.split("_")[0]].split("]")) > 1:
+                new_name += kanta_omop_map[col_name.split("_")[0]].split("]")[1]
         else:
             if col_name.startswith("QUANT"):
                 new_name = col_name.split("_")[1] + "% Quant - " + crnt_lab_name
@@ -81,13 +91,15 @@ def get_plot_names(col_names: list[str],
             elif col_name == "SD":
                 new_name = "Standard deviation - " + crnt_lab_name
             elif col_name == "ABS_ENERG":
-                new_name = "Absolute energy - " + lab_name_two
+                new_name = "Absolute energy - " + crnt_lab_name
             elif col_name == "SKEW":
-                new_name = "Skew - " + lab_name_two
+                new_name = "Skew - " + crnt_lab_name
             elif col_name == "KURT":
-                new_name = "Kurtosis - " + lab_name_two
+                new_name = "Kurtosis - " + crnt_lab_name
             elif col_name == "SEQ_LEN":
-                new_name = "Number of measurements - " + lab_name_two
+                new_name = "Number of measurements - " + crnt_lab_name
+            elif col_name == "SUM_CHANGE":
+                new_name = "Sum of change - " + crnt_lab_name
             elif col_name == "YEAR":
                 new_name = "Year"
             else:
@@ -123,7 +135,7 @@ def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
         else: # No new mapping needed
             value_map[crnt_value] = crnt_value
     # mapping the values
-    newcol = col_data.map_elements(lambda x: value_map.get(x, x), return_dtype=pl.Float64)
+    newcol = col_data.map_elements(lambda x: value_map.get(x.round(), x.round()), return_dtype=pl.Float64)
 
     return(newcol, min_val, max_val)
 
@@ -351,10 +363,11 @@ def plot_calibration(y_true: Iterable[int],
     n_cntrls = np.array([(y_true[np.logical_and(y_probs > bins[b-1], y_probs <= bins[b])]==0).sum() for b in range(1,len(bins))])
     
     if fg_down:
-        pred = pred[np.logical_and(n_cases>=5, n_cntrls>=5)]
-        obs = obs[np.logical_and(n_cases>=5, n_cntrls>=5)]
-        ci = ci[np.logical_and(n_cases>=5, n_cntrls>=5)]
-        sizes = sizes[np.logical_and(n_cases>=5, n_cntrls>=5)]
+        valid_bins = np.logical_and(n_cases >= 5, n_cntrls >= 5)
+        pred = pred[valid_bins]
+        obs = obs[valid_bins]
+        ci = ci[valid_bins]
+        sizes = sizes[valid_bins]
     if not compare:
         sns.lineplot(x=pred, y=obs, ax=ax1, c="k", label=label)
         ax1.scatter(y_probs.mean(), y_true.mean(), c='r', ec='w', s=80)
@@ -377,8 +390,9 @@ def plot_calibration(y_true: Iterable[int],
 
     if not ax2 is None:
         if fg_down:
-            safe_cases, _, _ = round_column_min5(y_probs[y_true==1].copy()*100)
-            safe_controls, _, _ = round_column_min5( y_probs[y_true==0].copy()*100)
+            safe_cases, _, _ = round_column_min5(y_probs[y_true==1]*100)
+            safe_controls, _, _ = round_column_min5(y_probs[y_true==0]*100)
+            print(safe_cases)
             safe = pl.Series(np.concatenate([safe_cases, safe_controls]))
             labels = pl.concat([pl.Series(y_true[y_true == 1]), pl.Series(y_true[y_true == 0])])
         else:
@@ -459,7 +473,7 @@ def create_report_plots(y_true: Iterable[int],
     cal_ax2 = None
     imp_ax = None
     # Fining correct settings, depending on whether we have importance plot
-    if train_type == "bin":
+    if train_type == "bin" or train_type == "multi":
         if importance_plot and importances is not None:
             fig, (row_1, row_2, row_3) = plt.subplots(3, 2, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1, 0.5]})
             imp_ax, roc_axes = row_1[0], row_1[1]
@@ -486,7 +500,7 @@ def create_report_plots(y_true: Iterable[int],
                                                    feature_labels=importances["labels"], 
                                                    ax=imp_ax)
     confusion_plot(confusion_matrix(y_true, y_preds), labels=confusion_labels, ax=conf_axes)
-    if train_type == "bin":
+    if train_type == "bin" or train_type == "multi":
         ## ROC and Precision-Recall curves
         roc_plot(y_true, y_probs, "Test", ax=roc_axes)
         precision_recall_plot(y_true, y_probs, "Test", ax=pr_axes)
@@ -515,16 +529,4 @@ def create_report_plots(y_true: Iterable[int],
     fig.tight_layout()
     return fig
 
-        
-
-###################### Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
-import timeit
-import pickle
-import sys
-from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, precision_recall_curve, roc_curve, accuracy_score
-from sklearn.exceptions import NotFittedError
-
-import scipy
-
-        
-import sklearn.metrics as skm   
+    

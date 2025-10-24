@@ -56,6 +56,39 @@ def read_file(full_file_path,
     else:
         raise ValueError("File type not supported: " + full_file_path)
     
+### Going through all years function created with help of Claude AI
+import os
+from datetime import datetime, timedelta
+
+def get_all_dates_in_year(year=2025):
+    """Generate all dates in the given year as YYYY-MM-DD strings"""
+    start_date = datetime(year, 1, 1)
+    end_date = datetime(year, 12, 31)
+    
+    dates = []
+    current_date = start_date
+    while current_date <= end_date:
+        dates.append(current_date.strftime("%Y-%m-%d"))
+        current_date += timedelta(days=1)
+    
+    return dates
+
+def check_dated_path(file_path_start,
+                     year=2025):
+    dates = get_all_dates_in_year(year=year)
+    for date in dates:
+        if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
+            return True
+    return False
+
+def get_dated_path(file_path_start,
+                     year=2025):
+    dates = get_all_dates_in_year(year=year)
+    for date in dates:
+        if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
+            return file_path_start+date+"/preds_"+date+".parquet"
+    return None
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Plotting                                                #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
