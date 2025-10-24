@@ -15,30 +15,6 @@ matplotlib.use("Agg")
 sns.set_style("whitegrid")
 # Logging and input
 import logging
-from typing import tuple
-
-def remove_single_value_outliers(data: pl.DataFrame, 
-                                 n_indvs_stats: pd.DataFrame) -> tuple[pl.DataFrame, pd.DataFrame]:
-    """This is geared towards eGFR"""
-    # Z-scores for each individuals value distributions
-    data = (data.with_columns(
-                    ((pl.col("VALUE") - pl.col("VALUE").mean().over("FINNGENID")) /
-                     pl.col("VALUE").std().over("FINNGENID")).alias("Z_indv")))
-
-    # Outliers
-    outliers_high = (data.filter(pl.col("Z_indv")>2.5)).group_by("FINNGENID").agg(pl.len().alias("N_ROW"))
-    outliers_high = (data.join(outliers_high, on="FINNGENID")# individuals with single severe outliers 
-                         .filter((pl.col("N_ROW")==1) & (pl.col("Z_indv")>5) & (pl.col("VALUE")>500)))
-                         
-    outliers_low = (data.filter(pl.col("Z_indv")<-4)
-                        .group_by("FINNGENID")
-                        .agg(pl.len().alias("N_ROW")))
-    outliers_low = (data.join(outliers_low, on=["FINNGENID", "DATE"])
-                        .filter((pl.col("N_ROW")==1) & (pl.col("VALUE")<50)))
-    outliers = pl.concat([outliers_high, outliers_low])
-    # Remove
-    data = data.filter(~pl.col("FINNGENID").is_in(outliers["FINNGENID"]))
-    data = data.drop("Z_indv")
 
 import polars as pl
 import pandas as pd
@@ -134,7 +110,7 @@ def remove_single_value_outliers(data: pl.DataFrame,
     n_indvs_stats.loc[n_indvs_stats.STEP == "Outliers_single","N_INDVS_REMOVED"] = 0
 
     return(data, n_indvs_stats)
-
+    
 def remove_severe_value_outliers(data: pl.DataFrame, 
                                  n_indvs_stats: pd.DataFrame,
                                  max_z: float, 
@@ -152,7 +128,7 @@ def remove_severe_value_outliers(data: pl.DataFrame,
     # Make sure not to include single extreme outliers with the value quant. I.e. LDL had one such individual completely skewing the upper box.
     # Log with plots
     if plot:
-        if data.height > 1000000:
+        if data.height > 10000000000:
             subset_data = data.sample(1000000)
         else:
             subset_data = data
@@ -199,10 +175,35 @@ def remove_known_outliers(data: pl.DataFrame,
 
     return(data, n_indvs_stats)
 
+def custom_abnorm(data: pl.DataFrame, 
+                  lab_name: str) -> pl.DataFrame:
+    """Chooses abnormality function based on lab name and applies it to data"""
+    if lab_name == "tsh":
+        data = three_level_abnorm(data)
+    if lab_name == "hba1c": 
+        data = simple_abnorm(data)
+    if lab_name == "ldl":
+        data = simple_abnorm(data)
+    if lab_name == "egfr" or lab_name == "krea": 
+        data = egfr_transform(data)
+        data = simple_abnorm(data)
+    if lab_name == "cyst":
+        data = simple_abnorm(data)
+    if lab_name == "gluc" or lab_name=="fgluc":
+        data = three_level_abnorm(data)  
+    else: data = three_level_abnorm(data)
+
+    try:
+        data = get_abnorm_func_based_on_name(lab_name)(data, "VALUE")
+    except ValueError:
+        data = data.rename({"ABNORM": "ABNORM_CUSTOM"})
+
+    return(data)
+
 def convert_hba1c_data(data: pl.DataFrame, 
                        n_indvs_stats: pd.DataFrame) -> tuple[pl.DataFrame, pd.DataFrame]:
     """Converting % to mmol/mol, assuming all missing now is mmol/mol and rounding values.
-       Wrong units are very likely to get removed in a later step."""
+       Wrong units are very likely to get removed in a later step. (currently not working 7.10.25"""
     data = data.with_columns([pl.when(pl.col("UNIT") == "%")
                                .then(10.93*pl.col("VALUE")-23.50)
                                .otherwise(pl.col("VALUE"))
@@ -222,6 +223,9 @@ def get_main_unit_data(data: pl.DataFrame,
     n_indvs_stats.loc[n_indvs_stats.STEP == "Unit","N_ROWS_REMOVED"] = n_row_remove
     # Removing
     data = data.filter(pl.col("UNIT") == main_unit)
+    logging_print("After removing other units")
+    logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
+
     # Stats
     n_indv_remove = abs(len(set(data["FINNGENID"]))-n_indv)
     n_indvs_stats.loc[n_indvs_stats.STEP == "Unit","N_INDVS_REMOVED"] = n_indv_remove
@@ -241,7 +245,7 @@ def handle_missing_values(data: pl.DataFrame,
     # Stats
     n_indv = len(set(data["FINNGENID"]))
     if fill_missing:
-        logging_print(f"Number of missing rows with abnorm being filled: {data.filter((pl.col('VALUE').is_null()) & (pl.col('ABNORM').is_not_null())).height}")
+        logging_print(f"Number of missing rows with abnorm being filled: {data.filter((pl.col("VALUE").is_null()) & (pl.col("ABNORM").is_not_null())).height}")
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         #                 Replacing missing                                       #
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #          
@@ -314,7 +318,7 @@ def handle_same_day_duplicates(data: pl.DataFrame,
     dups = data.filter(data.select(["FINNGENID", "DATE_SHORT"]).is_duplicated())
     logging_print("{:,} measurements on the same day".format(len(dups)))
     dups = data.filter(data.select(["FINNGENID", "DATE"]).is_duplicated())
-    logging_print("{:,} measurements at the exact same time with different values".format(len(dups)))
+    logging_print("{:,} measurements at the exact same time".format(len(dups)))
 
     if keep_last_of_day == 0:
         # Averaging
@@ -336,7 +340,7 @@ def handle_same_day_duplicates(data: pl.DataFrame,
                   .filter((pl.col("DATE")==pl.col("DATE").last()).over("FINNGENID", "DATE_SHORT"))
                   .drop("DATE").rename({"DATE_SHORT": "DATE"})
                )
-    logging_print("After removing exact duplicates")
+    logging_print("After removing same day duplicates")
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
 
     # Stats
@@ -388,7 +392,9 @@ def handle_multi_unit_duplicates(data: pl.DataFrame,
     logging_print("{:,} individuals with {:,} rows".format(len(data["FINNGENID"].unique()), data.height))
     # Keeping mmol/mol if available, otherwise %, otherwise no unit made to priority
     dups = (dups
-            .sort(["FINNGENID", "EVENT_AGE", "UNIT", "VALUE"], nulls_last=True)
+            # for the value sorting, currently only the case for HbA1c that this happens where we prefer the
+            # higher values which are more likely mmol/mol
+            .sort(["FINNGENID", "EVENT_AGE", "UNIT", "VALUE"], nulls_last=True, descending=True)
             .group_by(["FINNGENID", "DATE"])
             .first())
     dups = dups.with_columns(pl.when(pl.col("UNIT").is_null())
