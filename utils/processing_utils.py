@@ -68,6 +68,8 @@ def get_abnorm_func_based_on_name(lab_name,
             return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=True))
         if extra_choice == "KDIGO-soft":
             return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=False))
+        if extra_choice == "KDIGO-soft2":
+            return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=False, soft_type=2))
         else:
             return(lambda x, y: egfr_kdigo_abnorm(x, y, strict=True))
     if lab_name == "cyst" or lab_name =="cystc": return(cystc_abnorm)
@@ -76,24 +78,33 @@ def get_abnorm_func_based_on_name(lab_name,
     if lab_name == "asat": return(asat_abnorm)
     if lab_name == "t4": return(t4_abnorm)
     if lab_name == "t3": return(t3_abnorm)
+    if lab_name == "ftri" or lab_name == "tri": return(tri_abnorm)
 
     else: raise ValueError("Sorry, no function for this lab name.")
         
 """Based on transformed kreatinine to eGFR."""
 def egfr_kdigo_abnorm(data, 
                       value_col_name="VALUE_TRANSFORM",
-                      strict=False):
+                      strict=False,
+                      soft_type=1):
     if strict:
         data = data.with_columns(
             pl.when(pl.col(value_col_name) <60).then(1)
             .otherwise(0).alias("ABNORM_CUSTOM")
         )    
     else:
-        data = data.with_columns(
-                pl.when(pl.col(value_col_name) <60).then(1)
-                .when((pl.col(value_col_name) <=65)&(pl.col(value_col_name)>=60)).then(0.5)
-                .otherwise(0).alias("ABNORM_CUSTOM")
-            )   
+        if soft_type == 1:
+            data = data.with_columns(
+                    pl.when(pl.col(value_col_name) <60).then(1)
+                    .when((pl.col(value_col_name) <=65)&(pl.col(value_col_name)>=60)).then(0.5)
+                    .otherwise(0).alias("ABNORM_CUSTOM")
+                )   
+        elif soft_type == 2:
+            data = data.with_columns(
+                    pl.when(pl.col(value_col_name) <60).then(1)
+                    .when((pl.col(value_col_name) <=70)&(pl.col(value_col_name)>=60)).then(0.5)
+                    .otherwise(0).alias("ABNORM_CUSTOM")
+                )   
         print(data["ABNORM_CUSTOM"].value_counts())
     return(data)
 
@@ -117,6 +128,15 @@ def tsh_abnorm_simple(data, value_col_name="VALUE"):
         .alias("ABNORM_CUSTOM")
     )
     return(data)
+def tri_abnorm(data, value_col_name="VALUE"):
+    data = data.with_columns(
+                pl.when(pl.col(value_col_name)>2)
+                .then(1)
+                .otherwise(0)
+        .alias("ABNORM_CUSTOM")
+    )
+    return(data)
+
 
 def uacr_abnorm(data, value_col_name="VALUE"):
     data = data.with_columns(
@@ -135,7 +155,7 @@ def t4_abnorm(data, value_col_name="VALUE"):
     data = data.with_columns(
                 pl.when(pl.col(value_col_name)>23)
                 .then(1)
-                .when(pl.col(value_col_name)<11)
+                .when(pl.col(value_col_name)<=9)
                 .then(-1)
                 .otherwise(0)
         .alias("ABNORM_CUSTOM")
@@ -147,8 +167,6 @@ def t3_abnorm(data, value_col_name="VALUE"):
     data = data.with_columns(
                 pl.when(pl.col(value_col_name)>6.3)
                 .then(1)
-                .when(pl.col(value_col_name)<2.6)
-                .then(-1)
                 .otherwise(0)
         .alias("ABNORM_CUSTOM")
     )
@@ -223,14 +241,9 @@ def three_level_abnorm(data):
     data.loc[data.ABNORM == "H","ABNORM"] = 1
     return(pl.DataFrame(data))
 
-def ldl_abnorm(data):
-    data = data.to_pandas()
-
-    data.loc[data.VALUE <= 5.3,"ABNORM_CUSTOM"] = 0
-    data.loc[data.VALUE > 5.3,"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data.EVENT_AGE <= 49, data.VALUE > 4.7),"ABNORM_CUSTOM"] = 1
-    data.loc[np.logical_and(data.EVENT_AGE <= 29, data.VALUE > 4.3),"ABNORM_CUSTOM"] = 1
-    return(pl.DataFrame(data))
+def ldl_abnorm(data, value_col_name="VALUE"):
+    data = data.with_columns(pl.when(pl.col(value_col_name)<4.0).then(0).otherwise(1).alias("ABNORM_CUSTOM"))
+    return(data)
 
 
 def ana_abnorm(data, value_col_name="VALUE"):
@@ -321,7 +334,7 @@ def add_set(unique_data,
                                    .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(1)
                                    .otherwise(None)
     )
-        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid['FINNGENID']))}  N mean abnorm train {sum(data_valid['y_MEAN_ABNORM'])} pct mean abnorm {round(sum(data_valid['y_MEAN_ABNORM'])/len(data_valid), 2)}")
+        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid["FINNGENID"]))}  N mean abnorm train {sum(data_valid["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_valid["y_MEAN_ABNORM"])/len(data_valid), 2)}")
 
     else:
         unique_data = unique_data.with_columns(
@@ -330,7 +343,7 @@ def add_set(unique_data,
                .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(2)
                .otherwise(None)
         )
-        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train['FINNGENID']))}  N mean abnorm train {sum(data_train['y_MEAN_ABNORM'])} pct mean abnorm {round(sum(data_train['y_MEAN_ABNORM'])/len(data_train), 2)}")
+        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train["FINNGENID"]))}  N mean abnorm train {sum(data_train["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_train["y_MEAN_ABNORM"])/len(data_train), 2)}")
 
     print(unique_data.select(pl.col("SET")).to_series().value_counts())
     return(pl.DataFrame(unique_data))

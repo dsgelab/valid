@@ -88,6 +88,7 @@ if __name__ == "__main__":
     if args.lab_name == "uacr":
         # there is something very weird about the low values
         data = data.filter(pl.col.ABNORM!="L")
+        
     if args.lab_name == "tsh":
         # It really seems they are not to be multiplied same distribution and all
         data = (data.with_columns(pl.when((pl.col.UNIT=="u/l")|(pl.col.UNIT=="iu/l"))
@@ -110,7 +111,6 @@ if __name__ == "__main__":
                                                     dummy_unit=args.main_unit)
     else:
         data = data.filter(~pl.col.ABNORM.is_null())
-    print(data["VALUE"].describe())
     if "ABNORM_FG" in data.columns:
         data = (data
                 .drop("ABNORM")
@@ -123,8 +123,6 @@ if __name__ == "__main__":
                     .cast(pl.Float64).alias("ABNORM")
                 )
                )
-    print(data["VALUE"].describe())
-
     if args.lab_name != "ogtt":
         if args.lab_name != "hba1c":
             data, n_indvs_stats = get_main_unit_data(data=data,
@@ -154,6 +152,7 @@ if __name__ == "__main__":
     if args.lab_name == "egfr":
         data, n_indvs_stats = remove_single_value_outliers(data=data, 
                                                            n_indvs_stats=n_indvs_stats)
+
     print(data["VALUE"].describe())
 
 
