@@ -305,6 +305,7 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if -1 in data.get_column(y_goal):
         data = data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
+        
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
