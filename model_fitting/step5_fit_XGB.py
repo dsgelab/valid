@@ -6,7 +6,7 @@ from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
 from input_utils import get_data_and_pred_list   
-from model_fit_utils import xgb_final_fitting, get_xgb_base_params, elr_final_fitting, lr_fitting
+from model_fit_utils import xgb_final_fitting, get_xgb_base_params, elr_final_fitting, logr_fitting, linr_fitting
 from plot_utils import get_plot_names
 
 # Standard stuff
@@ -69,6 +69,11 @@ def get_parser_arguments():
     parser.add_argument("--save_csv", type=int, help="Whether to save the eval metrics file. If false can do a rerun on low boots.", default=1)
     parser.add_argument("--n_boots", type=int, help="Number of random samples for bootstrapping of metrics.", default=500)
     parser.add_argument("--fit_cv", type=int, help="Do final fit on all of training with cross-validation. Otherwise fit only on training with early stopping on validation.", default=500)
+    parser.add_argument("--final_fit", type=int, help="Do one final fit on all data.", default=0)
+    parser.add_argument("--just_r2", type=int, help="Special fit for R² values.", default=0)
+    parser.add_argument("--fids_path", type=str, help="IDs to filter data for.", default="")
+    parser.add_argument("--filter_name", type=str, help="Name of ID filter.", default="")
+
 
     args = parser.parse_args()
 
@@ -83,10 +88,12 @@ if __name__ == "__main__":
     args = get_parser_arguments()
 
     # File names
-    study_name = args.model_type + "_" + str(args.metric) + "_" + args.pred_descriptor
+    study_name = args.model_type + "_" + str(args.metric) + "_" + args.pred_descriptor 
+    if args.filter_name != "": study_name + "_" + args.filter_name
     if args.model_fit_date == "": args.model_fit_date = get_date()
 
-    out_dir = args.res_dir + study_name + "/"; 
+    out_dir = args.res_dir + study_name + "/";     
+    if args.final_fit: out_dir = out_dir + "/final/"
     out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.model_fit_date + "/" 
     out_plot_dir = out_dir + "plots/" + args.model_fit_date + "/"
     out_plot_path = out_plot_dir + args.lab_name 
@@ -109,7 +116,8 @@ if __name__ == "__main__":
                                           file_path_pgs2=args.file_path_pgs2,
                                           preds=args.preds,
                                           start_date=args.start_date,
-                                          fill_missing=0 if args.model_type=="xgb" else 1)
+                                          fill_missing=0 if args.model_type=="xgb" else 1,
+                                          fids_path=args.fids_path)
     fgids, X_train, y_train, X_valid, y_valid, \
         X_test, y_test, X_all, y_all, X_all_unscaled, \
         dtrain, dvalid, scaler_base = create_xgb_dts(data=data, 
@@ -142,11 +150,13 @@ if __name__ == "__main__":
             model_final = xgb_final_fitting(best_params=best_params,
                                             X_train=X_train, y_train=y_train, 
                                             X_valid=X_valid, y_valid=y_valid, 
+                                            X_test=X_test, y_test=y_test, 
                                             metric=args.metric,
                                             low_lr=args.low_lr,
                                             early_stop=args.early_stop,
                                             n_classes=len(y_train.unique()),
-                                            fit_cv=args.fit_cv)
+                                            fit_cv=args.fit_cv,
+                                            final_fit=args.final_fit)
         elif args.model_type=="elr":
             best_params = run_optuna_optim(train=(X_train, y_train), 
                                            valid=(X_valid, y_valid), 
@@ -166,22 +176,33 @@ if __name__ == "__main__":
                                             y_train=y_train,
                                             X_valid=X_valid,
                                             y_valid=y_valid)
-        elif args.model_type=="lr":
-            model_final = lr_fitting(X_train=X_train, 
+        elif args.model_type=="lr" and get_train_type(args.metric) == "bin":
+            model_final = logr_fitting(X_train=X_train, 
                                      y_train=y_train,
                                      X_valid=X_valid,
-                                     y_valid=y_valid)
+                                     y_valid=y_valid,
+                                     X_test=X_test,
+                                     y_test=y_test,
+                                     just_r2=args.just_r2)
+        elif args.model_type=="lr" and get_train_type(args.metric) == "cont":
+            model_final = linr_fitting(X_train=X_train, 
+                                     y_train=y_train,
+                                     X_valid=X_valid,
+                                     y_valid=y_valid,
+                                     X_test=X_test,
+                                     y_test=y_test,
+                                     just_r2=args.just_r2)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-
-        pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
-        pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
-    else:
+        if not args.just_r2:
+            pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
+            pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
+    elif not args.just_r2:
         model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
 
-    if not args.skip_model_fit:
+    if not args.skip_model_fit and not args.just_r2:
         if args.model_type == "xgb":
             # SHAP explainer for model
             shap_explainer = shap.TreeExplainer(model_final)
@@ -228,7 +249,7 @@ if __name__ == "__main__":
                                 abnorm_extra_choice=args.abnorm_extra_choice)
         out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
-    else:
+    elif not args.just_r2:
         if args.model_type == "xgb":
             train_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_train_" + get_date() + ".csv")
             test_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_test_" + get_date() + ".csv")
@@ -238,14 +259,15 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # #                 Plotting                                                #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    save_all_report_plots(out_data=out_data,
-                          out_plot_path=out_plot_path,
-                          out_down_path=out_down_path,
-                          study_name=study_name,
-                          train_importances=train_importances,
-                          valid_importances=train_importances,
-                          test_importances=test_importances,
-                          train_type=get_train_type(args.metric),
-                          model_type=args.model_type,
-                          fit_cv=args.fit_cv)
+    if not args.just_r2:
+        save_all_report_plots(out_data=out_data,
+                              out_plot_path=out_plot_path,
+                              out_down_path=out_down_path,
+                              study_name=study_name,
+                              train_importances=train_importances,
+                              valid_importances=train_importances,
+                              test_importances=test_importances,
+                              train_type=get_train_type(args.metric),
+                              model_type=args.model_type,
+                              fit_cv=args.fit_cv)
 
