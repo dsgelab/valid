@@ -91,11 +91,14 @@ def xgb_final_fitting(best_params: dict,
                       y_train: pl.DataFrame, 
                       X_valid: pl.DataFrame, 
                       y_valid: pl.DataFrame, 
+                      X_test: pl.DataFrame,
+                      y_test: pl.DataFrame,
                       metric: str,
                       low_lr: float,
                       early_stop: int,
                       n_classes: int=2,
-                      fit_cv: int=1):
+                      fit_cv: int=1,
+                      final_fit: int=0):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -113,11 +116,15 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    X = pl.concat([X_train, X_valid])
-    y = pl.concat([y_train, y_valid])
+    if not final_fit:
+        X = pl.concat([X_train, X_valid])
+        y = pl.concat([y_train, y_valid])
+    else:
+        X = pl.concat([X_train, X_valid,  X_test])
+        y = pl.concat([y_train, y_valid, y_test])
     if get_train_type(metric) == "bin" or get_train_type(metric) == "multi":
         # Use Option 4 to find best num_boost_round
-        if fit_cv:
+        if fit_cv or final_fit:
             cv_clf = xgb.cv(params=params_fin, 
                             dtrain=xgb.DMatrix(X, y), 
                             early_stopping_rounds=early_stop, 
@@ -129,6 +136,7 @@ def xgb_final_fitting(best_params: dict,
                             verbose_eval=100)
             clf = xgb.XGBClassifier(**params_fin, n_estimators=len(cv_clf))
             clf.fit(X, y, verbose=100)
+            print("done")
         else:
             clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
             clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
@@ -156,7 +164,7 @@ def xgb_final_fitting(best_params: dict,
     # Get the best model
     logging.info('Final fitting ==============================')
     logging.info('Number of estimators ---------------------------')
-    if not fit_cv:
+    if not fit_cv and not final_fit:
         logging.info(f'best boosting round: {clf.best_iteration}')
     else:
         logging.info(len(cv_clf))
@@ -206,13 +214,100 @@ def elr_final_fitting(best_params: dict,
 
     return(enet)   
 
+def get_r2(lr, lr_base, X, y, set_name):
+    # predicted probabilities
+    probs = lr.predict_proba(X.to_numpy())[:, 1]
+    # log-likelihood of fitted model
+    LL_model = -log_loss(y.to_numpy().ravel(), probs, normalize=False)
+    
+    # same for null model (model without PGS")
+    null_probs = lr_base.predict_proba(X.select("EVENT_AGE", "SEX").to_numpy())[:, 1]
+    LL_null = -log_loss(y.to_numpy().ravel(), null_probs, normalize=False)
 
+    # McFadden's pseudo-R2
+    R2_McF = 1 - (LL_model / LL_null)
+    print(f"McFadden pseudo-R2 on {set_name} set: {R2_McF:.4f}")
+
+    logging.info("McFadden pseudo-R2 over baseline age+sex on "+set_name+" set:"+str(R2_McF))
+    return(R2_McF)
+    
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
-def lr_fitting(X_train: pl.DataFrame, 
+def logr_fitting(X_train: pl.DataFrame, 
                y_train: pl.DataFrame,
                X_valid: pl.DataFrame,
-               y_valid: pl.DataFrame):
+               y_valid: pl.DataFrame,
+               X_test: pl.DataFrame,
+               y_test:pl.DataFrame,
+               just_r2: int=0):
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Study setup                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    timer = Timer()
+    np.random.seed(9234)
+    X = pl.concat([X_train, X_valid])
+    y = pl.concat([y_train, y_valid])
+    y = y.with_columns(pl.when(pl.col(y.columns[0])==0).then(0).otherwise(1).alias(y.columns[0]))
+    y_train = y_train.with_columns(pl.when(pl.col(y.columns[0])==0).then(0).otherwise(1).alias(y.columns[0]))
+    y_valid = y_valid.with_columns(pl.when(pl.col(y.columns[0])==0).then(0).otherwise(1).alias(y.columns[0]))
+    y_test = y_test.with_columns(pl.when(pl.col(y.columns[0])==0).then(0).otherwise(1).alias(y.columns[0]))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Fitting                                                 #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    lr = LogisticRegression(solver="saga")
+    lr.fit(X.to_numpy(), y.to_numpy().ravel())
+    lr_base = LogisticRegression(solver="saga")
+    lr_base.fit(X.select("EVENT_AGE", "SEX").to_numpy(), y.to_numpy().ravel())
+
+    train_r2 = get_r2(lr, lr_base, X, y, "train")
+    test_r2 = get_r2(lr, lr_base, X_test, y_test, "test")
+    
+    if just_r2:
+        X_all = pl.concat([X_train, X_valid, X_test])
+        y_all = pl.concat([y_train, y_valid, y_test])
+        lr = LogisticRegression(solver="saga")
+        lr.fit(X_all.to_numpy(), y_all.to_numpy().ravel())
+        lr_base = LogisticRegression(solver="saga")
+        lr_base.fit(X_all.select("EVENT_AGE", "SEX").to_numpy(), y_all.to_numpy().ravel())
+    
+        train_r2 = get_r2(lr, lr_base, X, y, "train - all trained")
+        test_r2 = get_r2(lr, lr_base, X_test, y_test, "test - all trained")
+
+        lr = LogisticRegression(solver="saga")
+        lr.fit(X_train.to_numpy(), y_train.to_numpy().ravel())
+        lr_base = LogisticRegression(solver="saga")
+        lr_base.fit(X_train.select("EVENT_AGE", "SEX").to_numpy(), y_train.to_numpy().ravel())
+    
+        train_r2 = get_r2(lr, lr_base, X_train, y_train, "train - train-valid split trained")
+        valid_2 = get_r2(lr, lr_base, X_valid, y_valid, "valid - train-valid split trained")
+        test_r2 = get_r2(lr, lr_base, X_test, y_test, "test - train-valid split trained")
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Variance explained                                      #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Logging info                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    logging.info(timer.get_elapsed())
+    # Get the best model
+    logging.info('Final fitting ==============================')
+    logging.info('Time ---------------------------')
+    logging.info(timer.get_elapsed())
+
+    return(lr)   
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+def linr_fitting(X_train: pl.DataFrame, 
+                 y_train: pl.DataFrame,
+                 X_valid: pl.DataFrame,
+                 y_valid: pl.DataFrame,
+                 X_test: pl.DataFrame,
+                 y_test:pl.DataFrame,
+                 just_r2: int=0):
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Study setup                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -223,29 +318,32 @@ def lr_fitting(X_train: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    lr = LogisticRegression(solver="saga")
+    lr = LinearRegression()
     lr.fit(X.to_numpy(), y.to_numpy().ravel())
 
+    preds_train = lr.predict(X.to_numpy())
+    preds_test = lr.predict(X_test.to_numpy())
 
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Variance explained                                      #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    # predicted probabilities
-    probs = lr.predict_proba(X.to_numpy())[:, 1]
-    # log-likelihood of fitted model
-    LL_model = -log_loss(y.to_numpy().ravel(), probs, normalize=False)
-    
-    # same for null model (model without PGS")
-    null_model = LogisticRegression(solver="saga")
-    null_model.fit(X.select("EVENT_AGE", "SEX").to_numpy(), y.to_numpy().ravel())
-    null_probs = null_model.predict_proba(X.select("EVENT_AGE", "SEX").to_numpy())[:, 1]
-    LL_null = -log_loss(y.to_numpy().ravel(), null_probs, normalize=False)
+    lr_base = LinearRegression()
+    lr_base.fit(X.select("EVENT_AGE", "SEX").to_numpy(), y.to_numpy().ravel())
 
-    # McFadden's pseudo-R2
-    R2_McF = 1 - (LL_model / LL_null)
-    print(f"McFadden pseudo-R2 on training set: {R2_McF:.4f}")
+    preds_base_train = lr_base.predict(X.select("EVENT_AGE", "SEX").to_numpy())
+    preds_base_test = lr_base.predict(X_test.select("EVENT_AGE", "SEX").to_numpy())
 
-    logging.info("McFadden pseudo-R2 over baseline age+sex on training set:"+str(R2_McF))
+    train_r2 = r2_score(y.to_numpy().ravel(), preds_train)
+    test_r2 = r2_score(y_test.to_numpy().ravel(), preds_test)
+
+    train_base_r2 = r2_score(y.to_numpy().ravel(), preds_base_train)
+    test_base_r2 = r2_score(y_test.to_numpy().ravel(), preds_base_test)
+
+    print(f"Total R2 on the train set: {train_r2:.4f}")
+    logging.info("Total R2 on train set: "+str(train_r2))
+    print(f"Total R2 on the test set: {test_r2:.4f}")
+    logging.info("Total R2 on test set: "+str(test_r2))
+    print(f"Incremental R2 over age+sex on test set: {train_r2-train_base_r2:.4f} with baseline {train_base_r2:.4f}")
+    logging.info("Incremental R2 over age+sex on train set: "+str(train_r2-train_base_r2)+" with baseline "+str(train_base_r2))
+    print(f"Incremental R2 over age+sex on test set: {test_r2-test_base_r2:.4f} with baseline {test_base_r2:.4f}")
+    logging.info("Incremental R2 over age+sex on test set: "+str(test_r2-test_base_r2)+" with baseline "+str(test_base_r2))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
