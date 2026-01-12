@@ -82,9 +82,13 @@ def check_dated_path(file_path_start,
             return True
     return False
 
-def get_dated_path(file_path_start,
-                     year=2025):
-    dates = get_all_dates_in_year(year=year)
+def get_dated_path(file_path_start):
+    dates = get_all_dates_in_year(year=2025)
+    for date in reversed(dates):
+        if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
+            return file_path_start+date+"/preds_"+date+".parquet"
+
+    dates = get_all_dates_in_year(year=2026)
     for date in reversed(dates):
         if os.path.exists(file_path_start+date+"/preds_"+date+".parquet"):
             return file_path_start+date+"/preds_"+date+".parquet"
