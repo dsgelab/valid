@@ -24,16 +24,15 @@ def create_optuna_study(study_name: str,
                                 load_if_exists=True)
     return(study)
 
-
 from typing import Union, Tuple
 import xgboost as xgb
 import time 
 from general_utils import Timer
 import logging
 import numpy as np
-def run_optuna_optim(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFrame]], 
+def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]], 
                      valid: Union[xgb.DMatrix,  Tuple[pl.DataFrame, pl.DataFrame]],
-                     test: Union[xgb.DMatrix,  Tuple[pl.DataFrame, pl.DataFrame]], 
+                     test: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFrame]], 
                      lab_name: str,
                      refit: bool,
                      time_optim: int,
@@ -116,9 +115,11 @@ def quantile_eval(metric):
         loss = get_score_func_based_on_metric(metric)(preds, y)
         return metric, np.mean(loss)
     return eval_metric
-    
- 
-import catboost as cat
+
+try:
+    import catboost as cat
+except ImportError:
+    pass
 import optuna
 from sklearn.metrics import accuracy_score
 def optuna_cat_objective(trial: optuna.Trial, 
@@ -133,14 +134,16 @@ def optuna_cat_objective(trial: optuna.Trial,
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'depth': trial.suggest_int('depth', 2, 12),
-        'min_data_in_leaf': trial.suggest_int("min_data_in_leaf", 5, 20),
-        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0, 15, log=True),
-        'bagging_temperature': trial.suggest_float('bagging_temperature', 0, 10),
+        'depth': trial.suggest_int('depth', 3, 10),
+        'min_data_in_leaf': trial.suggest_int("min_data_in_leaf", 20, 100),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 15),
+        'bagging_temperature': trial.suggest_float('bagging_temperature', 1, 10),
         'border_count': trial.suggest_int('border_count', 32, 255),
-        'random_strength': trial.suggest_float('random_strength', 0, 2),
+        'random_strength': trial.suggest_float('random_strength', 1, 10),   
+        # < Subsampling
+       'subsample': trial.suggest_float('subsample', 0.5, 1.0),  # row sampling
+       'rsm': trial.suggest_float('rsm', 0.5, 1.0),              # feature sampling
     }
-
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Setting up trial                                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -168,7 +171,7 @@ def optuna_cat_objective(trial: optuna.Trial,
 
     return metric_value
 
-
+    
 import xgboost as xgb
 import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 

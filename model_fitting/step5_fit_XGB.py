@@ -116,7 +116,7 @@ if __name__ == "__main__":
                                           file_path_pgs2=args.file_path_pgs2,
                                           preds=args.preds,
                                           start_date=args.start_date,
-                                          fill_missing=0 if args.model_type in ["xgb", "cat"] else 1,
+                                          fill_missing=0 if args.model_type=="xgb" else 1,
                                           fids_path=args.fids_path)
     fgids, X_train, y_train, X_valid, y_valid, \
         X_test, y_test, X_all, y_all, X_all_unscaled, \
@@ -194,7 +194,7 @@ if __name__ == "__main__":
                                            res_dir=args.res_dir,
                                            model_type="elr",
                                            model_fit_date=args.model_fit_date,
-                                           base_params={"eval_metric": args.metric})
+                                          base_params={"eval_metric": args.metric})
             logging.info(timer.get_elapsed())
             model_final = elr_final_fitting(best_params=best_params, 
                                             X_train=X_train, 

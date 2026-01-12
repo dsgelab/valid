@@ -59,6 +59,7 @@ def get_abnorm_func_based_on_name(lab_name,
     if lab_name == "ldl": return(ldl_abnorm)
     if lab_name == "ana": return(ana_abnorm)
     if lab_name == "uacr": return(uacr_abnorm)
+    if lab_name == "leuk": return(leuk_abnorm)
     if lab_name == "egfr" or lab_name == "krea": 
         if extra_choice == "herold-full":
             return(lambda x, y: egfr_herold(x,y, strict=True))
@@ -106,6 +107,19 @@ def egfr_kdigo_abnorm(data,
                     .otherwise(0).alias("ABNORM_CUSTOM")
                 )   
         print(data["ABNORM_CUSTOM"].value_counts())
+    return(data)
+
+def leuk_abnorm(data, value_col_name="VALUE"):
+    data = data.with_columns(
+                pl.when(pl.col(value_col_name)<3.4)
+                .then(-1)
+                .when(pl.col(value_col_name)>8.2)
+                .then(1)
+                .otherwise(0)
+        .alias("ABNORM_CUSTOM")
+    )
+    print(data)
+    print(data["ABNORM_CUSTOM"].value_counts())
     return(data)
 
 def tsh_abnorm_complex(data, value_col_name="VALUE"):

@@ -134,7 +134,11 @@ if __name__ == "__main__":
         preds_data = preds_data.join(labels.select("FINNGENID", "START_DATE"), on="FINNGENID", how="left")
         preds_data = preds_data.filter(pl.col.DATE < pl.col.START_DATE).drop("START_DATE")
     else:
-        preds_data = preds_data.filter(pl.col.DATE < datetime.strptime(args.start_date, "%Y-%m-%d"))
+        try:
+            preds_data = preds_data.filter(pl.col.DATE < datetime.strptime(args.start_date, "%Y-%m-%d"))
+        except:
+            preds_data = preds_data.filter(pl.col.DATE < datetime.strptime(args.start_date, "%Y-%m-%d %H:%M:%S"))
+
     # Filtering out data only after what we set as start year
     if args.start_year != 0:
         preds_data = preds_data.filter(pl.col.DATE.dt.year() >= args.start_year)

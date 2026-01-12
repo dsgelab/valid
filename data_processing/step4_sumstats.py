@@ -5,6 +5,7 @@ import sys
 
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, init_logging, Timer, read_file
+from processing_utils import egfr_ckdepi2021_transform
 
 # Standard stuff
 import polars as pl
@@ -29,6 +30,7 @@ def get_parser_arguments():
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--start_date", type=str, default="", help="Date to filter before")
     parser.add_argument("--mean_impute", type=int, default=1, help="Whether to impute mean for those with missing. [Options: 0 (No), 1 (Yes some), 2 (Yes all)]")
+    parser.add_argument("--interpolate", type=int, default=0, help="Whether to first mean aggregate the data for each month and then interpolate the missing months.")
 
     # Settings
     args = parser.parse_args()
@@ -43,11 +45,14 @@ if __name__ == "__main__":
     timer = Timer()
     args = get_parser_arguments()
     init_logging(args.res_dir, args.lab_name, logger, args)
-    if args.mean_impute >= 1:
+    if args.mean_impute >= 1 and not args.interpolate >= 1:
         out_file_name = args.file_name_start+"_sumstats_"+get_date()
+    elif args.mean_impute >= 1 and args.interpolate >= 1:
+        out_file_name = args.file_name_start+"_sumstats_interpolate_"+get_date()
+    elif args.mean_impute == 0 and args.interpolate >= 1:
+        out_file_name = args.file_name_start+"_sumstats_noimpute_interpolate_"+get_date()
     else:
         out_file_name = args.file_name_start+"_sumstats_noimpute_"+get_date()
-
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Get data                                                #
@@ -65,8 +70,45 @@ if __name__ == "__main__":
         labels = read_file(args.file_path+args.file_name_start+"_labels.parquet")
     data = data.join(labels, on="FINNGENID", how="right", coalesce=True)
     if args.start_date != "": 
-        data = data.with_columns(pl.Series("START_DATE", [datetime.strptime(args.start_date, "%Y-%m-%d")]*data.height))
-    
+        try:
+            data = data.with_columns(pl.Series("START_DATE", [datetime.strptime(args.start_date, "%Y-%m-%d")]*data.height))
+        except:
+            data = data.with_columns(pl.Series("START_DATE", [datetime.strptime(args.start_date, "%Y-%m-%d %H:%M:%S")]*data.height))
+
+    if args.interpolate == 1:
+        print(data.columns)
+        no_data = data.filter(pl.col.VALUE.is_null()).select(["FINNGENID", "SEX", "EVENT_AGE", "VALUE", "DATE", "START_DATE", "SET", "ABNORM_CUSTOM"])
+        data = data.filter(pl.col.VALUE.is_not_null())
+        month_data = (data
+                      .filter(pl.col.DATE<pl.col.START_DATE)
+                      .with_columns(pl.col.DATE.dt.truncate("1mo").alias("DATE"))
+                      .group_by("FINNGENID", "DATE")
+                      .agg(pl.col.VALUE.mean(),
+                           pl.col.SEX.first(),
+                           pl.col.START_DATE.first(),
+                           pl.col.SET.first(),
+                           pl.col.EVENT_AGE.min()+((pl.col.EVENT_AGE.max()-pl.col.EVENT_AGE.min())/2))
+        )
+        all_months = (month_data
+                         .group_by("FINNGENID")
+                         .agg(pl.date_range(pl.col.DATE.min(), pl.col.DATE.max(), interval="1mo").alias("DATE"))
+                         .explode("DATE")
+        )
+        data = (month_data
+                    .join(all_months, on=["FINNGENID", "DATE"], how="right")
+                    .sort(["FINNGENID", "DATE"])
+                    .with_columns(pl.col.VALUE.interpolate().over("FINNGENID").alias("VALUE"),
+                                  pl.col.EVENT_AGE.interpolate().over("FINNGENID").alias("EVENT_AGE"),
+                                  pl.col.SEX.first().over("FINNGENID").alias("SEX")
+                                 )
+                    
+        ).select(["FINNGENID", "SEX", "EVENT_AGE", "VALUE", "DATE", "START_DATE", "SET"])
+        print(data)
+        data = egfr_ckdepi2021_transform(data, "VALUE")
+        data = data.with_columns(pl.when(pl.col.VALUE<60).then(pl.lit(1)).otherwise(pl.lit(0)).alias("ABNORM_CUSTOM").cast(pl.Float64))
+        data = pl.concat([no_data, data])
+        print(data)
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Summary statistics                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   

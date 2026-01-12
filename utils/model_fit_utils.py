@@ -152,7 +152,7 @@ def xgb_final_fitting(best_params: dict,
                             seed=1241,
                             shuffle=True,
                             verbose_eval=100)
-            clf = xgb.XGBRegressor(**params_fin, n_estimators=len(cv_clf))
+            clf = xgb.XGBRegressor(**params_fin,  n_estimators=len(cv_clf))
             clf.fit(X, y, verbose=100)       
         else:
             clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
@@ -175,7 +175,7 @@ def xgb_final_fitting(best_params: dict,
 
     logging.info("time taken {timer.get_elapsed()}")
 
-    return(clf)   
+    return(clf) 
 
 
 """Fits the final CatBoost model with the best hyperparameters found in the optimization step.
@@ -194,7 +194,10 @@ def xgb_final_fitting(best_params: dict,
     Returns:
         clf (cat.CatBoostClassifier or cat.CatBoostRegressor): The fitted CatBoost model.
 """
-import catboost as cat
+try:
+    import catboost as cat
+except ImportError:
+    pass
 def cat_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
                       y_train: pl.DataFrame, 
@@ -204,11 +207,12 @@ def cat_final_fitting(best_params: dict,
                       y_test: pl.DataFrame,
                       metric: str,
                       low_lr: float,
-                      early_stop: int,
+                      early_stop: int=5,
                       n_classes: int=2,
                       fit_cv: int=1,
                       final_fit: int=0):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
+
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Study setup                                             #
@@ -241,6 +245,7 @@ def cat_final_fitting(best_params: dict,
         clf.fit(X.to_pandas(), y.to_pandas(), verbose=100)
         print("done")
 
+    # # # # # # # # # # # # #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

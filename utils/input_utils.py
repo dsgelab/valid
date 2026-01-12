@@ -29,12 +29,17 @@ def get_data_and_pred_list(file_path_labels: str,
                            file_path_pgs2: str,
                            preds: list,
                            start_date: str,
-                           fill_missing: int=0) -> tuple[pl.DataFrame, list]:
+                           fill_missing: int=0,
+                           fids_path: str="") -> tuple[pl.DataFrame, list]:
     """Reads in label data and merges it with other data modalities. Returns the data and the predictors."""
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
+    if fids_path != "": 
+        fids = read_file(fids_path)
+        print_count(data)
+        data = data.filter(pl.col.FINNGENID.is_in(fids["FINNGENID"]))
     print_count(data)
 
     # Adding other data modalities
@@ -42,9 +47,11 @@ def get_data_and_pred_list(file_path_labels: str,
         pgs = pl.read_csv(file_path_pgs1, separator="\t")
         if len(pgs.columns)==2: # Zhijian PGS for eGFR levels
             pgs.columns = ["FINNGENID", "PGS1"]
-            pgs = pgs.with_columns((-1*pl.col.PGS1).alias("PGS1"))
+            #pgs = pgs.with_columns((-1*pl.col.PGS1).alias("PGS1"))
         else: # Zhiyu PGS for creatinine slopes
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS1"] 
+            pgs = pgs.with_columns((-1*pl.col.PGS1).alias("PGS1"))
+
         data = data.join(pgs.select("FINNGENID", "PGS1"), on="FINNGENID", how="left")
         pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
         data = data.join(pcs.select("IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"), left_on="FINNGENID", right_on="IID", how="left")
@@ -61,6 +68,7 @@ def get_data_and_pred_list(file_path_labels: str,
             pgs = pgs.with_columns((-1*pl.col.PGS2).alias("PGS2"))
         else: # Zhiyu PGS for creatinine slopes
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS2"] 
+            #pgs = pgs.with_columns((-1*pl.col.PGS2).alias("PGS2"))
         #
         data = data.join(pgs.select("FINNGENID", "PGS2"), on="FINNGENID", how="left")
         pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
@@ -112,6 +120,12 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(extra_data.select("FINNGENID", "BMI"), how="left", on="FINNGENID")
         if fill_missing:
             data = data.with_columns(pl.when(pl.col.BMI.is_null()).then(pl.lit(22)).otherwise(pl.col.BMI).alias("BMI"))
+    if "HEIGHT" in preds:
+        extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "HEIGHT")
+        data = data.join(extra_data.select("FINNGENID", "HEIGHT"), how="left", on="FINNGENID")  
+    if "WEIGHT" in preds:
+        extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "WEIGHT")
+        data = data.join(extra_data.select("FINNGENID", "WEIGHT"), how="left", on="FINNGENID")  
     if "SMOKE" in preds:
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "SMOKE")
         data = data.join(extra_data.select("FINNGENID", "SMOKE"), how="left", on="FINNGENID")  
@@ -165,27 +179,48 @@ def get_data_and_pred_list(file_path_labels: str,
 """
 def get_ext_data(start_date: datetime,
                  dtype="BMI"):
-    ext_file_name = "/finngen/library-red/finngen_R13/hilmo_avohilmo_extended_1.0/data/finngen_R13_hilmo_avohilmo_extended_1.0.txt.gz"
-    ext_data = pl.read_csv(ext_file_name, 
+
+    if dtype not in ["HEIGHT", "WEIGHT"]:
+        ext_file_name = "/finngen/library-red/finngen_R13/hilmo_avohilmo_extended_1.0/data/finngen_R13_hilmo_avohilmo_extended_1.0.txt.gz"
+        ext_data = pl.read_csv(ext_file_name, 
                            separator="\t",
                            columns=["FINNGENID", "APPROX_EVENT_DAY", "CODE5", "CODE6", "CODE7", "CODE8", "CODE9"])
-    ext_data = ext_data.rename({"CODE5": "BMI", "CODE6": "SMOKE", "CODE7": "ALCOHOL", "CODE8": "SBP", "CODE9":"DBP"})
-    ext_data = ext_data.filter((pl.col.BMI != "NA")|(pl.col.SMOKE!="NA")|(pl.col.ALCOHOL!="NA")|(pl.col.SBP!="NA")|(pl.col.DBP!="NA"))
-    
-    ext_data = ext_data.with_columns(pl.col.BMI.cast(pl.Float64, strict=False).alias("BMI"),
-                                 pl.col.SMOKE.cast(pl.Int32,strict=False).alias("SMOKE"),
-                                 pl.col.ALCOHOL.cast(pl.Int32,strict=False).alias("ALCOHOL"),
-                                 pl.col.SBP.cast(pl.Float64,strict=False).alias("SBP"),
-                                 pl.col.DBP.cast(pl.Float64,strict=False).alias("DBP"),
-                                 pl.col.APPROX_EVENT_DAY.str.to_date("%Y-%m-%d").alias("DATE")
-                                )
+        ext_data = ext_data.rename({"CODE5": "BMI", "CODE6": "SMOKE", "CODE7": "ALCOHOL", "CODE8": "SBP", "CODE9":"DBP"})
+        ext_data = ext_data.filter((pl.col.BMI != "NA")|(pl.col.SMOKE!="NA")|(pl.col.ALCOHOL!="NA")|(pl.col.SBP!="NA")|(pl.col.DBP!="NA"))
+        
+        ext_data = ext_data.with_columns(pl.col.BMI.cast(pl.Float64, strict=False).alias("BMI"),
+                                     pl.col.SMOKE.cast(pl.Int32,strict=False).alias("SMOKE"),
+                                     pl.col.ALCOHOL.cast(pl.Int32,strict=False).alias("ALCOHOL"),
+                                     pl.col.SBP.cast(pl.Float64,strict=False).alias("SBP"),
+                                     pl.col.DBP.cast(pl.Float64,strict=False).alias("DBP"),
+                                     pl.col.APPROX_EVENT_DAY.str.to_date("%Y-%m-%d").alias("DATE")
+                                    )
+    minimum = pl.read_parquet("/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.parquet")
+    if dtype=="HEIGHT":
+        bb_data = minimum.select("FINNGENID", "HEIGHT").filter(pl.col.HEIGHT!="NA").with_columns(pl.col.HEIGHT.cast(pl.Int32))
+        return(bb_data)
+    if dtype=="WEIGHT":
+        bb_data = minimum.select("FINNGENID", "WEIGHT").filter(pl.col.WEIGHT!="NA").with_columns(pl.col.WEIGHT.cast(pl.Float64))
+        return(bb_data)
     if dtype=="BMI":
-        return (ext_data
-                .select("FINNGENID", "DATE", "BMI")
-                .filter(~pl.col.BMI.is_null(), pl.col.DATE<start_date)
-                .filter((pl.col.DATE==pl.col.DATE.max()).over("FINNGENID"))
-                .group_by("FINNGENID").agg(pl.col.BMI.mean().alias("BMI"))
-               )
+        long_data = (ext_data
+                            .select("FINNGENID", "DATE", "BMI")
+                            .filter(~pl.col.BMI.is_null(), pl.col.DATE<start_date)
+                            .filter((pl.col.DATE==pl.col.DATE.max()).over("FINNGENID"))
+                            .group_by("FINNGENID").agg(pl.col.BMI.mean().alias("BMI"))
+                    )
+        bb_data = (minimum
+                   .select("FINNGENID", "APPROX_BIRTH_DATE", "BMI", "WEIGHT_AGE")
+                   .filter(pl.col.BMI!="NA", ~pl.col.FINNGENID.is_in(long_data["FINNGENID"]))
+                   .with_columns(pl.col.BMI.cast(pl.Float64),
+                                 (pl.when(pl.col.WEIGHT_AGE!="NA")
+                                     .then((pl.col.APPROX_BIRTH_DATE.cast(pl.Utf8).str.to_date()+(pl.duration(days=(pl.col("WEIGHT_AGE").cast(pl.Float64, strict=False)*365.25).round()))).cast(pl.Date))
+                                     .otherwise(start_date-pl.duration(days=365.25))).alias("DATE").cast(pl.Date)
+                                )
+                   .filter(pl.col.DATE<start_date)
+                   .select("FINNGENID", "BMI")
+                  )
+        return(pl.concat([long_data, bb_data]))
     if dtype=="ALCOHOL":
         return (ext_data
                     .select("FINNGENID", "DATE", "ALCOHOL")
@@ -200,7 +235,7 @@ def get_ext_data(start_date: datetime,
                                   .alias("ALCOHOL"))
                 )
     if dtype=="SMOKE":
-        return ((ext_data
+        long_data = ((ext_data
                     .select("FINNGENID", "DATE", "SMOKE")
                     .filter(~pl.col.SMOKE.is_null(), pl.col.DATE<start_date)
                     .with_columns(pl.when(pl.col.SMOKE==9).then(pl.lit(None)).otherwise(pl.col.SMOKE).alias("SMOKE"))
@@ -209,7 +244,9 @@ def get_ext_data(start_date: datetime,
                     .filter((pl.col.SMOKE==pl.col.SMOKE.min()).over("FINNGENID"))
                      .unique()
                     .with_columns(pl.when(pl.col.SMOKE<=3).then(pl.lit(1)).otherwise(pl.lit(0)).alias("SMOKE"))
-                ))
+                )).select("FINNGENID", "SMOKE")
+        bb_data = minimum.filter(pl.col.CURRENT_SMOKER!="NA", ~pl.col.FINNGENID.is_in(long_data["FINNGENID"])).with_columns(pl.col.CURRENT_SMOKER.cast(pl.Int32).alias("SMOKE")).select("FINNGENID", "SMOKE")
+        return(pl.concat([long_data, bb_data]))
     if dtype=="SBP":
         return (ext_data
                 .select("FINNGENID", "DATE", "SBP")
