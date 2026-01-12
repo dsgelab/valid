@@ -6,7 +6,7 @@ from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
 from input_utils import get_data_and_pred_list   
-from model_fit_utils import xgb_final_fitting, get_xgb_base_params, elr_final_fitting, logr_fitting, linr_fitting
+from model_fit_utils import xgb_final_fitting, cat_final_fitting, get_xgb_base_params, elr_final_fitting, logr_fitting, linr_fitting
 from plot_utils import get_plot_names
 
 # Standard stuff
@@ -116,7 +116,7 @@ if __name__ == "__main__":
                                           file_path_pgs2=args.file_path_pgs2,
                                           preds=args.preds,
                                           start_date=args.start_date,
-                                          fill_missing=0 if args.model_type=="xgb" else 1,
+                                          fill_missing=0 if args.model_type in ["xgb", "cat"] else 1,
                                           fids_path=args.fids_path)
     fgids, X_train, y_train, X_valid, y_valid, \
         X_test, y_test, X_all, y_all, X_all_unscaled, \
@@ -157,6 +157,31 @@ if __name__ == "__main__":
                                             n_classes=len(y_train.unique()),
                                             fit_cv=args.fit_cv,
                                             final_fit=args.final_fit)
+        if args.model_type=="cat":
+            best_params = run_optuna_optim(train=(X_train, y_train), 
+                                           valid=(X_valid, y_valid), 
+                                           test=None,
+                                           lab_name=args.lab_name, 
+                                           refit=args.refit, 
+                                           time_optim=args.time_optim, 
+                                           n_trials=args.n_trials, 
+                                           study_name=study_name,
+                                           res_dir=args.res_dir,
+                                           model_type="cat",
+                                           model_fit_date=args.model_fit_date,
+                                          base_params={"eval_metric": "Logloss" if args.metric=="logloss" else args.metric})
+
+            logging.info(timer.get_elapsed())
+            model_final = cat_final_fitting(best_params=best_params,
+                                            X_train=X_train, y_train=y_train, 
+                                            X_valid=X_valid, y_valid=y_valid, 
+                                            X_test=X_test, y_test=y_test, 
+                                            metric=args.metric,
+                                            low_lr=args.low_lr,
+                                            early_stop=args.early_stop,
+                                            n_classes=len(y_train.unique()),
+                                            fit_cv=args.fit_cv,
+                                            final_fit=args.final_fit)
         elif args.model_type=="elr":
             best_params = run_optuna_optim(train=(X_train, y_train), 
                                            valid=(X_valid, y_valid), 
@@ -169,7 +194,7 @@ if __name__ == "__main__":
                                            res_dir=args.res_dir,
                                            model_type="elr",
                                            model_fit_date=args.model_fit_date,
-                                          base_params={"eval_metric": args.metric})
+                                           base_params={"eval_metric": args.metric})
             logging.info(timer.get_elapsed())
             model_final = elr_final_fitting(best_params=best_params, 
                                             X_train=X_train, 
@@ -203,7 +228,7 @@ if __name__ == "__main__":
         model_final = pickle.load(open(out_model_dir + "model_" + get_date() + ".pkl", "rb"))
 
     if not args.skip_model_fit and not args.just_r2:
-        if args.model_type == "xgb":
+        if args.model_type == "xgb" or args.model_type == "cat":
             # SHAP explainer for model
             shap_explainer = shap.TreeExplainer(model_final)
             train_importances, _ = get_shap_importances(X_train, shap_explainer, args.lab_name, args.lab_name_two)
@@ -250,7 +275,7 @@ if __name__ == "__main__":
         out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     elif not args.just_r2:
-        if args.model_type == "xgb":
+        if args.model_type == "xgb" or args.model_type == "cat":
             train_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_train_" + get_date() + ".csv")
             test_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_test_" + get_date() + ".csv")
         out_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  

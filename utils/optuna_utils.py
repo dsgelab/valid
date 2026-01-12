@@ -31,10 +31,9 @@ import time
 from general_utils import Timer
 import logging
 import numpy as np
-import torch
-def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader, Tuple[pl.DataFrame, pl.DataFrame]], 
-                     valid: Union[xgb.DMatrix,  torch.utils.data.DataLoader, Tuple[pl.DataFrame, pl.DataFrame]],
-                     test: Union[xgb.DMatrix,  torch.utils.data.DataLoader], 
+def run_optuna_optim(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFrame]], 
+                     valid: Union[xgb.DMatrix,  Tuple[pl.DataFrame, pl.DataFrame]],
+                     test: Union[xgb.DMatrix,  Tuple[pl.DataFrame, pl.DataFrame]], 
                      lab_name: str,
                      refit: bool,
                      time_optim: int,
@@ -72,18 +71,19 @@ def run_optuna_optim(train: Union[xgb.DMatrix, torch.utils.data.DataLoader, Tupl
                                                               train[0],
                                                               train[1],
                                                               valid[0],
-                                                             valid[1])
+                                                              valid[1])
     if model_type == "xgb":
         optuna_objective = lambda trial: optuna_xgb_objective(trial, 
                                                               base_params, 
                                                               train, 
                                                               valid)
-    elif model_type == "torch":
-        optuna_objective = lambda trial: optuna_torch_objective(trial, 
+    elif model_type == "cat":
+        optuna_objective = lambda trial: optuna_cat_objective(trial, 
                                                                 base_params, 
-                                                                train, 
-                                                                valid, 
-                                                                test)
+                                                                train[0],
+                                                                train[1],
+                                                                valid[0],
+                                                                valid[1])
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Running trials                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -117,6 +117,58 @@ def quantile_eval(metric):
         return metric, np.mean(loss)
     return eval_metric
     
+ 
+import catboost as cat
+import optuna
+from sklearn.metrics import accuracy_score
+def optuna_cat_objective(trial: optuna.Trial, 
+                         base_params: dict, 
+                         X_train,
+                         y_train,
+                         X_valid,
+                         y_valid) -> float:
+    """Objective function for the Optuna optimization. Returns the last value of the metric on the validation set."""
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Suggested hyperparameters                               #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    params = {
+        'depth': trial.suggest_int('depth', 2, 12),
+        'min_data_in_leaf': trial.suggest_int("min_data_in_leaf", 5, 20),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0, 15, log=True),
+        'bagging_temperature': trial.suggest_float('bagging_temperature', 0, 10),
+        'border_count': trial.suggest_int('border_count', 32, 255),
+        'random_strength': trial.suggest_float('random_strength', 0, 2),
+    }
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Setting up trial                                        #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    params.update(base_params)
+    pruning_callback = optuna.integration.CatBoostPruningCallback(trial, base_params["eval_metric"])
+    evals_result = dict()
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Train model                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    model = cat.CatBoostClassifier(**params)
+    model.fit(X_train.to_pandas(), y_train.to_pandas(), 
+              eval_set=(X_valid.to_pandas(), y_valid.to_pandas()), 
+              verbose=0, 
+              early_stopping_rounds=5, 
+              callbacks=[pruning_callback])
+    pruning_callback.check_pruned()
+    trial.set_user_attr("best_iteration", int(model.best_iteration_))
+
+    # Get the training metric value at best iteration
+    eval_results = model.get_evals_result()
+    metric_name = list(eval_results['validation'].keys())[0]
+    metric_value = eval_results['validation'][metric_name][model.best_iteration_]
+
+
+    return metric_value
+
+
 import xgboost as xgb
 import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
@@ -198,88 +250,3 @@ def optuna_elr_objective(trial: optuna.Trial,
     y_pred_proba = enet.predict_proba(X_valid.to_numpy())[:,1]
     lloss = log_loss(y_valid.to_numpy().ravel(), y_pred_proba.ravel())
     return(lloss)
-
-    
-try:
-    from termcolor import colored
-except:
-    def colored(string, color): return(string)
-import optuna
-import torch
-try:
-    from utils_final import epochs_run
-    from torch_utils import get_model, get_torch_optimizer
-except:
-    pass
-def optuna_torch_objective(trial: optuna.Trial, 
-                           base_params: dict,
-                           train_mbs, 
-                           valid_mbs, 
-                           test_mbs):
-    """Setup the objective function for Optuna."""
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Suggested hyperparameters                               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params = {
-        'embed_dim_exp': trial.suggest_int('embed_dim_exp', 5, 11, 1),
-        #'embed_dim_exp': trial.suggest_int('embed_dim_exp', 2, 10, 1),
-        'hidden_size_exp': trial.suggest_int('hidden_size_exp', 5, 11, 1),
-        'dropout_r': trial.suggest_int("dropout_r", 0, 10, 1),
-        'L2': trial.suggest_float('L2', 1e-6, 1e-2, log=True),
-        'lr': trial.suggest_int('lr', 5, 13, 2),
-        #'optimizer': trial.suggest_categorical('optimizer', ['adam', 'adadelta', 'adagrad', 'adamax', 'asgd', 'rmsprop', 'rprop', 'sgd']),
-        'optimizer': trial.suggest_categorical('optimizer', ['adagrad', 'adamax']),
-        'final_embed_dim_exp': trial.suggest_int('final_embed_dim_exp', 1, 7, 1)
-
-    }
-    if base_params["model_name"] == 'RNN': 
-        params['n_layers'] = trial.suggest_int('n_layers', 1, 5)
-    else:
-        params['n_layers'] = 1
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Setting up trial                                        #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    # Train model
-    print(params)
-    ehr_model = get_model(model_name=base_params["model_name"],
-                          embed_dim_exp=params["embed_dim_exp"],
-                          hidden_size_exp=params["hidden_size_exp"],
-                          n_layers=params["n_layers"],
-                          dropout_r=params["dropout_r"],
-                          cell_type=base_params["cell_type"],
-                          bii=base_params["bii"],
-                          time=base_params["time"],
-                          preTrainEmb=base_params["preTrainEmb"],
-                          input_size=base_params["input_size"],
-                          final_embed_dim_exp=params["final_embed_dim_exp"])    
-    optimizer = get_torch_optimizer(ehr_model, 
-                                    base_params["eps"],
-                                    params["lr"], 
-                                    params["L2"],
-                                    params["optimizer"])
-    if torch.cuda.is_available(): ehr_model = ehr_model.cuda() 
-    #######Step3. Train, validation and test. default: batch shuffle = true 
-    try:
-        best_val_loss, best_val_ep, best_model = \
-                    epochs_run(base_params["epochs"], 
-                                train = train_mbs, 
-                                valid = valid_mbs, 
-                                test = test_mbs, 
-                                model = ehr_model, 
-                                optimizer = optimizer,
-                                trial=trial,
-                                model_name=base_params["model_name"], 
-                                early_stop=base_params["early_stop"])
-        trial.set_user_attr("best_iteration", int(best_val_ep))
-        if best_val_loss is not None:
-            return best_val_loss
-        else:
-            raise optuna.TrialPruned()
-    # Keyboard interrupt to prune
-    except KeyboardInterrupt:
-        print(colored('-' * 89, 'green'))
-        print(colored('Manual pruning','green'))
-        raise optuna.TrialPruned()
-

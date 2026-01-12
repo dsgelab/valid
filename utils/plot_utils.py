@@ -287,7 +287,7 @@ def feature_importance_plot(importances: list[float],
     sns.barplot(x=importances[0:n_import], y=feature_labels[0:n_import], hue=feature_labels[0:n_import], ax=axis)
     axis.set_title('Feature Importances')
     axis.set_ylabel("")
-    if model_type == "xgb":
+    if model_type == "xgb" or model_type == "cat":
         axis.set_xlabel("mean(|SHAP value|)")
     elif model_type == "elr" or model_type == "lr":
         axis.set_xlabel("odds ratio")
@@ -505,7 +505,7 @@ def create_report_plots(y_true: Iterable[int],
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #
     if imp_ax is not None: 
-        if model_type == "xgb": 
+        if model_type == "xgb" or model_type == "cat":
             feature_importance_plot(importances=importances["mean_shap"], 
                                     feature_labels=importances["labels"], 
                                     ax=imp_ax,

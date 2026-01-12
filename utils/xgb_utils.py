@@ -178,7 +178,7 @@ def get_shap_importances(X_in: pl.DataFrame,
        Also returns the (readable) names of the features in the same order as the SHAP values."""
     
     new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
-    explanations = explainer.shap_values(X_in)
+    explanations = explainer.shap_values(X_in.to_pandas())
     mean_shaps = np.abs(explanations).mean(0)
     shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
 

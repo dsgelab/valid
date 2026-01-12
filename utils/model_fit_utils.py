@@ -152,7 +152,7 @@ def xgb_final_fitting(best_params: dict,
                             seed=1241,
                             shuffle=True,
                             verbose_eval=100)
-            clf = xgb.XGBRegressor(**params_fin, n_estimators=10000)
+            clf = xgb.XGBRegressor(**params_fin, n_estimators=len(cv_clf))
             clf.fit(X, y, verbose=100)       
         else:
             clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
@@ -172,6 +172,90 @@ def xgb_final_fitting(best_params: dict,
     logging.info(timer.get_elapsed())
     logging.info('Best params ---------------------------')
     logging.info(f'fixed learning rate: {params_fin["learning_rate"]}')
+
+    logging.info("time taken {timer.get_elapsed()}")
+
+    return(clf)   
+
+
+"""Fits the final CatBoost model with the best hyperparameters found in the optimization step.
+
+    Args:
+        best_params (dict): The best hyperparameters found in the optimization step.
+        X_train (pl.DataFrame): The training features.
+        y_train (pl.DataFrame): The training target.
+        X_valid (pl.DataFrame): The validation features.
+        y_valid (pl.DataFrame): The validation target.
+        metric (str): The evaluation metric.
+        low_lr (float): The learning rate.  
+        early_stop (int): The number of rounds for early stopping.
+        n_classes (int): The number of classes (for multi-class classification).
+
+    Returns:
+        clf (cat.CatBoostClassifier or cat.CatBoostRegressor): The fitted CatBoost model.
+"""
+import catboost as cat
+def cat_final_fitting(best_params: dict, 
+                      X_train: pl.DataFrame, 
+                      y_train: pl.DataFrame, 
+                      X_valid: pl.DataFrame, 
+                      y_valid: pl.DataFrame, 
+                      X_test: pl.DataFrame,
+                      y_test: pl.DataFrame,
+                      metric: str,
+                      low_lr: float,
+                      early_stop: int,
+                      n_classes: int=2,
+                      fit_cv: int=1,
+                      final_fit: int=0):
+    """Fits the final XGB model with the best hyperparameters found in the optimization step."""
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Study setup                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    timer = Timer()
+    np.random.seed(9234)
+    best_params["learning_rate"] = low_lr
+    best_params["loss_function"] = "Logloss" if metric=="logloss" else metric
+    print(best_params)
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Fitting                                                 #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if not final_fit:
+        X = pl.concat([X_train, X_valid])
+        y = pl.concat([y_train, y_valid])
+    else:
+        X = pl.concat([X_train, X_valid,  X_test])
+        y = pl.concat([y_train, y_valid, y_test])
+        # Use Option 4 to find best num_boost_round
+    if fit_cv or final_fit:
+        cv_clf = cat.cv(params=best_params, 
+                        pool=cat.Pool(X.to_pandas(), y.to_pandas()), 
+                        early_stopping_rounds=early_stop, 
+                        stratified=True, 
+                        fold_count=10,
+                        seed=1241,
+                        shuffle=True,
+                        verbose_eval=100)
+        clf = cat.CatBoostClassifier(**best_params, n_estimators=len(cv_clf))
+        clf.fit(X.to_pandas(), y.to_pandas(), verbose=100)
+        print("done")
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Logging info                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    logging.info(timer.get_elapsed())
+    # Get the best model
+    logging.info('Final fitting ==============================')
+    logging.info('Number of estimators ---------------------------')
+    if not fit_cv and not final_fit:
+        logging.info(f'best boosting round: {clf.best_iteration_}')
+    else:
+        logging.info(len(cv_clf))
+    logging.info('Time ---------------------------')
+    logging.info(timer.get_elapsed())
+    logging.info('Best params ---------------------------')
+    logging.info(f'fixed learning rate: {best_params["learning_rate"]}')
 
     logging.info("time taken {timer.get_elapsed()}")
 
