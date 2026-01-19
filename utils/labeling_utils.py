@@ -10,10 +10,10 @@ from datetime import datetime
 def log_print_n(labels: pl.DataFrame,
                 name: str):
     logging_print(name)
-    logging_print(f"MEAN N indvs {labels.height}  N cases { labels.get_column("y_MEAN_ABNORM").sum()} pct cases {round( labels.get_column("y_MEAN_ABNORM").sum()/labels.height*100,2)}%")
-    logging_print(f"MIN N indvs {labels.height}  N cases { labels.get_column("y_MIN_ABNORM").sum()} pct cases {round( labels.get_column("y_MIN_ABNORM").sum()/labels.height*100,2)}%")
-    logging_print(f"NEXT N indvs {labels.height}  N cases { labels.get_column("y_NEXT_ABNORM").sum()} pct cases {round( labels.get_column("y_NEXT_ABNORM").sum()/labels.height*100,2)}%")
-    
+    logging_print(f"MEAN N indvs {labels.height}  N cases { labels.get_column('y_MEAN_ABNORM').sum()} pct cases {round( labels.get_column('y_MEAN_ABNORM').sum()/labels.height*100,2)}%")
+    logging_print(f"MIN N indvs {labels.height}  N cases { labels.get_column('y_MIN_ABNORM').sum()} pct cases {round( labels.get_column('y_MIN_ABNORM').sum()/labels.height*100,2)}%")
+    logging_print(f"NEXT N indvs {labels.height}  N cases { labels.get_column('y_NEXT_ABNORM').sum()} pct cases {round( labels.get_column('y_NEXT_ABNORM').sum()/labels.height*100,2)}%")
+
 def add_ages(data: pl.DataFrame,
              date: pl.Date,
              fg_ver) -> pl.DataFrame:
