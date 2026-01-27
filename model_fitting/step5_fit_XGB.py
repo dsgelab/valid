@@ -6,8 +6,8 @@ from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim_cv
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
 from input_utils import get_data_and_pred_list   
-from model_fit_utils import xgb_final_fitting, cat_final_fitting, get_xgb_base_params, elr_final_fitting, logr_fitting, linr_fitting
-from plot_utils import get_plot_names
+from model_fit_utils import xgb_final_fitting, get_xgb_base_params, logr_fitting, linr_fitting
+from minor_plot_utils import get_plot_names
 from labeling_utils import log_print_n
 
 # Standard stuff

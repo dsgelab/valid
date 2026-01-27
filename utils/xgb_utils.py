@@ -1,5 +1,5 @@
 from processing_utils import get_abnorm_func_based_on_name 
-from code.valid.utils.minor_plot_utils import get_plot_names
+from minor_plot_utils import get_plot_names
 from model_fit_utils import get_cont_goal_col_name
 from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
 from general_utils import get_date, make_dir

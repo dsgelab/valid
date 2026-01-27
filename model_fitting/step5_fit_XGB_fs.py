@@ -2,7 +2,7 @@
 import sys
 
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from code.valid.utils.optuna_utils import run_optuna_optim_cv
+from optuna_utils import run_optuna_optim_cv
 from model_eval_utils import bootstrap_difference
 from general_utils import get_date, make_dir, init_logging, Timer, logging_print
 from model_eval_utils import get_train_type, save_all_report_plots
