@@ -2,8 +2,7 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, logging_print, read_file
-from labeling_utils import log_print_n, label_cases_and_controls,  remove_age_outliers, get_extra_file_descr, get_bbs_indvs
-from processing_utils import add_set
+from labeling_utils import log_print_n, label_cases_and_controls,  remove_age_outliers, get_extra_file_descr, get_bbs_indvs, add_set
 
 # Standard stuff
 import numpy as np
@@ -41,8 +40,9 @@ def get_parser_arguments():
     parser.add_argument("--months_buffer_abnorm", type=int, help="Months to average before baseline, which if abnormal -> removed.", default=3)
     parser.add_argument("--min_age", type=float, help="Minimum age at prediction time", default=30)
     parser.add_argument("--max_age", type=float, help="Maximum age at prediction time", default=70)
-    parser.add_argument("--test_pct", type=float, help="Percentage of test data.", default=0.2)
-    parser.add_argument("--valid_pct", type=float, help="Percentage of validation data.", default=0.2)
+    parser.add_argument("--test_pct", type=float, help="Percentage of test data.", default=0)
+    parser.add_argument("--valid_pct", type=float, help="Percentage of final validation data.", default=0.2)
+    parser.add_argument("--finetune_valid_pct", type=float, help="Percentage of finetune-validation data. For feature selection and optuna optimization.", default=0.2)
     parser.add_argument("--test_bbs", type=str, default=["HELSINKI BIOBANK"], nargs="+", help="Cohorts that should be part of the test set i.e. HELSINKI BIOBANK")
 
     args = parser.parse_args()
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(args.data_path_full)
-    print(data) 
+    #print(data) 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Cases and controls                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -110,17 +110,29 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # Selecting in HBB, correct age at end, not dead, and BMI >= 18.5
     select_fids = get_bbs_indvs(fg_ver=args.fg_ver, bbs=args.test_bbs)
+    if args.test_pct>0:
+        n_test = int(len(select_fids)*args.test_pct)
+        # set a seed for reproducibility
+        np.random.seed(42)
+        select_fids = np.random.choice(select_fids, n_test, replace=False).tolist()
+
     n_nothbb = labels.filter(~pl.col("FINNGENID").is_in(select_fids)).height
-    test_labels = labels.filter(pl.col("FINNGENID").is_in(select_fids))
-    test_labels = test_labels.with_columns(pl.lit(2).alias("SET"))
+    test_labels = (labels
+                   .filter(pl.col("FINNGENID").is_in(select_fids))
+                   .with_columns(pl.lit(2).cast(pl.Float64).alias("SET"))
+    )
     other_labels = labels.filter(~pl.col.FINNGENID.is_in(select_fids))
     logging_print(str(n_nothbb) + " individuals not in HBB.")
     log_print_n(test_labels, "HBB")
     log_print_n(other_labels, "TrainValid")
 
-    other_labels = add_set(other_labels, test_pct=args.test_pct, valid_pct=args.valid_pct)
-    log_print_n(other_labels.filter(pl.col.SET==1), "Valid")
+    other_labels = add_set(other_labels, 
+                           valid_pct=args.valid_pct,
+                           finetune_valid_pct=args.finetune_valid_pct)
     log_print_n(other_labels.filter(pl.col.SET==0), "Train")
+    log_print_n(other_labels.filter(pl.col.SET==0.5), "Finetune Valid")
+    log_print_n(other_labels.filter(pl.col.SET==1), "Valid")
+    log_print_n(other_labels.filter(pl.col.SET==2), "Test")
 
     labels = pl.concat([other_labels, test_labels])
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

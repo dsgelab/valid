@@ -6,6 +6,45 @@ import pandas as pd
 from processing_utils import get_abnorm_func_based_on_name
 from general_utils import read_file, logging_print
 from datetime import datetime
+from sklearn.model_selection import train_test_split
+
+
+def add_set(unique_data, 
+            valid_pct=0.1,
+            finetune_valid_pct=0.1):
+    """Adds SET column to data based on random split of individuals.
+       Data passed must be unique data with only one row per individual."""
+    total_valid_pct = valid_pct + finetune_valid_pct
+
+    data_train, data_total_valid = train_test_split(unique_data,
+                                                    shuffle=True, 
+                                                    random_state=391, 
+                                                    test_size=total_valid_pct, 
+                                                    train_size=1-total_valid_pct, 
+                                                    stratify=unique_data["y_MEAN_ABNORM"])
+    
+    if finetune_valid_pct > 0:
+        data_valid, data_finetune_valid = train_test_split(data_total_valid,
+                                                           shuffle=True, 
+                                                           random_state=391, 
+                                                           test_size=round(finetune_valid_pct/total_valid_pct,2), 
+                                                           train_size=round(valid_pct/total_valid_pct,2), 
+                                                           stratify=data_total_valid["y_MEAN_ABNORM"])
+    else:
+        data_valid = data_total_valid
+        data_finetune_valid = pl.DataFrame({"FINNGENID": []})  # Empty DataFrame
+        
+    unique_data = unique_data.with_columns(
+                                pl.when(pl.col("FINNGENID").is_in(data_train["FINNGENID"])).then(0)
+                                  .when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(1)
+                                  .when(pl.col("FINNGENID").is_in(data_finetune_valid["FINNGENID"])).then(0.5)
+                                  .otherwise(None)
+                                  .cast(pl.Int32)
+                                  .alias("SET")
+        )
+    print(unique_data.select(pl.col("SET")).to_series().value_counts())
+    return(unique_data)
+
 
 def log_print_n(labels: pl.DataFrame,
                 name: str):

@@ -84,7 +84,7 @@ def get_parser_arguments():
     # Feature selection parameters
     parser.add_argument("--n_features", type=int, help="Number of features to select.", default=0)
     parser.add_argument("--fs_path", type=str, help="Path to feature selection results.", default="")
-    parser.add_argument("--training_pct", type=float, help="Amount of training data to be used", default=1)
+    parser.add_argument("--train_pct", type=float, help="Amount of training data to be used", default=100)
 
     args = parser.parse_args()
 
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     if args.model_fit_date == "": args.model_fit_date = get_date()
 
     out_dir = args.res_dir + study_name + "/";    
-    if args.training_pct<1: out_dir = out_dir + f"trainpct{args.training_pct}/" 
+    if args.train_pct<100: out_dir = out_dir + f"trainpct{args.train_pct}/" 
     if args.final_fit: out_dir = out_dir + "/final/"
     out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.model_fit_date + "/" 
     out_plot_dir = out_dir + "plots/" + args.model_fit_date + "/"
@@ -191,7 +191,7 @@ if __name__ == "__main__":
             scaler_base, data = create_xgb_dts(data=data, 
                                                X_cols=X_cols, 
                                                y_goal=args.goal,
-                                               training_pct=args.training_pct)
+                                               train_pct=args.train_pct)
     print(X_all_unscaled.with_columns(pl.Series("FINNGENID", fgids)).head(2))
     log_print_n(data.filter(pl.col.SET==0), "Train")
     log_print_n(data.filter(pl.col.SET==0.5), "Finetune Valid")
@@ -218,7 +218,7 @@ if __name__ == "__main__":
                                       base_params=base_params)
     if not args.skip_model_fit:
         logging.info(timer.get_elapsed())
-        full_model_final = xgb_final_fitting(best_params=best_params,
+        full_model = xgb_final_fitting(best_params=best_params,
                                              X_train=X_train, y_train=y_train, 
                                              X_finetune_valid=X_finetune_valid, 
                                              y_finetune_valid=y_finetune_valid, 
@@ -230,48 +230,85 @@ if __name__ == "__main__":
                                              n_classes=len(y_train.unique()),
                                              fit_cv=False,
                                              final_fit=args.final_fit)
-        full_model_final.save_model(out_model_dir + "model_" + get_date() + ".pkl")  
+        full_model_cv = xgb_final_fitting(best_params=best_params,
+                                                X_train=X_train, y_train=y_train, 
+                                                X_finetune_valid=X_finetune_valid, 
+                                                y_finetune_valid=y_finetune_valid, 
+                                                X_valid=X_valid, y_valid=y_valid,
+                                                X_test=X_test, y_test=y_test, 
+                                                metric=args.metric,
+                                                low_lr=args.low_lr,
+                                                early_stop=args.early_stop,
+                                                n_classes=len(y_train.unique()),
+                                                fit_cv=True,
+                                                final_fit=args.final_fit)
+        full_model_cv.save_model(out_model_dir + "cv_model_" + get_date() + ".pkl")  
+        full_model.save_model(out_model_dir + "model_" + get_date() + ".pkl")  
 
-            
         # # # # Shaps
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-        shap_explainer = shap.TreeExplainer(full_model_final)
+        shap_explainer = shap.TreeExplainer(full_model)
         train_importances, _ = get_shap_importances(X_train, 
-                                                        shap_explainer, 
-                                                        args.lab_name, 
-                                                        args.lab_name_two, 
-                                                        translate=True)
+                                                       shap_explainer, 
+                                                       args.lab_name, 
+                                                       args.lab_name_two, 
+                                                       translate=True)
+        shap_explainer = shap.TreeExplainer(full_model_cv)
+        train_cv_importances, _ = get_shap_importances(pl.concat([X_train, X_finetune_valid]), 
+                                                       shap_explainer, 
+                                                       args.lab_name, 
+                                                       args.lab_name_two, 
+                                                       translate=True)
+
         valid_importances, _ = get_shap_importances(X_valid, 
-                                                        shap_explainer, 
-                                                        args.lab_name, 
-                                                        args.lab_name_two, 
-                                                        translate=True)
+                                                    shap_explainer, 
+                                                    args.lab_name, 
+                                                    args.lab_name_two, 
+                                                    translate=True)
         test_importances, _ = get_shap_importances(X_test, 
-                                                        shap_explainer, 
-                                                        args.lab_name, 
-                                                        args.lab_name_two, 
-                                                        translate=True)
+                                                   shap_explainer, 
+                                                   args.lab_name, 
+                                                   args.lab_name_two, 
+                                                   translate=True)
         save_importances(top_gain=train_importances,
                          out_down_path=out_down_path,
                          study_name=study_name,
                          lab_name=args.lab_name,
                          goal=args.goal,
                          subset="train")
+        save_importances(top_gain=train_cv_importances,
+                         out_down_path=out_down_path,
+                         study_name=study_name,
+                         lab_name=args.lab_name,
+                         goal=args.goal,
+                         subset="train",
+                         cv=True)
+        
         # # # # Model predictions
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-        full_out_data = get_out_data(data=data, 
-                                     model_final=full_model_final, 
+        full_cv_data = get_out_data(data=data, 
+                                     model_final=full_model_cv, 
                                      X_all=X_all, 
                                      y_all=y_all, 
                                      metric=args.metric,
                                      lab_name=args.lab_name,
                                      goal=args.goal,
                                      abnorm_extra_choice=args.abnorm_extra_choice)
-        full_out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")          
+        full_cv_data.write_parquet(out_model_dir + "cv_preds_" + get_date() + ".parquet")      
+
+        full_data = get_out_data(data=data, 
+                                     model_final=full_model, 
+                                     X_all=X_all, 
+                                     y_all=y_all, 
+                                     metric=args.metric,
+                                     lab_name=args.lab_name,
+                                     goal=args.goal,
+                                     abnorm_extra_choice=args.abnorm_extra_choice)
+        full_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")          
 
         # # # # Plotting
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-        save_all_report_plots(out_data=full_out_data,
+        save_all_report_plots(out_data=full_cv_data,
                                   out_plot_path=out_plot_path,
                                   out_down_path=out_down_path,
                                   study_name=study_name,
@@ -282,16 +319,16 @@ if __name__ == "__main__":
                                   model_type=args.model_type,
                                   fit_cv=args.fit_cv)
     else:
-        full_out_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
+        full_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
         train_importances = pl.read_csv(out_down_path + "/" + args.goal + "/" + args.lab_name + "_" + study_name + "_" + args.goal + "_shap_importance_train_" + get_date() + ".csv")
-        full_model_final = xgb.XGBClassifier()
-        full_model_final.load_model(out_model_dir + "model_" + get_date() + ".pkl")  
+        full_model = xgb.XGBClassifier()
+        full_model.load_model(out_model_dir + "model_" + get_date() + ".pkl")  
 
     # # # # Top K features
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # get top K features
     if args.n_features or args.fs_path != "":
-        if args.n_features:
+        if args.n_features  :
             fs_results = pl.DataFrame()
             for crnt_k in range(1, args.n_features + 1):
                 logging_print(f"Fitting feature select model with top {crnt_k} features.")
@@ -313,7 +350,19 @@ if __name__ == "__main__":
                 X_fs_valid = X_valid.select(top_k_features)
                 X_fs_test = X_test.select(top_k_features)
                 X_fs_all = X_all.select(top_k_features)
-                model_final = xgb_final_fitting(best_params=best_params,
+
+                best_fs_params = run_optuna_optim_cv(train=[X_fs_train, y_train], 
+                                                lab_name=args.lab_name, 
+                                                refit=args.refit, 
+                                                time_optim=args.time_optim, 
+                                                n_trials=args.n_trials, 
+                                                study_name=study_name+"_fs" + str(crnt_k),
+                                                res_dir=args.res_dir,
+                                                model_type="xgb",
+                                                model_fit_date=args.model_fit_date,
+                                                base_params=base_params)
+                
+                model_fs = xgb_final_fitting(best_params=best_fs_params,
                                                 X_train=X_fs_train, y_train=y_train, 
                                                 X_finetune_valid=X_fs_finetune_valid, y_finetune_valid=y_finetune_valid,
                                                 X_valid=X_fs_valid, y_valid=y_valid, 
@@ -322,59 +371,53 @@ if __name__ == "__main__":
                                                 low_lr=args.low_lr,
                                                 early_stop=args.early_stop,
                                                 n_classes=len(y_train.unique()),
-                                                fit_cv=True,
+                                                fit_cv=False,
                                                 final_fit=args.final_fit)
                         
-                out_data = get_out_data(data=data, 
-                                                model_final=model_final, 
-                                                X_all=X_fs_all, 
-                                                y_all=y_all, 
-                                                metric=args.metric,
-                                                lab_name=args.lab_name,
-                                                goal=args.goal,
-                                                abnorm_extra_choice=args.abnorm_extra_choice)
+                fs_data = get_out_data(data=data, 
+                                        model_final=model_fs, 
+                                        X_all=X_fs_all, 
+                                        y_all=y_all, 
+                                        metric=args.metric,
+                                        lab_name=args.lab_name,
+                                        goal=args.goal,
+                                        abnorm_extra_choice=args.abnorm_extra_choice)
                 # # # # Check significance against full model
                 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
                 for crnt_metric in ["auc", "avg_prec", "logloss"]:
-                    fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                        out_data=out_data,
-                                                                        set_no=0,
-                                                                        crnt_k=crnt_k,
-                                                                        fs_results=fs_results,
-                                                                        metric=crnt_metric)
-                    fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                        out_data=out_data,
-                                                                        set_no=1,
-                                                                        crnt_k=crnt_k,
-                                                                        fs_results=fs_results,
-                                                                        metric=crnt_metric)
-                    fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                        out_data=out_data,
-                                                                        set_no=2,
-                                                                        crnt_k=crnt_k,
-                                                                        fs_results=fs_results,
-                                                                        metric=crnt_metric)
-                
-                fs_results, pval_diff, diff_est, lowci, highci, avg_low_1, avg_high_1 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+                    fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_data,
+                                                                    out_data=fs_data,
+                                                                    set_no=1,
+                                                                    crnt_k=crnt_k,
+                                                                    fs_results=fs_results,
+                                                                    metric=crnt_metric)
+                    fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_data,
+                                                                    out_data=fs_data,
+                                                                    set_no=2,
+                                                                    crnt_k=crnt_k,
+                                                                    fs_results=fs_results,
+                                                                    metric=crnt_metric)
+
+                fs_results, pval_diff, diff_est, lowci, highci, avg_low_1, avg_high_1 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=crnt_k,
                                                                                                      fs_results=fs_results,
                                                                                                      metric="auc")
-                fs_results, pval_diff_2, diff_est_2, lowci_2, highci_2, avg_low_2, avg_high_2 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+                fs_results, pval_diff_2, diff_est_2, lowci_2, highci_2, avg_low_2, avg_high_2 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=crnt_k,
                                                                                                      fs_results=fs_results,
                                                                                                      metric="avg_prec")
-                fs_results, pval_diff_3, diff_est_3, lowci_3, highci_3, avg_low_3, avg_high_3 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+                fs_results, pval_diff_3, diff_est_3, lowci_3, highci_3, avg_low_3, avg_high_3 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=crnt_k,
                                                                                                      fs_results=fs_results,
                                                                                                      metric="logloss")
                 print(fs_results)
-                if ((pval_diff >= 0.05 and diff_est > -0.005) or (pval_diff >= 0.05 and diff_est > 0)) and \
+                if ((pval_diff >= 0.05 and diff_est > -0.005) or (pval_diff <0.05 and diff_est > 0)) and \
                         ((pval_diff_2 >= 0.05 and diff_est_2 > -0.005) or (pval_diff_2 < 0.05 and diff_est_2 > 0)) and \
                         ((pval_diff_3 >= 0.05 and diff_est_3 < 0.005) or (pval_diff_3 < 0.05 and diff_est_3 < 0)):
                                                     # # # # Logging results
@@ -391,21 +434,8 @@ if __name__ == "__main__":
                             ")
                     fs_results.write_csv(out_model_dir + "fs_auc_diffs_" + get_date() + ".tsv", separator="\t")
                     args.n_features = crnt_k
-                    shap_explainer = shap.TreeExplainer(model_final)
                     X_fs_all.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_unscaled_" + "fs_"+ str(args.n_features) + "_" + get_date() + ".parquet")
 
-                    train_importances, _ = get_shap_importances(X_fs_train, 
-                                                                shap_explainer, 
-                                                                args.lab_name, 
-                                                                args.lab_name_two, 
-                                                                translate=True)
-                    save_importances(top_gain=train_importances,
-                                    out_down_path=out_down_path,
-                                    study_name=study_name,
-                                    lab_name=args.lab_name,
-                                    goal=args.goal,
-                                    subset="train",
-                                    n_features=args.n_features)
                     break
                                             
         elif args.fs_path != "":
@@ -424,7 +454,17 @@ if __name__ == "__main__":
             X_fs_valid = X_valid.select(top_k_features)
             X_fs_test = X_test.select(top_k_features)
             X_fs_all = X_all.select(top_k_features)
-            model_final = xgb_final_fitting(best_params=best_params,
+            best_fs_params = run_optuna_optim_cv(train=[pl.concat([X_fs_train, X_fs_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
+                                                lab_name=args.lab_name, 
+                                                refit=args.refit, 
+                                                time_optim=args.time_optim, 
+                                                n_trials=args.n_trials, 
+                                                study_name=study_name,
+                                                res_dir=args.res_dir,
+                                                model_type="xgb",
+                                                model_fit_date=args.model_fit_date,
+                                                base_params=base_params)
+            model_fs = xgb_final_fitting(best_params=best_fs_params,
                                             X_train=X_fs_train, y_train=y_train, 
                                             X_finetune_valid=X_fs_finetune_valid, y_finetune_valid=y_finetune_valid,
                                             X_valid=X_fs_valid, y_valid=y_valid, 
@@ -433,11 +473,11 @@ if __name__ == "__main__":
                                             low_lr=args.low_lr,
                                             early_stop=args.early_stop,
                                             n_classes=len(y_train.unique()),
-                                            fit_cv=args.fit_cv,
+                                            fit_cv=False,
                                             final_fit=args.final_fit)
                         
-            out_data = get_out_data(data=data, 
-                                    model_final=model_final, 
+            fs_data = get_out_data(data=data, 
+                                    model_final=model_fs, 
                                     X_all=X_fs_all, 
                                     y_all=y_all, 
                                     metric=args.metric,
@@ -448,39 +488,39 @@ if __name__ == "__main__":
             # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
             fs_results = pl.DataFrame()
             for crnt_metric in ["auc", "avg_prec", "logloss"]:
-                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                out_data=out_data,
+                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_data,
+                                                                out_data=fs_data,
                                                                 set_no=0,
                                                                 crnt_k=args.n_features,
                                                                 fs_results=fs_results,
                                                                 metric=crnt_metric)
-                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                out_data=out_data,
+                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_data,
+                                                                out_data=fs_data,
                                                                 set_no=1,
                                                                 crnt_k=args.n_features,
                                                                 fs_results=fs_results,
                                                                 metric=crnt_metric)
-                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_out_data,
-                                                                out_data=out_data,
+                fs_results, _, _, _, _, _, _ = eval_metric_diff(full_out_data=full_data,
+                                                                out_data=fs_data,
                                                                 set_no=2,
                                                                 crnt_k=args.n_features,
                                                                 fs_results=fs_results,
                                                                 metric=crnt_metric)
                 
-            fs_results, pval_diff, diff_est, lowci, highci, avg_low_1, avg_high_1 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+            fs_results, pval_diff, diff_est, lowci, highci, avg_low_1, avg_high_1 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=args.n_features,
                                                                                                      fs_results=fs_results,
                                                                                                      metric="auc")
-            fs_results, pval_diff_2, diff_est_2, lowci_2, highci_2, avg_low_2, avg_high_2 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+            fs_results, pval_diff_2, diff_est_2, lowci_2, highci_2, avg_low_2, avg_high_2 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=args.n_features,
                                                                                                      fs_results=fs_results,
                                                                                                      metric="avg_prec")
-            fs_results, pval_diff_3, diff_est_3, lowci_3, highci_3, avg_low_3, avg_high_3 = eval_metric_diff(full_out_data=full_out_data,
-                                                                                                     out_data=out_data,
+            fs_results, pval_diff_3, diff_est_3, lowci_3, highci_3, avg_low_3, avg_high_3 = eval_metric_diff(full_out_data=full_data,
+                                                                                                     out_data=fs_data,
                                                                                                      set_no=0.5,
                                                                                                      crnt_k=args.n_features,
                                                                                                      fs_results=fs_results,
@@ -498,33 +538,51 @@ if __name__ == "__main__":
                             ")
             fs_results.write_csv(out_model_dir + "fs_auc_diffs_" + get_date() + ".tsv", separator="\t")
             args.n_features = args.n_features
-            shap_explainer = shap.TreeExplainer(model_final)
             X_fs_all.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_unscaled_" + "fs_"+ str(args.n_features) + "_" + get_date() + ".parquet")
 
-            train_importances, _ = get_shap_importances(X_fs_train, 
-                                                        shap_explainer, 
-                                                        args.lab_name, 
-                                                        args.lab_name_two, 
-                                                        translate=True)
-            save_importances(top_gain=train_importances,
-                             out_down_path=out_down_path,
-                             study_name=study_name,
-                             lab_name=args.lab_name,
-                             goal=args.goal,
-                             subset="train",
-                             n_features=args.n_features)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    model_final.save_model(out_model_dir + "model_fs" + str(args.n_features) + "_" + get_date() + ".pkl")  
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #           
+    model_fs_cv = xgb_final_fitting(best_params=best_fs_params,
+                                    X_train=X_fs_train, y_train=y_train, 
+                                    X_finetune_valid=X_fs_finetune_valid, y_finetune_valid=y_finetune_valid,
+                                    X_valid=X_fs_valid, y_valid=y_valid, 
+                                    X_test=X_fs_test, y_test=y_test, 
+                                    metric=args.metric,
+                                    low_lr=args.low_lr,
+                                    early_stop=args.early_stop,
+                                    n_classes=len(y_train.unique()),
+                                    fit_cv=True,
+                                    final_fit=args.final_fit)
+    shap_explainer = shap.TreeExplainer(model_fs_cv)
+    train_importances, _ = get_shap_importances(X_fs_train, 
+                                                shap_explainer, 
+                                                args.lab_name, 
+                                                args.lab_name_two, 
+                                                translate=True)
+    save_importances(top_gain=train_importances,
+                                    out_down_path=out_down_path,
+                                    study_name=study_name,
+                                    lab_name=args.lab_name,
+                                    goal=args.goal,
+                                    subset="train",
+                                    n_features=args.n_features)
+    model_fs_cv.save_model(out_model_dir + "model_fs" + str(args.n_features) + "_cv_" + get_date() + ".pkl")  
     pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
 
+    fs_cv_data = get_out_data(data=data, 
+                                    model_fs=model_fs_cv, 
+                                    X_all=X_fs_all, 
+                                    y_all=y_all, 
+                                    metric=args.metric,
+                                    lab_name=args.lab_name,
+                                    goal=args.goal,
+                                    abnorm_extra_choice=args.abnorm_extra_choice)
+    fs_cv_data.write_csv(out_model_dir + "preds_fs" + str(args.n_features) + "_cv_" + get_date() + ".tsv", separator="\t")  
+    fs_cv_data.write_parquet(out_model_dir + "preds_fs" + str(args.n_features) + "_cv_" + get_date() + ".parquet")  
 
-    out_data.write_csv(out_model_dir + "preds_fs" + str(args.n_features) + "_" + get_date() + ".tsv", separator="\t")  
-    out_data.write_parquet(out_model_dir + "preds_fs" + str(args.n_features) + "_" + get_date() + ".parquet")  
-
-    save_all_report_plots(out_data=out_data,
+    save_all_report_plots(out_data=fs_cv_data,
                           out_plot_path=out_plot_path,
                           out_down_path=out_down_path,
                           study_name=study_name,

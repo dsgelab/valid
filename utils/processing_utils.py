@@ -1,6 +1,4 @@
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
 import polars as pl
 
 
@@ -308,56 +306,3 @@ def egfr_abnorm(data, value_col_name="VALUE_TRANSFORM"):
     data.loc[np.logical_and(data[value_col_name] < 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 1
     data.loc[np.logical_and(data[value_col_name] >= 59, round(data.EVENT_AGE) >= 70),"ABNORM_CUSTOM"] = 0
     return(pl.DataFrame(data))
-
-def add_measure_counts(data):
-    data = data.to_pandas()
-
-    data.DATE = data.DATE.astype("datetime64[ns]")
-    n_measures = data.groupby("FINNGENID").agg({"DATE": [("N_YEAR", lambda x: len(set(x.dt.year)))], "VALUE": len}).reset_index()
-    n_measures.columns = ["FINNGENID", "N_YEAR", "N_MEASURE"]
-    data = pd.merge(data, n_measures, on="FINNGENID", how="left")
-    return(pl.DataFrame(data))
-
-def add_set(unique_data, 
-            test_pct=0.1, 
-            valid_pct=0.1):
-    """Adds SET column to data based on random split of individuals.
-       Data passed must be unique data with only one row per individual."""
-    if test_pct > 0:
-        data_train, data_rest = train_test_split(unique_data, 
-                                                 shuffle=True, 
-                                                 random_state=3291, 
-                                                 test_size=round((valid_pct+test_pct),2), 
-                                                 train_size=round(1-(valid_pct+test_pct),2), 
-                                                 stratify=unique_data["y_MEAN_ABNORM"])
-        new_test_size = round(test_pct/(test_pct+valid_pct),2)
-        new_train_size = round(valid_pct/(test_pct+valid_pct),2)
-    else:
-        data_rest = unique_data
-        new_test_size = valid_pct
-        new_train_size = 1-valid_pct
-    data_valid, data_test = train_test_split(data_rest, 
-                                             shuffle=True, 
-                                             random_state=391, 
-                                             test_size=new_test_size, 
-                                             train_size=new_train_size, 
-                                             stratify=data_rest["y_MEAN_ABNORM"])
-    if test_pct == 0:
-        unique_data = unique_data.with_columns(
-                            SET=pl.when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(0)
-                                   .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(1)
-                                   .otherwise(None)
-    )
-        print(f"N rows train {len(data_valid)}   N indvs train {len(set(data_valid["FINNGENID"]))}  N mean abnorm train {sum(data_valid["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_valid["y_MEAN_ABNORM"])/len(data_valid), 2)}")
-
-    else:
-        unique_data = unique_data.with_columns(
-            SET=pl.when(pl.col("FINNGENID").is_in(data_train["FINNGENID"])).then(0)
-               .when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(1)
-               .when(pl.col("FINNGENID").is_in(data_test["FINNGENID"])).then(2)
-               .otherwise(None)
-        )
-        print(f"N rows train {len(data_train)}   N indvs train {len(set(data_train["FINNGENID"]))}  N mean abnorm train {sum(data_train["y_MEAN_ABNORM"])} pct mean abnorm {round(sum(data_train["y_MEAN_ABNORM"])/len(data_train), 2)}")
-
-    print(unique_data.select(pl.col("SET")).to_series().value_counts())
-    return(pl.DataFrame(unique_data))

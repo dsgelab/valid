@@ -1,3 +1,5 @@
+from TabPFN.examples.tabpfn_for_binary_classification import X_train
+from code.valid.model_fitting.step5_fit_XGB_fs import X_finetune_valid
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
@@ -89,6 +91,8 @@ def get_cont_goal_col_name(goal: str,
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
                       y_train: pl.DataFrame, 
+                      X_finetune_valid: pl.DataFrame,
+                      y_finetune_valid: pl.DataFrame,
                       X_valid: pl.DataFrame, 
                       y_valid: pl.DataFrame, 
                       X_test: pl.DataFrame,
@@ -117,11 +121,12 @@ def xgb_final_fitting(best_params: dict,
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if not final_fit:
-        X = pl.concat([X_train, X_valid])
-        y = pl.concat([y_train, y_valid])
+        if fit_cv:
+            X = pl.concat([X_train, X_finetune_valid])
+            y = pl.concat([y_train, y_finetune_valid])
     else:
-        X = pl.concat([X_train, X_valid,  X_test])
-        y = pl.concat([y_train, y_valid, y_test])
+        X = pl.concat([X_train, X_valid,  X_finetune_valid, X_test])
+        y = pl.concat([y_train, y_valid, y_finetune_valid, y_test])
     if get_train_type(metric) == "bin" or get_train_type(metric) == "multi":
         # Use Option 4 to find best num_boost_round
         if fit_cv or final_fit:
@@ -139,7 +144,7 @@ def xgb_final_fitting(best_params: dict,
             print("done")
         else:
             clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_finetune_valid, y_finetune_valid)], verbose=100)
     else:
         if metric in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]: del params_fin["eval_metric"]
         if fit_cv:
@@ -156,7 +161,7 @@ def xgb_final_fitting(best_params: dict,
             clf.fit(X, y, verbose=100)       
         else:
             clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_valid, y_valid)], verbose=100)
+            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_finetune_valid, y_finetune_valid)], verbose=100)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

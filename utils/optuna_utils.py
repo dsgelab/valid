@@ -93,6 +93,59 @@ def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]]
         study.optimize(optuna_objective, n_trials=n_trials)
 
 
+from typing import Union, Tuple
+import xgboost as xgb
+import time 
+from general_utils import Timer
+import logging
+import numpy as np
+def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFrame]],
+                        lab_name: str,
+                        refit: bool,
+                        time_optim: int,
+                        n_trials: int,
+                        study_name: str,
+                        res_dir: str,
+                        model_type: str,
+                        model_fit_date: str,
+                        base_params: dict=None) -> dict:   
+    """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
+       Uses Optuna to optimize the hyperparameters. The function returns the best hyperparameters found.
+       Logs the best hyperparameters found and the best boosting round."""     
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Study setup                                             #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    sampler = optuna.samplers.TPESampler(seed=429)
+    study = create_optuna_study(study_name, 
+                                lab_name, 
+                                sampler, 
+                                model_fit_date, 
+                                res_dir, 
+                                refit,
+                                base_params["eval_metric"])
+    tic = time.time()
+    timer = Timer()
+    np.random.seed(9234)
+    optuna.logging.set_verbosity(optuna.logging.INFO)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Pick objective                                          #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    optuna_objective = lambda trial: optuna_xgb_cv_objective(trial, 
+                                                          base_params, 
+                                                          train[0],
+                                                          train[1])
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Running trials                                          #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if n_trials == 1:
+        while time.time() - tic < time_optim:
+            study.optimize(optuna_objective, n_trials=1)
+    else:
+        study.optimize(optuna_objective, n_trials=n_trials)
+
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -171,7 +224,57 @@ def optuna_cat_objective(trial: optuna.Trial,
 
     return metric_value
 
+import xgboost as xgb
+import optuna
+def optuna_xgb_cv_objective(trial: optuna.Trial, 
+                             base_params: dict, 
+                             X_train: np.ndarray,
+                             y_train: np.ndarray,
+                             n_folds: int = 5) -> float:
+    """Objective function for Optuna optimization using cross-validation.
+    Returns the mean CV score."""
     
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Suggested hyperparameters                               #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    params = {
+        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]),
+        'max_depth': trial.suggest_int('max_depth', 2, 12),
+        'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
+        'subsample': trial.suggest_float('subsample', 0.5, 0.8),
+        'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 0, 15),
+        'gamma': trial.suggest_float('gamma', 0, 15),
+    }
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Setting up trial                                        #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    params.update(base_params)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Cross-validation                                        #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    cv_results = xgb.cv(params=params,
+                        dtrain=xgb.DMatrix(X_train, label=y_train),
+                        num_boost_round=200,
+                        nfold=n_folds,
+                        stratified=True,
+                        early_stopping_rounds=5,
+                        seed=42,
+                        verbose_eval=False
+    )
+    
+    # Get best iteration and score
+    best_iteration = len(cv_results)
+    trial.set_user_attr("best_iteration", best_iteration)
+    
+    # Return mean of test metric at best iteration (last row)
+    metric_name = f"cv test-{base_params['eval_metric']}-mean"
+    best_score = cv_results[metric_name].iloc[-1]
+    
+    return best_score
+
 import xgboost as xgb
 import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
