@@ -11,7 +11,7 @@ import polars as pl
 from sklearn.metrics import confusion_matrix
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from mino_plot_utils import round_column_min5
+from code.valid.utils.minor_plot_utils import round_column_min5
 def create_report_plots(y_true: Iterable[int], 
                        y_probs: Iterable[float], 
                        y_preds: Iterable[int], 
@@ -112,7 +112,7 @@ import matplotlib.pyplot as plt
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from mino_plot_utils import pretty_int
+from code.valid.utils.minor_plot_utils import pretty_int
 def plot_observed_vs_predicted(data: pl.DataFrame, 
                                 col_name_x: str, 
                                 col_name_y: str,
@@ -154,7 +154,7 @@ import matplotlib.pyplot as plt
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from mino_plot_utils import round_column_min5, pretty_int
+from code.valid.utils.minor_plot_utils import round_column_min5, pretty_int
 def plot_observed_vs_predicted_min5(data: pl.DataFrame, 
                                     col_name_x: str, 
                                     col_name_y: str,
@@ -286,7 +286,7 @@ import seaborn as sns
 import sys
 import pandas as pd
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from mino_plot_utils import round_column_min5, pretty_int
+from code.valid.utils.minor_plot_utils import round_column_min5, pretty_int
 def plot_box_probs(evals=[], 
                    labels=[], 
                    ax1=None, 
@@ -377,7 +377,7 @@ from collections.abc import Iterable
 import warnings
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from mino_plot_utils import round_column_min5
+from code.valid.utils.minor_plot_utils import round_column_min5
 def plot_calibration(y_true: Iterable[int], 
                      y_probs: Iterable[float], 
                      ax1=None, 

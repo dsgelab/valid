@@ -232,7 +232,7 @@ def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
 #                 Greater eval functions                                  #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-from plot_utils import create_report_plots
+from minor_plot_utils import create_report_plots
 from general_utils import get_date, make_dir
 def save_all_report_plots(out_data: pl.DataFrame,
                           out_plot_path: str,
