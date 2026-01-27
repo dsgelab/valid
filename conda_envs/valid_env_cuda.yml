@@ -4,12 +4,11 @@ channels:
   - pytorch
   - conda-forge
 dependencies:
-  - python
+  - python=3.8.10
   - pandas
   - numpy
   - optuna
   - xgboost
-  - catboost
   - scikit-learn
   - ipykernel
   - matplotlib
@@ -18,6 +17,8 @@ dependencies:
   - conda-pack
   - pip
   - tqdm
+  - pytorch::pytorch=2.1.0
+  - pytorch::pytorch-cuda=12.1
   - plotly
   - optuna-integration
   - conda-forge::google-cloud-bigquery
@@ -25,3 +26,5 @@ dependencies:
   - transformers
   - polars
   - shap
+  - tensorboard
+  - conda-forge::vector-quantize-pytorch

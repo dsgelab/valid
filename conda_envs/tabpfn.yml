@@ -1,12 +1,12 @@
-name: valid_env_tabfn
+name: tabpfn
 channels:
   - defaults
 dependencies:
-  - python=3.13.11
+  - python=3.13
   - pandas
   - numpy
   - xgboost
-  - scikit-learn=1.8.0
+  - scikit-learn
   - ipykernel
   - matplotlib
   - seaborn=0.13.2
