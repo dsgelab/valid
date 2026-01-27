@@ -75,6 +75,7 @@ def get_out_data(data: pl.DataFrame,
         out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "ABNORM_PROBS").rename({"ABNORM_CUSTOM": "ABNORM_PREDS"})
         out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "TRUE_VALUE").rename({"ABNORM_CUSTOM": "TRUE_ABNORM"})
         print(out_data["TRUE_ABNORM"].value_counts())
+        
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Binary prediction of "abnormality"                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -124,11 +125,14 @@ def get_out_data(data: pl.DataFrame,
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
                          lab_name: str,
-                         lab_name_two: str="") -> tuple[pl.DataFrame, list]:
+                         lab_name_two: str="",
+                         translate: bool=True) -> tuple[pl.DataFrame, list]:
     """Creates a dataframe based on the mean absolute SHAP values of the model. 
        Also returns the (readable) names of the features in the same order as the SHAP values."""
-    
-    new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
+    if translate:
+        new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
+    else:
+        new_names = X_in.columns
     explanations = explainer.shap_values(X_in.to_pandas())
     mean_shaps = np.abs(explanations).mean(0)
     shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
@@ -148,16 +152,25 @@ def save_importances(top_gain,
                      study_name: str,
                      goal,
                      lab_name,
-                     subset: str="all") -> None:
+                     subset: str="all",
+                     n_features: int=None,
+                     cv: bool=False) -> None:
     """Saves the feature importances of the model to a csv file. """
     crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
+    if n_features is None:
+        if cv:
+            file_path = crnt_out_down_path + lab_name+"_"+study_name+"_"+goal+"_shap_importance_cv_" + subset + "_" + get_date() + ".csv"
+        else:
+            file_path = crnt_out_down_path + lab_name+"_"+study_name+"_"+goal+"_shap_importance_" + subset + "_" + get_date() + ".csv"
+    else:
+        file_path = crnt_out_down_path + lab_name+"_"+study_name+"_"+goal+"_shap_importance_fs"+str(n_features)+"_" + subset + "_" + get_date() + ".csv"
     try:
         logging.info(top_gain.head(10))
-        top_gain.write_csv(crnt_out_down_path + lab_name+"_"+study_name+"_"+goal+"_shap_importance_" + subset + "_" + get_date() + ".csv")
+        top_gain.write_csv(file_path)
     except:
         top_gain = pl.DataFrame(top_gain).with_columns(pl.col(top_gain.columns[0]).arr.to_struct().alias(top_gain.columns[0])).unnest(top_gain.columns[0])
         logging.info(top_gain.head(10))
-        top_gain.write_csv(crnt_out_down_path + lab_name+"_"+study_name+"_"+goal+"_shap_importance_" + subset + "_" + get_date() + ".csv")
+        top_gain.write_csv(file_path)
 
 """Creates the XGBoost data matrices and scales the data.
 
@@ -176,7 +189,8 @@ from sklearn.compose import ColumnTransformer
 
 def create_xgb_dts(data: pl.DataFrame, 
                    X_cols: list, 
-                   y_goal: str) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
+                   y_goal: str,
+                   train_pct: int = 1) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
     """Creates the XGBoost data matrices and scales the data."""
     # Need later to be Float for scaling
     data = data.with_columns([
@@ -206,10 +220,19 @@ def create_xgb_dts(data: pl.DataFrame,
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     train_data = data.filter(pl.col("SET")==0).drop("SET")
+    # if training pct<100, take only part of training data
+    if train_pct<100:
+        train_data = train_data.sample(frac=train_pct/100, with_replacement=False, seed=42)
+        data = data.filter(pl.col("FINNGENID").is_in(train_data["FINNGENID"]).or_(pl.col("SET")!=0))
+    finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
     valid_data = data.filter(pl.col("SET")==1).drop("SET")
     test_data = data.filter(pl.col("SET")==2).drop("SET")
         
     X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
+    if finetune_valid_data.height>0:
+        X_finetune_valid = finetune_valid_data.select(X_cols); y_finetune_valid = finetune_valid_data.select(y_goal)
+    else:
+        X_finetune_valid = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
     X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
     X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
     X_all = data.select(X_cols); y_all = data.select(y_goal)
@@ -219,6 +242,8 @@ def create_xgb_dts(data: pl.DataFrame,
         ('bin', 'passthrough', binary_cols)
     ])
     X_train=pl.DataFrame(preprocessor.fit_transform(X_train), schema=X_train.schema)
+    if finetune_valid_data.height>0:
+        X_finetune_valid=pl.DataFrame(preprocessor.transform(X_finetune_valid), schema=X_finetune_valid.schema)
     X_valid=pl.DataFrame(preprocessor.transform(X_valid), schema=X_valid.schema)
     X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema)
     X_all_scaled=pl.DataFrame(preprocessor.transform(X_all), schema=X_all.schema)
@@ -228,6 +253,9 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     dtrain = xgb.DMatrix(data=X_train, label=y_train, enable_categorical=True)
     dvalid = xgb.DMatrix(data=X_valid, label=y_valid, enable_categorical=True)
-    
-    return(data["FINNGENID"], X_train, y_train, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dvalid, preprocessor)
+    if finetune_valid_data.height>0:
+        dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
+    else:
+        dfinetunevalid = None
+    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dfinetunevalid, dvalid, preprocessor, data)
 
