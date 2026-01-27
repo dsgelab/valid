@@ -449,18 +449,3 @@ def linr_fitting(X_train: pl.DataFrame,
     logging.info(timer.get_elapsed())
 
     return(lr)   
-
-"""Quantile evaluation function for XGBoost models.
-    Args:
-        metric (str): The evaluation metric to use.
-
-    Returns:
-        Callable: A function that computes the evaluation metric.
-"""
-from model_eval_utils import get_score_func_based_on_metric
-def quantile_eval(metric):
-    def eval_metric(x, y):
-        loss = get_score_func_based_on_metric(metric)(x, y)
-        print(loss)
-        return np.mean(loss)
-    return eval_metric

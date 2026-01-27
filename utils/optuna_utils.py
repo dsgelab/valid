@@ -1,3 +1,7 @@
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Optuna study                                            #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import optuna
 import polars as pl
 def create_optuna_study(study_name: str, 
@@ -24,11 +28,15 @@ def create_optuna_study(study_name: str,
                                 load_if_exists=True)
     return(study)
 
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Optuna runs                                             #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+import optuna
+import polars as pl
 from typing import Union, Tuple
 import xgboost as xgb
 import time 
 from general_utils import Timer
-import logging
 import numpy as np
 def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]], 
                      valid: Union[xgb.DMatrix,  Tuple[pl.DataFrame, pl.DataFrame]],
@@ -92,7 +100,7 @@ def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]]
     else:
         study.optimize(optuna_objective, n_trials=n_trials)
 
-
+import optuna
 from typing import Union, Tuple
 import xgboost as xgb
 import time 
@@ -161,20 +169,14 @@ def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFra
         
     return(study.best_trial.params)
 
-from model_eval_utils import get_score_func_based_on_metric
-def quantile_eval(metric):
-    def eval_metric(preds, dtrain):
-        y = dtrain.get_label()
-        loss = get_score_func_based_on_metric(metric)(preds, y)
-        return metric, np.mean(loss)
-    return eval_metric
-
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Optuna objectives                                       #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 try:
     import catboost as cat
 except ImportError:
     pass
 import optuna
-from sklearn.metrics import accuracy_score
 def optuna_cat_objective(trial: optuna.Trial, 
                          base_params: dict, 
                          X_train,
@@ -226,6 +228,7 @@ def optuna_cat_objective(trial: optuna.Trial,
 
 import xgboost as xgb
 import optuna
+import numpy as np
 def optuna_xgb_cv_objective(trial: optuna.Trial, 
                              base_params: dict, 
                              X_train: np.ndarray,
@@ -275,6 +278,9 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
     
     return best_score
 
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from model_eval_utils import quantile_eval
 import xgboost as xgb
 import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
@@ -329,30 +335,3 @@ def optuna_xgb_objective(trial: optuna.Trial,
     trial.set_user_attr("best_iteration", int(model.best_iteration))
     # Return the last value of the metric on the validation set
     return evals_result["valid"][base_params["eval_metric"]][-1] 
-
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import log_loss
-def optuna_elr_objective(trial: optuna.Trial,
-                         X_train,
-                         y_train,
-                         X_valid,
-                         y_valid):
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Suggested hyperparameters                               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params = {
-        'alpha': trial.suggest_float('alpha', 1e-3, 1e3, log=True),
-        'l1_ratio': trial.suggest_float('l1_ratio', 0, 1)
-    }            
-
-    enet = LogisticRegression(penalty="elasticnet",
-                              solver="saga",
-                              C=1/params["alpha"],
-                              l1_ratio=params["l1_ratio"],
-                              max_iter=5000,
-                              random_state=9231
-    )
-    enet.fit(X_train.to_numpy(), y_train.to_numpy().ravel())
-    y_pred_proba = enet.predict_proba(X_valid.to_numpy())[:,1]
-    lloss = log_loss(y_valid.to_numpy().ravel(), y_pred_proba.ravel())
-    return(lloss)

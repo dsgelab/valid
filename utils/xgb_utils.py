@@ -1,20 +1,22 @@
-from processing_utils import get_abnorm_func_based_on_name 
-from minor_plot_utils import get_plot_names
-from model_fit_utils import get_cont_goal_col_name
-from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
-from general_utils import get_date, make_dir
 
-# time
-# Training and eval
-from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
-import numpy as np
-import xgboost as xgb
-import polars as pl
-import shap
-from model_eval_utils import get_train_type
 import logging
-
-"""Creates the output data with the predictions of the model.
+import polars as pl
+import xgboost as xgb
+import logging
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
+from abnorm_utils import get_abnorm_func_based_on_name
+from model_fit_utils import get_cont_goal_col_name
+def get_out_data(data: pl.DataFrame, 
+                 model_final: xgb.XGBClassifier, 
+                 X_all: pl.DataFrame, 
+                 y_all: pl.DataFrame, 
+                 metric: str,
+                 lab_name: str,
+                 goal: str,
+                 abnorm_extra_choice: str="") -> pl.DataFrame:
+    """Creates the output data with the predictions of the model.
     Args:
         data (pl.DataFrame): The input data.
         model_final (xgb.XGBClassifier): The trained XGBoost model.
@@ -24,19 +26,8 @@ import logging
         lab_name (str): The name of the lab.
         goal (str): The goal column name.
         abnorm_extra_choice (str): Additional abnormality choice (default is empty string). 
-    
-    Returns:    
-        pl.DataFrame: The output data with the predictions of the model.
-"""
-def get_out_data(data: pl.DataFrame, 
-                 model_final: xgb.XGBClassifier, 
-                 X_all: pl.DataFrame, 
-                 y_all: pl.DataFrame, 
-                 metric: str,
-                 lab_name: str,
-                 goal: str,
-                 abnorm_extra_choice: str="") -> pl.DataFrame:
-    """Returns the relevant columns from the input data with the predictions of the model.
+
+       Returns the relevant columns from the input data with the predictions of the model.
        Not that abnormality here is the case/control status.
        Columns:
             - `FINNGENID`: Individual ID
@@ -113,22 +104,25 @@ def get_out_data(data: pl.DataFrame,
                 (pl.col("ABNORM_PROBS_"+str(pred_val)) > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS_"+str(pred_val)))
     return(out_data)
 
-""" Returns the SHAP importances of the model.
+import polars as pl
+import shap
+import numpy as np
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from minor_plot_utils import get_plot_names
+def get_shap_importances(X_in: pl.DataFrame,
+                         explainer: shap.TreeExplainer,
+                         lab_name: str,
+                         lab_name_two: str="",
+                         translate: bool=True) -> tuple[pl.DataFrame, list]:
+    """Returns the SHAP importances of the model.
     Args:
         X_in (pl.DataFrame): The input data.
         explainer (shap.TreeExplainer): The SHAP explainer for the model.
         lab_name (str): The name of the lab.
         lab_name_two (str): The name of the second lab (default is empty string).
     Returns:
-        tuple: A tuple containing the SHAP importances (pl.DataFrame) and the feature names (list).
-"""
-def get_shap_importances(X_in: pl.DataFrame,
-                         explainer: shap.TreeExplainer,
-                         lab_name: str,
-                         lab_name_two: str="",
-                         translate: bool=True) -> tuple[pl.DataFrame, list]:
-    """Creates a dataframe based on the mean absolute SHAP values of the model. 
-       Also returns the (readable) names of the features in the same order as the SHAP values."""
+        tuple: A tuple containing the SHAP importances (pl.DataFrame) and the feature names (list)."""
     if translate:
         new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
     else:
@@ -139,14 +133,11 @@ def get_shap_importances(X_in: pl.DataFrame,
 
     return(shap_importance, new_names)
 
-"""Saves the feature importances of the model to a csv file.
-    Args:
-        top_gain (pl.DataFrame): The dataframe containing the feature importances.
-        out_down_path (str): The output directory path.
-        subset (str): The subset of the data (default is "all").
-    Returns:
-        None
-"""
+import polars as pl
+import logging
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
+from general_utils import make_dir, get_date
 def save_importances(top_gain,
                      out_down_path: str,
                      study_name: str,
@@ -155,7 +146,13 @@ def save_importances(top_gain,
                      subset: str="all",
                      n_features: int=None,
                      cv: bool=False) -> None:
-    """Saves the feature importances of the model to a csv file. """
+    """Saves the feature importances of the model to a csv file.
+    Args:
+        top_gain (pl.DataFrame): The dataframe containing the feature importances.
+        out_down_path (str): The output directory path.
+        subset (str): The subset of the data (default is "all").
+    Returns:
+        None"""
     crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
     if n_features is None:
         if cv:
@@ -172,26 +169,29 @@ def save_importances(top_gain,
         logging.info(top_gain.head(10))
         top_gain.write_csv(file_path)
 
-"""Creates the XGBoost data matrices and scales the data.
 
-   Returns the data and the predictors.
-   
-    Args:
-        data (pl.DataFrame): The input data.
-        X_cols (list): The list of feature columns.
-        y_goal (str): The target column.
-        reweight (int): The reweighting factor.
-
-    Returns:
-        tuple: A tuple containing the data (polars DataFrame) and the list of predictors
- """
+import polars as pl
+import xgboost as xgb
+from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
-
+from typing import Tuple
 def create_xgb_dts(data: pl.DataFrame, 
                    X_cols: list, 
                    y_goal: str,
-                   train_pct: int = 1) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
-    """Creates the XGBoost data matrices and scales the data."""
+                   train_pct: int = 1) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
+    """Creates the XGBoost data matrices and scales the data.
+
+    Returns the data and the predictors.
+    
+        Args:
+            data (pl.DataFrame): The input data.
+            X_cols (list): The list of feature columns.
+            y_goal (str): The target column.
+            reweight (int): The reweighting factor.
+
+        Returns:
+            tuple: A tuple containing the data (polars DataFrame) and the list of predictors
+    """
     # Need later to be Float for scaling
     data = data.with_columns([
         pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)

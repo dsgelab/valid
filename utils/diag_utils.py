@@ -1,10 +1,4 @@
-
-# Custom utils
-import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
-# Standard stuff
 import polars as pl
-
 def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
     """
     Get the start dates of abnormality sequences.
@@ -63,6 +57,7 @@ def get_abnorm_start_dates(data: pl.DataFrame) -> pl.DataFrame:
 
     return(data)
 
+import polars as pl
 def get_data_diags(data: pl.DataFrame, 
                    diff_days: int) -> pl.DataFrame:
     data = (data
@@ -77,60 +72,3 @@ def get_data_diags(data: pl.DataFrame,
                                     pl.col("START_DATE").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("DATA_FIRST_DIAG_ABNORM_DATE"))
     )
     return(data)
-
-
-import datetime 
-def relabel_data_diag(data: pl.DataFrame,
-                      start_pred_date: datetime,
-                      shorten_pred_period: int,
-                      diff_days: int) -> pl.DataFrame:
-    # have to re-label data for after the start of the prediction period
-    after_end_data = data.filter((pl.col.DATE>=start_pred_date)&(pl.col.ABNORM_CUSTOM != 0.5))
-    after_end_data = get_abnorm_start_dates(after_end_data)
-    after_end_data = get_data_diags(after_end_data, diff_days)
-    if shorten_pred_period:
-        # Join after_end_data back to data on FINNGENID (and START_DATE if needed)
-        data = data.join(
-                after_end_data.select(
-                "FINNGENID", "DATA_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE"
-                ),
-                on="FINNGENID",
-                how="left"
-        ).with_columns(
-                pl.when(pl.col.DATA_FIRST_DIAG_ABNORM_DATE>=start_pred_date)
-                .then(pl.col.DATA_DIAG_DATE_right)
-                .otherwise(pl.col.DATA_DIAG_DATE)
-                .alias("DATA_DIAG_DATE"),
-                pl.when(pl.col.DATA_FIRST_DIAG_ABNORM_DATE>=start_pred_date)
-                .then(pl.col.DATA_FIRST_DIAG_ABNORM_DATE_right)
-                .otherwise(pl.col.DATA_FIRST_DIAG_ABNORM_DATE)
-                .alias("DATA_FIRST_DIAG_ABNORM_DATE")
-        ).drop(["DATA_DIAG_DATE_right", "DATA_FIRST_DIAG_ABNORM_DATE_right"])
-    else:
-        # Join after_end_data back to data on FINNGENID (and START_DATE if needed)
-        data = data.join(
-                after_end_data.select(
-                "FINNGENID", "DATA_DIAG_DATE", "DATA_FIRST_DIAG_ABNORM_DATE"
-                ),
-                on="FINNGENID",
-                how="left"
-        ).with_columns(
-                pl.when(pl.col.DATA_FIRST_DIAG_ABNORM_DATE<start_pred_date)
-                .then(pl.col.DATA_DIAG_DATE_right)
-                .otherwise(pl.col.DATA_DIAG_DATE)
-                .alias("DATA_DIAG_DATE"),
-                pl.when(pl.col.DATA_FIRST_DIAG_ABNORM_DATE<start_pred_date)
-                .then(pl.col.DATA_FIRST_DIAG_ABNORM_DATE_right)
-                .otherwise(pl.col.DATA_FIRST_DIAG_ABNORM_DATE)
-                .alias("DATA_FIRST_DIAG_ABNORM_DATE")
-        ).drop(["DATA_DIAG_DATE_right", "DATA_FIRST_DIAG_ABNORM_DATE_right"])
-    data = (data
-                 .with_columns(pl.min_horizontal(
-                                  pl.col("DATA_DIAG_DATE"), 
-                                  pl.col("FIRST_ICD_DIAG_DATE"), 
-                                  pl.col("FIRST_MED_DIAG_DATE")
-                               ).alias("FIRST_DIAG_DATE")
-                  )
-    )
-    return(data)
-

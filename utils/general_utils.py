@@ -60,7 +60,6 @@ def read_file(full_file_path,
 ### Going through all years function created with help of Claude AI
 import os
 from datetime import datetime, timedelta
-
 def get_all_dates_in_year(year=2025):
     """Generate all dates in the given year as YYYY-MM-DD strings"""
     start_date = datetime(year, 1, 1)

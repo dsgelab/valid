@@ -2,7 +2,8 @@
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import Timer, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
-from processing_utils import get_abnorm_func_based_on_name, egfr_ckdepi2021_transform, cystc_ckdepi2012_transform
+from processing_utils import egfr_ckdepi2021_transform, cystc_ckdepi2012_transform
+from abnorm_utils import get_abnorm_func_based_on_name
 from clean_utils import remove_severe_value_outliers, remove_single_value_outliers, handle_different_units, handle_missing_values, get_main_unit_data, convert_hba1c_data, remove_known_outliers, handle_same_day_duplicates
 # Standard stuff
 import pandas as pd

@@ -1,8 +1,21 @@
+import polars as pl
+import sys
+sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from general_utils import read_file, print_count
 from datetime import datetime
-import polars as pl
-
-"""Creates the data and predictor list. 
+def get_data_and_pred_list(file_path_labels: str, 
+                           file_path_icds: str,
+                           file_path_atcs: str,
+                           file_path_sumstats: str,
+                           file_path_second_sumstats: str,
+                           file_path_labs: str,
+                           file_path_pgs1: str,
+                           file_path_pgs2: str,
+                           preds: list,
+                           start_date: str,
+                           fill_missing: int=0,
+                           fids_path: str="") -> tuple[pl.DataFrame, list]:
+    """Creates the data and predictor list. 
 
    Returns the data and the predictors.
    Args:
@@ -17,21 +30,7 @@ import polars as pl
         
    Returns:
         tuple: A tuple containing the data (polars DataFrame) and the list of predictors
-            (data, preds)
-"""
-def get_data_and_pred_list(file_path_labels: str, 
-                           file_path_icds: str,
-                           file_path_atcs: str,
-                           file_path_sumstats: str,
-                           file_path_second_sumstats: str,
-                           file_path_labs: str,
-                           file_path_pgs1: str,
-                           file_path_pgs2: str,
-                           preds: list,
-                           start_date: str,
-                           fill_missing: int=0,
-                           fids_path: str="") -> tuple[pl.DataFrame, list]:
-    """Reads in label data and merges it with other data modalities. Returns the data and the predictors."""
+            (data, preds)"""
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -169,17 +168,19 @@ def get_data_and_pred_list(file_path_labels: str,
             X_cols.append(pred)
     return(data, X_cols)
 
-"""Returns extra predictor columns to the data based on the selected predictors.
-
-    Args:
-        start_date (datetime): The start date for the predictors. After which no data is used.
-        dtype (str): The type of predictor to return. Can be "BMI", "ALCOHOL", "SMOKE", "SBP", or "DBP".
-    Returns:
-        pl.DataFrame: A DataFrame containing the extra predictor columns. With columns "FINNGENID", "DATE", and the respective predictor column.
-"""
+from datetime import datetime
+import polars as pl
 def get_ext_data(start_date: datetime,
                  dtype="BMI"):
 
+    """Returns extra predictor columns to the data based on the selected predictors.
+
+        Args:
+            start_date (datetime): The start date for the predictors. After which no data is used.
+            dtype (str): The type of predictor to return. Can be "BMI", "ALCOHOL", "SMOKE", "SBP", or "DBP".
+        Returns:
+            pl.DataFrame: A DataFrame containing the extra predictor columns. With columns "FINNGENID", "DATE", and the respective predictor column.
+    """
     if dtype not in ["HEIGHT", "WEIGHT"]:
         ext_file_name = "/finngen/library-red/finngen_R13/hilmo_avohilmo_extended_1.0/data/finngen_R13_hilmo_avohilmo_extended_1.0.txt.gz"
         ext_data = pl.read_csv(ext_file_name, 

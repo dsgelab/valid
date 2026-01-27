@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Complex report plots                                    #
@@ -173,7 +174,6 @@ def plot_observed_vs_predicted_min5(data: pl.DataFrame,
 
 import seaborn as sns
 import matplotlib.pyplot as plt
-from __future__ import annotations
 def confusion_plot(matrix: np.ndarray, 
                    labels=None, 
                    ax=None) -> plt.Axes | plt.Figure:
@@ -210,7 +210,6 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
 import numpy as np
-from __future__ import annotations
 from collections.abc import Iterable
 def roc_plot(y_true: Iterable[int], 
              y_probs: Iterable[float], 
@@ -252,7 +251,6 @@ def roc_plot(y_true: Iterable[int],
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections.abc import Iterable
-from __future__ import annotations
 def feature_importance_plot(importances: Iterable[float], 
                             feature_labels: Iterable[str], 
                             ax=None, 

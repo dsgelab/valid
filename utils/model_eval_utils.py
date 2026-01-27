@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Training type and metric                                #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -36,6 +38,14 @@ def get_score_func_based_on_metric(metric: str) -> callable:
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Custom functions                                        #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+def quantile_eval(metric):
+    def eval_metric(preds, dtrain):
+        y = dtrain.get_label()
+        loss = get_score_func_based_on_metric(metric)(preds, y)
+        return metric, np.mean(loss)
+    return eval_metric
+
+import numpy as np
 def continuous_nri(y_true, old_probs, new_probs):
     y_true = np.array(y_true)
     old_probs = np.array(old_probs)
@@ -57,6 +67,7 @@ def continuous_nri(y_true, old_probs, new_probs):
     nri = (up_event - down_event) + (down_nonevent - up_nonevent)
     return nri
     
+import numpy as np
 def compute_ece(y_true, y_prob, n_bins=10):
     bin_edges = np.linspace(0, 1, n_bins + 1)
     ece = 0.0
@@ -72,6 +83,7 @@ def compute_ece(y_true, y_prob, n_bins=10):
             bin_acc = bin_true.mean()
             ece += (len(bin_true) / n) * abs(bin_acc - bin_conf)
     return ece
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Bootstraping                                            #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -120,26 +132,24 @@ def bootstrap_metric(metric_func: callable,
 
 from collections.abc import Iterable
 import numpy as np
-def bootstrap_nri(metric_func: callable, 
-                  obs: Iterable[float], 
-                  preds_old: Iterable[float], 
-                  preds_new: Iterable[float], 
-                  n_boots=500, 
-                  rng_seed=42) -> tuple[np.float64, np.float64, np.float64]:
+def bootstrap_metric(metric_func: callable, 
+                     obs: Iterable[float], 
+                     preds: Iterable[float], 
+                     n_boots=500, 
+                     rng_seed=42) -> tuple[np.float64, np.float64, np.float64]:
     """Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Setting up # # # # # # # # # # # # # # # # # # # # # # # 
     bootstraps = []
     obs = np.asarray(obs)
-    preds_old = np.asarray(preds_old)
-    preds_new = np.asarray(preds_new)
+    preds = np.asarray(preds)
     rng = np.random.RandomState(rng_seed)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Point estiamte # # # # # # # # # # # # # # # # # # # # # 
     try: # tweedie sometimes has issues
-        total_est = metric_func(obs, preds_old, preds_new)
+        total_est = metric_func(obs, preds)
     except: # return nan if not possible
         return(np.nan, np.nan, np.nan)
     
@@ -148,7 +158,7 @@ def bootstrap_nri(metric_func: callable,
     for i in np.arange(n_boots):
         idxs = rng.randint(0, len(obs), len(obs))
         try: # tweedie sometimes has issues
-            bootstraps.append(metric_func(obs[idxs], preds_old[idxs], preds_new[idxs]))
+            bootstraps.append(metric_func(obs[idxs], preds[idxs]))
         except:
             continue
     if len(bootstraps) > 0: # if at least one bootstrap was successful
@@ -158,12 +168,11 @@ def bootstrap_nri(metric_func: callable,
         # 95% CI
         ci_low = bootstraps[int(0.025*len(bootstraps))]
         ci_high = bootstraps[int(0.975*len(bootstraps))]
-        #p_value = np.mean(np.abs(bootstraps)>=np.abs(total_est))
 
         return(total_est, ci_low, ci_high)
     else: # if no bootstrap was successful
         return(total_est, np.nan, np.nan)
-    
+
 from collections.abc import Iterable
 import numpy as np
 def bootstrap_difference(metric_func: callable, 
@@ -213,13 +222,14 @@ def bootstrap_difference(metric_func: callable,
         p_value = np.mean(np.abs(null_diffs)>=np.abs(bootstraps_diffs))
         return(total_diff, ci_low, ci_high, p_value, total_est_1, total_est_2)
     else: # if no bootstrap was successful
-        return(total_est, np.nan, np.nan, np.nan, np.nan, np.nan)
+        return(total_diff, np.nan, np.nan, np.nan, np.nan, np.nan)
     
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Evaluation metrics                                      #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import sklearn.metrics as skm
 import polars as pl
+import numpy as np
 def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
     """Returns the optimal probability cutoff for the precision-recall curve."""
 
@@ -231,9 +241,9 @@ def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Greater eval functions                                  #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-
 from minor_plot_utils import create_report_plots
 from general_utils import get_date, make_dir
+import polars as pl
 def save_all_report_plots(out_data: pl.DataFrame,
                           out_plot_path: str,
                           out_down_path: str,
