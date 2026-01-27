@@ -1,69 +1,7 @@
-import seaborn as sns
-import sys
 import matplotlib.pyplot as plt
-import timeit
-import pickle
-import sys
-from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, \
-                            precision_recall_curve, roc_curve, accuracy_score
-from sklearn.exceptions import NotFittedError
-import pandas as pd
-import numpy as np
-
-def compare_models(y_test=None, clf_reports=[], labels=[], score='accuracy'):
-    """ Compare evaluation metrics for the True Positive class [1] of 
-        binary classifiers passed in the argument and plot ROC and PR curves.
-        
-        Arguments:
-        ---------
-        y_test: to plot ROC and Precision-Recall curves
-         score: is the name corresponding to the sklearn metrics
-        
-        Returns:
-        -------
-        compare_table: pandas DataFrame containing evaluated metrics
-                  fig: `matplotlib` figure object with ROC and PR curves """
-
-    
-    ## Classifier Labels
-    clf_names =  labels if len(labels) == len(clf_reports) else "NA"
-    
-    
-    ## Compare Table
-    table = dict()
-    index = ['Train ' + score, 'Test ' + score, 'Overfitting', 'ROC Area',
-             'Precision', 'Recall', 'F1-score', 'Support']
-    for i in range(len(clf_reports)):
-        scores = [round(i, 3) for i in clf_reports[i][score]]
-        roc_auc = clf_reports[i]['roc_auc']
-        # Get metrics of True Positive class from sklearn classification_report
-        true_positive_metrics = list(clf_reports[i]['report']["1.0"].values())
-        
-        table[clf_names[i]] = scores + [scores[1] < scores[0], roc_auc] + \
-                              true_positive_metrics
-    
-    table = pd.DataFrame(data=table, index=index)
-    
-    
-    ## Compare Plots
-    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(15, 5))
-    
-    # ROC and Precision-Recall
-    for i in range(len(clf_reports)):
-        clf_probs = clf_reports[i]['test_probs']
-        roc_plot(y_test, clf_probs, label=clf_names[i],
-                 compare=True, ax=axes[0])
-        precision_recall_plot(y_test, clf_probs, label=clf_names[i],
-                              compare=True, ax=axes[1])
-    # Plot No-Info classifier
-    axes[0].plot([0,1], [0,1], linestyle='--', color='green')
-        
-    fig.tight_layout()
-    plt.close()
-    
-    return table.T, fig
-
-def confusion_plot(matrix, labels=None):
+import seaborn as sns
+def confusion_plot(matrix, 
+                   labels=None):
     """ Display binary confusion matrix as a Seaborn heatmap """
     
     labels = labels if labels else ['Negative (0)', 'Positive (1)']
@@ -78,7 +16,13 @@ def confusion_plot(matrix, labels=None):
     
     return fig
     
-def roc_plot(y_true, y_probs, label, compare=False, ax=None):
+from sklearn.metrics import roc_auc_score, roc_curve
+import matplotlib.pyplot as plt
+def roc_plot(y_true, 
+             y_probs, 
+             label, 
+             compare=False, 
+             ax=None):
     """ Plot Receiver Operating Characteristic (ROC) curve 
         Set `compare=True` to use this function to compare classifiers. """
     
@@ -109,7 +53,14 @@ def roc_plot(y_true, y_probs, label, compare=False, ax=None):
     
     return axis if ax else fig
     
-def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
+from sklearn.metrics import precision_recall_curve
+import matplotlib.pyplot as plt
+import seaborn as sns
+def precision_recall_plot(y_true, 
+                          y_probs, 
+                          label, 
+                          compare=False, 
+                          ax=None):
     """ Plot Precision-Recall curve.
         Set `compare=True` to use this function to compare classifiers. """
     
@@ -145,7 +96,12 @@ def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
     
     return axis if ax else fig
     
-def feature_importance_plot(importances, feature_labels, ax=None, n_show=10):
+import matplotlib.pyplot as plt
+import seaborn as sns
+def feature_importance_plot(importances, 
+                            feature_labels, 
+                            ax=None,
+                            n_show=10):
     fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1, figsize=(5, 10))
     sns.barplot(x=importances[0:n_show], y=feature_labels[0:n_show], ax=axis)
     axis.set_title('Feature Importance Measures')
@@ -153,7 +109,3 @@ def feature_importance_plot(importances, feature_labels, ax=None, n_show=10):
     plt.close()
     
     return axis if ax else fig
-    
-def model_memory_size(clf):
-    return sys.getsizeof(pickle.dumps(clf))
-    
