@@ -4,6 +4,7 @@ sns.set_style('whitegrid')
 from sklearn.metrics import confusion_matrix, roc_auc_score, precision_recall_curve, roc_curve
 import sklearn.metrics as skm   
 import scipy
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Util functions                                          #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -141,196 +142,10 @@ def round_column_min5(col_data: Iterable) -> tuple[pl.Series, float, float]:
 
     return(newcol, min_val, max_val)
 
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-#                 Single plots                                            #
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-import shap
-import matplotlib.pyplot as plt
-def create_shap_dir_plot(shap_values: list[float], 
-                         plot_names: list[str]) -> plt.Figure:
-    """Create a SHAP summary plot with the given SHAP values and plot names."""
-    shap.summary_plot(shap_values, max_display=20, feature_names=plot_names, show=False)
-    fig = plt.gcf()
-    return fig
-    
-import seaborn as sns
-def plot_observed_vs_predicted(data: pl.DataFrame, 
-                                col_name_x: str, 
-                                col_name_y: str,
-                                col_name_x_abnorm: str, 
-                                prob=True) -> plt.Figure:
-    """Plot observed vs predicted values with a regression line and a 1:1 line."""
-    sns.set_style('whitegrid')
-
-    # Get the axis limits
-    min_x = data.select(pl.col(col_name_x).min()).to_numpy()[0][0]
-    max_x = data.select(pl.col(col_name_x).max()).to_numpy()[0][0]
-    min_y = data.select(pl.col(col_name_y).min()).to_numpy()[0][0]
-    max_y = data.select(pl.col(col_name_y).max()).to_numpy()[0][0]
-
-    axis_limits = [min(min_x, min_y), max(max_x, max_y)]    
-    # Show the joint distribution using kernel density estimation
-    if prob:
-        data=data.with_columns((pl.col(col_name_y)*100).alias(col_name_y))
-    g = sns.jointplot(x=data[col_name_x], y=data[col_name_y], kind="scatter", hue=data[col_name_x_abnorm], marginal_kws=dict(common_norm=False))
-
-    g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
-    g.ax_joint.set_xlabel("Observed Value")
-
-    if prob: 
-        g.ax_joint.set_ylabel("Predicted Probability")
-        g.ax_marg_y.set_ylim(0, 100)
-        g.ax_joint.text(axis_limits[1]//2, 75, "N = " + pretty_int(data.height) +  "  A = " + pretty_int(data[col_name_x_abnorm].sum()), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-    else: 
-        g.ax_joint.set_ylabel("Predicted Value")
-        g.ax_marg_y.set_ylim(axis_limits[0], axis_limits[1]) 
-        # # This is the x=y line using transforms
-        g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
-        g.ax_joint.text(axis_limits[1]//4, axis_limits[1]-(0.2*axis_limits[1]), "N = " + pretty_int(data.height) +  "  A = " + pretty_int(data[col_name_x_abnorm].sum()), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-
-    return(g)
-    
- 
-import seaborn as sns
-def plot_observed_vs_predicted_min5(data: pl.DataFrame, 
-                                    col_name_x: str, 
-                                    col_name_y: str,
-                                    prob=True) -> tuple[plt.Figure, pl.Series, pl.Series]:
-    sns.set_style('whitegrid')
-    newcol_x, min_val_x, max_val_x = round_column_min5(data[col_name_x])
-    if all(data[col_name_y] <= 1.0) and prob: data = data.with_columns(pl.col(col_name_y)*100)
-    newcol_y, min_val_y, max_val_y = round_column_min5(data[col_name_y])
-
-    # Show the joint distribution using kernel density estimation
-    g = sns.jointplot(x=newcol_x, y=newcol_y, kind="hex", mincnt=5, cmap="twilight_shifted", marginal_kws=dict(stat="density", kde=True, discrete=True, color="#564D65"))
-    g.ax_joint.set_xlabel("Observed Value")
-    axis_limits = [min(min_val_x, min_val_y)-3, max(max_val_x, max_val_y)+3]
-    g.ax_marg_x.set_xlim(axis_limits[0], axis_limits[1])
-    if prob:
-        g.ax_joint.text(max_val_x-(0.2*max_val_x), 90, "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-        g.ax_marg_y.set_ylim(0, 100)
-        g.ax_joint.set_ylabel("Predicted Probability")
-    else:
-        g.ax_joint.text(3*axis_limits[1]//4, axis_limits[1]-(0.1*axis_limits[1]), "N = " + pretty_int(data.shape[0]), fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-        g.ax_joint.set_ylabel("Predicted Value")
-        g.ax_joint.plot(axis_limits, axis_limits, "#564D65", linestyle='dashdot', transform=g.ax_joint.transData)
-
-    return(g, newcol_x, newcol_y)
-
-import seaborn as sns
-from typing import Union
-def confusion_plot(matrix: np.ndarray, 
-                   labels=None, 
-                   ax=None) -> Union[plt.Axes, plt.Figure]:
-    """ Display binary confusion matrix as a Seaborn heatmap """
-    
-    labels = labels if labels else ['Controls', 'Cases']
-    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
-    sns.heatmap(data=matrix, cmap='Blues', annot=True, fmt='d', xticklabels=labels, yticklabels=labels, ax=axis, cbar=False, square=True)
-    axis.set_xlabel('Predicted')
-    axis.set_ylabel('Actual')
-    axis.set_title('Confusion Matrix')
-    return axis if ax else fig
-
-import seaborn as sns
-from sklearn.metrics import roc_curve, roc_auc_score
-import matplotlib.pyplot as plt
-import numpy as np
-from collections.abc import Iterable
-from typing import Union
-def roc_plot(y_true: Iterable[int], 
-             y_probs: Iterable[float], 
-             label: str, 
-             compare=False, 
-             ax=None) -> Union[plt.Axes, plt.Figure]:
-    """ Plot Receiver Operating Characteristic (ROC) curve 
-        Set `compare=True` to use this function to compare classifiers. """
-    y_true = np.asarray(y_true)
-    y_probs = np.asarray(y_probs)
-
-    fpr, tpr, thresh = roc_curve(y_true, y_probs, drop_intermediate=False)
-    auc = round(roc_auc_score(y_true, y_probs), 2)
-    
-    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
-    label = ' '.join([label, f'({auc})']) if compare else None
-    sns.lineplot(x=fpr, y=tpr, ax=axis, label=label)
-    
-    if compare:
-        axis.legend(title='Classifier (AUC)', loc='lower right')
-        axis.plot([0,1], [0,1], linestyle='--', color='black')
-    else:
-        axis.text(0.70, 0.1, f'AUC = { auc }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-        # Plot No-Info classifier
-        axis.fill_between(fpr, fpr, tpr, alpha=0.3, edgecolor='g', linestyle='--', linewidth=2)
-        
-    axis.set_xlim(0, 1)
-    axis.set_ylim(0, 1)
-    axis.set_title('ROC Curve')
-    axis.set_xlabel('False Positive Rate [FPR]\n(1 - Specificity)')
-    axis.set_ylabel('True Positive Rate [TPR]\n(Sensitivity or Recall)')
-    
-    plt.close()
-    
-    return axis if ax else fig
-
-# Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions 
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Union
-def feature_importance_plot(importances: list[float], 
-                            feature_labels: list[str], 
-                            ax=None, 
-                            n_import=10,
-                            model_type: str="xgb") -> Union[plt.Axes, plt.Figure]:
-    """ Plot feature importances using SHAP values """
-    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1, figsize=(5, 10))
-    sns.barplot(x=importances[0:n_import], y=feature_labels[0:n_import], hue=feature_labels[0:n_import], ax=axis)
-    axis.set_title('Feature Importances')
-    axis.set_ylabel("")
-    if model_type == "xgb" or model_type == "cat":
-        axis.set_xlabel("mean(|SHAP value|)")
-    elif model_type == "elr" or model_type == "lr":
-        axis.set_xlabel("odds ratio")
-        axis.set_xlim(left=1)
-
-    plt.close()
-    
-    return axis if ax else fig
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Compound plots                                          #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-def plot_box_probs(evals=[], 
-                   labels=[], 
-                   ax1=None, 
-                   ax2=None, 
-                   ax_labels=["Controls", "Cases"]) -> None:
-    axes = [ax1, ax2]
-    for group in [0,1]:
-        all_evals = pd.DataFrame()
-        for idx, eval_x in enumerate(evals):
-            eval_x = pd.DataFrame({"valid_probs": eval_x["valid_probs"].get_column("ABNORM_PROBS"), 
-                                   "y_valid": eval_x["y_valid"].get_column("TRUE_ABNORM")})
-            eval_crnt = eval_x.loc[eval_x.y_valid==group]
-            safe = {"valid_probs": eval_crnt["valid_probs"].copy()*100}
-            safe["valid_probs"], min_val, max_val = round_column_min5(safe["valid_probs"])
-            safe["group"] = eval_crnt["y_valid"]
-            safe["label"] = labels[idx]
-            all_evals = pd.concat([all_evals, pd.DataFrame(safe)])
-        sns.boxplot(x=all_evals.valid_probs/100, y=all_evals.label, ax=axes[group], vert=False, width=.5, whis=(5,95), hue=all_evals.label, fill=False, flierprops=dict(marker=".", markeredgecolor="white", markerfacecolor="k"))
-    try:
-        ax1.set_title(ax_labels[0])
-        ax1.set_xlabel('Predicted Probability')
-        ax1.set_ylabel('')
-    except:
-        pass
-    try:
-        ax2.set_yticks([])
-        ax2.set_title(ax_labels[1])
-        ax2.set_xlabel('Predicted Probability')
-        ax2.set_ylabel('')
-    except:
-        pass
 
 # Plotting partially from https://github.com/gerstung-lab/Delphi/blob/main/evaluate_delphi.ipynb
 import matplotlib.pyplot as plt
@@ -411,49 +226,6 @@ def plot_calibration(y_true: Iterable[int],
         ax2.set_xlabel('Predicted Probability')
         ax2.set_ylabel('')
 
-
-# Plotting from kaggel https://www.kaggle.com/code/para24/xgboost-stepwise-tuning-using-optuna#3.---Utility-Functions ######################
-from sklearn.metrics import precision_recall_curve
-def precision_recall_plot(y_true, y_probs, label, compare=False, ax=None):
-    """ Plot Precision-Recall curve.
-        Set `compare=True` to use this function to compare classifiers. """
-
-    p, r, thresh = precision_recall_curve(y_true, y_probs)
-    p, r, thresh = list(p), list(r), list(thresh)
-    p.pop()
-    r.pop()
-    
-    fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
-
-    aucpr = np.round(skm.average_precision_score(y_true, y_probs),2)
-    label = ' '.join([label, f'({aucpr})']) if compare else None
-
-    if compare:
-        sns.lineplot(x=r, y=p, ax=axis, label=label)
-        axis.set_xlabel('Recall')
-        axis.set_ylabel('Precision')
-        axis.legend(loc='upper right')
-    else:
-
-        sns.lineplot(x=thresh, y=p, label='Precision', ax=axis)
-        axis.set_xlabel('Threshold')
-        axis.set_ylabel('Precision')
-        axis.legend(loc='upper right')
-
-        axis_twin = axis.twinx()
-        axis_twin.text(0.70, 0.1, f'avgPrec = { aucpr }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
-        sns.lineplot(x=thresh, y=r, color='limegreen', label='Recall', ax=axis_twin)
-        axis_twin.set_ylabel('Recall')
-        axis_twin.set_ylim(0, 1)
-        axis_twin.legend(bbox_to_anchor=(0.95, 0.9))
-    
-    axis.set_xlim(0, 1)
-    axis.set_ylim(0, 1)
-    axis.set_title('Precision Vs Recall')
-    
-    plt.close()
-    
-    return axis if ax else fig
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Complex report plots                                    #
