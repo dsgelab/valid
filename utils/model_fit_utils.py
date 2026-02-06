@@ -1,5 +1,3 @@
-from TabPFN.examples.tabpfn_for_binary_classification import X_train
-from code.valid.model_fitting.step5_fit_XGB_fs import X_finetune_valid
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))

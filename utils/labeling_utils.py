@@ -12,7 +12,7 @@ def add_set(unique_data,
                                                     random_state=391, 
                                                     test_size=total_valid_pct, 
                                                     train_size=1-total_valid_pct, 
-                                                    stratify=unique_data["y_MEAN_ABNORM"])
+                                                    stratify=unique_data["y_MEAN_ABNORM", "y_NEXT_ABNORM", "y_MIN_ABNORM"])
     
     if finetune_valid_pct > 0:
         data_valid, data_finetune_valid = train_test_split(data_total_valid,
@@ -20,7 +20,7 @@ def add_set(unique_data,
                                                            random_state=391, 
                                                            test_size=round(finetune_valid_pct/total_valid_pct,2), 
                                                            train_size=round(valid_pct/total_valid_pct,2), 
-                                                           stratify=data_total_valid["y_MEAN_ABNORM"])
+                                                           stratify=data_total_valid["y_MEAN_ABNORM", "y_NEXT_ABNORM", "y_MIN_ABNORM"])
     else:
         data_valid = data_total_valid
         data_finetune_valid = pl.DataFrame({"FINNGENID": []})  # Empty DataFrame

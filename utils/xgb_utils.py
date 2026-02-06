@@ -220,11 +220,16 @@ def create_xgb_dts(data: pl.DataFrame,
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     train_data = data.filter(pl.col("SET")==0).drop("SET")
+
+    finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
+
     # if training pct<100, take only part of training data
     if train_pct<100:
-        train_data = train_data.sample(frac=train_pct/100, with_replacement=False, seed=42)
+        train_data = train_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
         data = data.filter(pl.col("FINNGENID").is_in(train_data["FINNGENID"]).or_(pl.col("SET")!=0))
-    finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
+        finetune_valid_data = finetune_valid_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
+        data = data.filter(pl.col("FINNGENID").is_in(finetune_valid_data["FINNGENID"]).or_(pl.col("SET")!=0.5))
+
     valid_data = data.filter(pl.col("SET")==1).drop("SET")
     test_data = data.filter(pl.col("SET")==2).drop("SET")
         

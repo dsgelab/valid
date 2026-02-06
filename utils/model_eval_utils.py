@@ -1,5 +1,76 @@
 from __future__ import annotations
 
+import polars as pl
+from delong_utils import delong_roc_test
+def eval_metric_diff(full_out_data,
+                     out_data: pl.DataFrame,
+                     set_no: int,
+                     crnt_k: int,
+                     fs_results: pl.DataFrame,
+                     pct_train: float=100,
+                     n_boots: int=500,
+                     metric: str="auc",
+                     lower_name: str="FULL",
+                     upper_name: str="FS",
+                     goal_name: str="TRUE_ABNORM") -> tuple[pl.DataFrame, float, float, float, float, float, float]:
+    """Evaluates the difference in metric between full          and feature selected models."""
+
+    # TSH multi-class handling
+    if "ABNORM_PROBS" not in full_out_data.columns:
+        out_data = out_data.with_columns(pl.when(pl.col(goal_name)==-1).then(pl.lit(0)).otherwise(pl.col(goal_name)).alias(goal_name))
+
+        if "ABNORM_PROBS_1.0" in full_out_data.columns:
+            full_out_data = full_out_data.rename({"ABNORM_PROBS_1.0": "ABNORM_PROBS"})
+            out_data = out_data.rename({"ABNORM_PROBS_1.0": "ABNORM_PROBS"})
+        elif "ABNORM_PROBS_1" in full_out_data.columns:
+            full_out_data = full_out_data.rename({"ABNORM_PROBS_1": "ABNORM_PROBS"})
+            out_data = out_data.rename({"ABNORM_PROBS_1": "ABNORM_PROBS"})
+        
+    crnt_preds = (full_out_data
+                    .filter(pl.col.SET==set_no)
+                    .select([goal_name, "ABNORM_PROBS", "FINNGENID"])
+                    .join(out_data.select(["FINNGENID", "ABNORM_PROBS"]), on="FINNGENID", how="inner")
+                )
+    if metric == "auc":
+        metric_func = skm.roc_auc_score
+    elif metric == "avg_prec":
+        metric_func = skm.average_precision_score
+    elif metric == "logloss":
+        metric_func = skm.log_loss
+    diff_est, lowci, highci, pval_diff, avg_1, avg_2 = bootstrap_difference(metric_func = metric_func,
+                                                                            preds_1=crnt_preds["ABNORM_PROBS"].to_numpy(),
+                                                                            preds_2=crnt_preds["ABNORM_PROBS_right"].to_numpy(),
+                                                                            obs=crnt_preds[goal_name].to_numpy(),
+                                                                            n_boots=n_boots)
+    if metric == "auc":
+        pval_diff = 10**delong_roc_test(crnt_preds[goal_name].to_numpy(), crnt_preds["ABNORM_PROBS"].to_numpy(), crnt_preds["ABNORM_PROBS_right"].to_numpy())[0][0]
+
+    fs_results_dict = {"SET": set_no, 
+                       "METRIC": metric,
+                       "N_FEATURES": crnt_k, 
+                       "PCT_TRAIN": pct_train,
+                       "PVAL_DIFF": pval_diff, 
+                       "DIFF_EST": diff_est, 
+                       "LOW_CI": lowci, 
+                       "HIGH_CI" : highci,
+                       "AVG_"+lower_name: avg_1,
+                       "AVG_"+upper_name: avg_2}
+    temp_fs_results = (pl.DataFrame(fs_results_dict)
+                       .with_columns(pl.col.SET.cast(pl.Float32),
+                                     pl.col.METRIC.cast(pl.Utf8),
+                                     pl.col.N_FEATURES.cast(pl.Int32),
+                                        pl.col.PVAL_DIFF.cast(pl.Float64),
+                                        pl.col.DIFF_EST.cast(pl.Float64),
+                                        pl.col.LOW_CI.cast(pl.Float64),
+                                        pl.col.HIGH_CI.cast(pl.Float64)
+                       )
+                    )
+    
+    fs_results = pl.concat([fs_results, temp_fs_results])
+    return fs_results, pval_diff, diff_est, lowci, highci, avg_1, avg_2
+
+
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Training type and metric                                #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

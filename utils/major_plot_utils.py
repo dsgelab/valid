@@ -186,26 +186,7 @@ def confusion_plot(matrix: np.ndarray,
     axis.set_ylabel('Actual')
     axis.set_title('Confusion Matrix')
     return axis if ax else fig
-
-
-import matplotlib.pyplot as plt
-import seaborn as sns
-def confusion_plot(matrix, 
-                   labels=None):
-    """ Display binary confusion matrix as a Seaborn heatmap """
-    
-    labels = labels if labels else ['Negative (0)', 'Positive (1)']
-    
-    fig, ax = plt.subplots(nrows=1, ncols=1)
-    sns.heatmap(data=matrix, cmap='Blues', annot=True, fmt='d',
-                xticklabels=labels, yticklabels=labels, ax=ax)
-    ax.set_xlabel('PREDICTED')
-    ax.set_ylabel('ACTUAL')
-    ax.set_title('Confusion Matrix')
-    plt.close()
-    
-    return fig
-    
+   
 import seaborn as sns
 from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
@@ -308,7 +289,7 @@ def plot_box_probs(evals=[],
     except:
         pass
     
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import precision_recall_curve, average_precision_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 def precision_recall_plot(y_true, 
@@ -325,7 +306,8 @@ def precision_recall_plot(y_true,
     r.pop()
     
     fig, axis = (None, ax) if ax else plt.subplots(nrows=1, ncols=1)
-    
+    avg_prec = np.round(average_precision_score(y_true, y_probs), 2)
+
     if compare:
         sns.lineplot(x=r, y=p, ax=axis, label=label)
         axis.set_xlabel('Recall')
@@ -338,10 +320,13 @@ def precision_recall_plot(y_true,
         axis.legend(loc='lower left')
 
         axis_twin = axis.twinx()
+        axis.text(0.70, 0.1, f'AvgPrec = { avg_prec }', fontsize=12, bbox=dict(facecolor='green', alpha=0.4, pad=5))
+
         sns.lineplot(x=thresh, y=r, color='limegreen', label='Recall', ax=axis_twin)
         axis_twin.set_ylabel('Recall')
         axis_twin.set_ylim(0, 1)
         axis_twin.legend(bbox_to_anchor=(0.24, 0.18))
+
     
     axis.set_xlim(0, 1)
     axis.set_ylim(0, 1)

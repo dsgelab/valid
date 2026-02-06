@@ -258,22 +258,35 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Cross-validation                                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    cv_results = xgb.cv(params=params,
-                        dtrain=xgb.DMatrix(X_train, label=y_train),
-                        num_boost_round=200,
-                        nfold=n_folds,
-                        stratified=True,
-                        early_stopping_rounds=5,
-                        seed=42,
-                        verbose_eval=False
-    )
-    
+    if base_params["eval_metric"] in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]:
+        del params["eval_metric"]
+        cv_results = xgb.cv(params=params,
+                            dtrain=xgb.DMatrix(X_train, label=y_train),
+                            num_boost_round=200,
+                            nfold=n_folds,
+                            custom_metric=quantile_eval(base_params["eval_metric"]),
+                            stratified=True,
+                            early_stopping_rounds=5,
+                            seed=42,
+                            verbose_eval=False
+        )
+    else:
+        cv_results = xgb.cv(params=params,
+                            dtrain=xgb.DMatrix(X_train, label=y_train),
+                            num_boost_round=200,
+                            nfold=n_folds,
+                            stratified=True,
+                            early_stopping_rounds=5,
+                            seed=42,
+                            verbose_eval=False
+        )
+        
     # Get best iteration and score
     best_iteration = len(cv_results)
     trial.set_user_attr("best_iteration", best_iteration)
     
     # Return mean of test metric at best iteration (last row)
-    metric_name = f"cv test-{base_params['eval_metric']}-mean"
+    metric_name = f"test-{base_params['eval_metric']}-mean"
     best_score = cv_results[metric_name].iloc[-1]
     
     return best_score
