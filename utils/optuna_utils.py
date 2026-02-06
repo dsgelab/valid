@@ -281,6 +281,7 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
                             verbose_eval=False
         )
         
+    
     # Get best iteration and score
     best_iteration = len(cv_results)
     trial.set_user_attr("best_iteration", best_iteration)

@@ -262,6 +262,5 @@ if __name__ == "__main__":
                               valid_importances=train_importances,
                               test_importances=test_importances,
                               train_type=get_train_type(args.metric),
-                              model_type=args.model_type,
-                              fit_cv=args.fit_cv)
+                              model_type=args.model_type)
 

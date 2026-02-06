@@ -176,7 +176,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 def confusion_plot(matrix: np.ndarray, 
                    labels=None, 
-                   ax=None) -> plt.Axes | plt.Figure:
+                   ax=None) -> Union[plt.Axes, plt.Figure]:
     """ Display binary confusion matrix as a Seaborn heatmap """
     
     labels = labels if labels else ['Controls', 'Cases']
@@ -186,7 +186,7 @@ def confusion_plot(matrix: np.ndarray,
     axis.set_ylabel('Actual')
     axis.set_title('Confusion Matrix')
     return axis if ax else fig
-   
+    
 import seaborn as sns
 from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
@@ -288,7 +288,8 @@ def plot_box_probs(evals=[],
         ax2.set_ylabel('')
     except:
         pass
-    
+
+
 from sklearn.metrics import precision_recall_curve, average_precision_score
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -335,7 +336,6 @@ def precision_recall_plot(y_true,
     plt.close()
     
     return axis if ax else fig
-
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Compound plots                                          #

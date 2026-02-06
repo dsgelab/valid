@@ -93,7 +93,7 @@ def get_out_data(data: pl.DataFrame,
             )
         elif get_train_type(metric) == "multi":  
             for pred_val in out_data["TRUE_ABNORM"].unique():
-                y_pred = model_final.predict_proba(X_all.to_numpy())[:,pred_val]
+                y_pred = model_final.predict_proba(X_all.to_numpy())[:,int(pred_val)]
                 out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS_"+str(pred_val))])
                 # Binary abnormality prediction based on optimal cut-off
                 temp_data = out_data.with_columns(pl.when((pl.col.TRUE_ABNORM!=1)&(pl.col.TRUE_ABNORM!=0)).then(pl.lit(0)).otherwise(pl.col.TRUE_ABNORM).alias("TRUE_ABNORM"))
@@ -110,26 +110,30 @@ import numpy as np
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from minor_plot_utils import get_plot_names
-def get_shap_importances(X_in: pl.DataFrame,
-                         explainer: shap.TreeExplainer,
-                         lab_name: str,
-                         lab_name_two: str="",
-                         translate: bool=True) -> tuple[pl.DataFrame, list]:
-    """Returns the SHAP importances of the model.
+
+""" Returns the SHAP importances of the model.
     Args:
         X_in (pl.DataFrame): The input data.
         explainer (shap.TreeExplainer): The SHAP explainer for the model.
         lab_name (str): The name of the lab.
         lab_name_two (str): The name of the second lab (default is empty string).
     Returns:
-        tuple: A tuple containing the SHAP importances (pl.DataFrame) and the feature names (list)."""
+        tuple: A tuple containing the SHAP importances (pl.DataFrame) and the feature names (list).
+"""
+def get_shap_importances(X_in: pl.DataFrame,
+                         explainer: shap.TreeExplainer,
+                         lab_name: str,
+                         lab_name_two: str="",
+                         translate: bool=True) -> tuple[pl.DataFrame, list]:
+    """Creates a dataframe based on the mean absolute SHAP values of the model. 
+       Also returns the (readable) names of the features in the same order as the SHAP values."""
     if translate:
         new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
     else:
         new_names = X_in.columns
     explanations = explainer.shap_values(X_in.to_pandas())
     mean_shaps = np.abs(explanations).mean(0)
-    shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names)).sort("mean_shap", descending=True)
+    shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names), pl.Series("orig", X_in.columns)).sort("mean_shap", descending=True)
 
     return(shap_importance, new_names)
 
@@ -220,7 +224,6 @@ def create_xgb_dts(data: pl.DataFrame,
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     train_data = data.filter(pl.col("SET")==0).drop("SET")
-
     finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
 
     # if training pct<100, take only part of training data
@@ -229,7 +232,7 @@ def create_xgb_dts(data: pl.DataFrame,
         data = data.filter(pl.col("FINNGENID").is_in(train_data["FINNGENID"]).or_(pl.col("SET")!=0))
         finetune_valid_data = finetune_valid_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
         data = data.filter(pl.col("FINNGENID").is_in(finetune_valid_data["FINNGENID"]).or_(pl.col("SET")!=0.5))
-
+        
     valid_data = data.filter(pl.col("SET")==1).drop("SET")
     test_data = data.filter(pl.col("SET")==2).drop("SET")
         

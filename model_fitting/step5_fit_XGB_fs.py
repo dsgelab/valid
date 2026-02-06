@@ -2,11 +2,10 @@
 import sys
 
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from optuna_utils import run_optuna_optim_cv
 from model_eval_utils import bootstrap_difference
 from general_utils import get_date, make_dir, init_logging, Timer, logging_print
-from model_eval_utils import get_train_type, save_all_report_plots
-from optuna_utils import run_optuna_optim
+from model_eval_utils import get_train_type, save_all_report_plots, eval_metric_diff
+from optuna_utils import run_optuna_optim, run_optuna_optim_cv
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
 from input_utils import get_data_and_pred_list   
 from model_fit_utils import xgb_final_fitting, get_xgb_base_params
@@ -152,8 +151,9 @@ if __name__ == "__main__":
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     base_params = get_xgb_base_params(metric=args.metric, 
-                                      lr=args.lr, 
-                                      n_classes=len(y_train.unique()))
+                                          lr=args.lr, 
+                                          n_classes=len(y_train.unique()))
+    print(base_params)
     best_params = run_optuna_optim_cv(train=[pl.concat([X_train, X_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
                                       lab_name=args.lab_name, 
                                       refit=args.refit, 
@@ -264,8 +264,7 @@ if __name__ == "__main__":
                                   valid_importances=valid_importances,
                                   test_importances=test_importances,
                                   train_type=get_train_type(args.metric),
-                                  model_type=args.model_type,
-                                  fit_cv=args.fit_cv)
+                                  model_type=args.model_type)
     else:
         full_data = pl.read_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
         train_importances = pl.read_csv(out_down_path + "/" + args.goal + "/" + args.lab_name + "_" + study_name + "_" + args.goal + "_shap_importance_train_" + get_date() + ".csv")
@@ -275,8 +274,11 @@ if __name__ == "__main__":
     # # # # Top K features
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # get top K features
+    args.skip_model_fit = 0
+    args.refit = 1
+    args.n_trials = 100
     if args.n_features or args.fs_path != "":
-        if args.n_features  :
+        if args.n_features:
             fs_results = pl.DataFrame()
             for crnt_k in range(1, args.n_features + 1):
                 logging_print(f"Fitting feature select model with top {crnt_k} features.")
@@ -365,7 +367,7 @@ if __name__ == "__main__":
                                                                                                      fs_results=fs_results,
                                                                                                      metric="logloss")
                 print(fs_results)
-                if ((pval_diff >= 0.05 and diff_est > -0.005) or (pval_diff <0.05 and diff_est > 0)) and \
+                if ((pval_diff >= 0.05 and diff_est > -0.005) or (pval_diff < 0.05 and diff_est > 0)) and \
                         ((pval_diff_2 >= 0.05 and diff_est_2 > -0.005) or (pval_diff_2 < 0.05 and diff_est_2 > 0)) and \
                         ((pval_diff_3 >= 0.05 and diff_est_3 < 0.005) or (pval_diff_3 < 0.05 and diff_est_3 < 0)):
                                                     # # # # Logging results
@@ -388,7 +390,7 @@ if __name__ == "__main__":
                                             
         elif args.fs_path != "":
             fs_select = pl.read_csv(args.fs_path)
-            args.n_features = fs_select.height
+            args.n_features = fs_select.height-2
             top_k_features = (train_importances
                                 .join(fs_select, on="orig", how="inner")
                                 .select("orig")
@@ -402,12 +404,15 @@ if __name__ == "__main__":
             X_fs_valid = X_valid.select(top_k_features)
             X_fs_test = X_test.select(top_k_features)
             X_fs_all = X_all.select(top_k_features)
+            args.skip_model_fit = 0
+            args.refit = 1
+            args.n_trials = 100
             best_fs_params = run_optuna_optim_cv(train=[pl.concat([X_fs_train, X_fs_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
                                                 lab_name=args.lab_name, 
                                                 refit=args.refit, 
                                                 time_optim=args.time_optim, 
                                                 n_trials=args.n_trials, 
-                                                study_name=study_name,
+                                                study_name=study_name+"_fs"+str(args.n_features),
                                                 res_dir=args.res_dir,
                                                 model_type="xgb",
                                                 model_fit_date=args.model_fit_date,
@@ -520,7 +525,7 @@ if __name__ == "__main__":
     pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
 
     fs_cv_data = get_out_data(data=data, 
-                                    model_fs=model_fs_cv, 
+                                    model_final=model_fs_cv, 
                                     X_all=X_fs_all, 
                                     y_all=y_all, 
                                     metric=args.metric,

@@ -1,5 +1,7 @@
 from sklearn.model_selection import train_test_split
 import polars as pl
+
+
 def add_set(unique_data, 
             valid_pct=0.1,
             finetune_valid_pct=0.1):
@@ -9,7 +11,7 @@ def add_set(unique_data,
 
     data_train, data_total_valid = train_test_split(unique_data,
                                                     shuffle=True, 
-                                                    random_state=391, 
+                                                    random_state=0, 
                                                     test_size=total_valid_pct, 
                                                     train_size=1-total_valid_pct, 
                                                     stratify=unique_data["y_MEAN_ABNORM", "y_NEXT_ABNORM", "y_MIN_ABNORM"])
@@ -17,25 +19,26 @@ def add_set(unique_data,
     if finetune_valid_pct > 0:
         data_valid, data_finetune_valid = train_test_split(data_total_valid,
                                                            shuffle=True, 
-                                                           random_state=391, 
+                                                           random_state=0, 
                                                            test_size=round(finetune_valid_pct/total_valid_pct,2), 
                                                            train_size=round(valid_pct/total_valid_pct,2), 
                                                            stratify=data_total_valid["y_MEAN_ABNORM", "y_NEXT_ABNORM", "y_MIN_ABNORM"])
     else:
         data_valid = data_total_valid
         data_finetune_valid = pl.DataFrame({"FINNGENID": []})  # Empty DataFrame
-        
+
     unique_data = unique_data.with_columns(
                                 pl.when(pl.col("FINNGENID").is_in(data_train["FINNGENID"])).then(0)
                                   .when(pl.col("FINNGENID").is_in(data_valid["FINNGENID"])).then(1)
                                   .when(pl.col("FINNGENID").is_in(data_finetune_valid["FINNGENID"])).then(0.5)
                                   .otherwise(None)
-                                  .cast(pl.Int32)
+                                  .cast(pl.Float64)
                                   .alias("SET")
         )
     print(unique_data.select(pl.col("SET")).to_series().value_counts())
-    return(unique_data)
+    print(unique_data.select(pl.col("SET")).to_series().value_counts(normalize=True))
 
+    return(unique_data)
 
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))

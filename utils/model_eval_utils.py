@@ -14,18 +14,16 @@ def eval_metric_diff(full_out_data,
                      upper_name: str="FS",
                      goal_name: str="TRUE_ABNORM") -> tuple[pl.DataFrame, float, float, float, float, float, float]:
     """Evaluates the difference in metric between full          and feature selected models."""
-
     # TSH multi-class handling
     if "ABNORM_PROBS" not in full_out_data.columns:
-        out_data = out_data.with_columns(pl.when(pl.col(goal_name)==-1).then(pl.lit(0)).otherwise(pl.col(goal_name)).alias(goal_name))
-
+        full_out_data = full_out_data.with_columns(pl.when(pl.col(goal_name)==1).then(pl.lit(1)).otherwise(pl.lit(0)).alias(goal_name))
         if "ABNORM_PROBS_1.0" in full_out_data.columns:
             full_out_data = full_out_data.rename({"ABNORM_PROBS_1.0": "ABNORM_PROBS"})
             out_data = out_data.rename({"ABNORM_PROBS_1.0": "ABNORM_PROBS"})
         elif "ABNORM_PROBS_1" in full_out_data.columns:
             full_out_data = full_out_data.rename({"ABNORM_PROBS_1": "ABNORM_PROBS"})
             out_data = out_data.rename({"ABNORM_PROBS_1": "ABNORM_PROBS"})
-        
+
     crnt_preds = (full_out_data
                     .filter(pl.col.SET==set_no)
                     .select([goal_name, "ABNORM_PROBS", "FINNGENID"])
@@ -38,10 +36,10 @@ def eval_metric_diff(full_out_data,
     elif metric == "logloss":
         metric_func = skm.log_loss
     diff_est, lowci, highci, pval_diff, avg_1, avg_2 = bootstrap_difference(metric_func = metric_func,
-                                                                            preds_1=crnt_preds["ABNORM_PROBS"].to_numpy(),
-                                                                            preds_2=crnt_preds["ABNORM_PROBS_right"].to_numpy(),
-                                                                            obs=crnt_preds[goal_name].to_numpy(),
-                                                                            n_boots=n_boots)
+                                                                    preds_1=crnt_preds["ABNORM_PROBS"].to_numpy(),
+                                                                    preds_2=crnt_preds["ABNORM_PROBS_right"].to_numpy(),
+                                                                    obs=crnt_preds[goal_name].to_numpy(),
+                                                                    n_boots=n_boots)
     if metric == "auc":
         pval_diff = 10**delong_roc_test(crnt_preds[goal_name].to_numpy(), crnt_preds["ABNORM_PROBS"].to_numpy(), crnt_preds["ABNORM_PROBS_right"].to_numpy())[0][0]
 
@@ -56,19 +54,20 @@ def eval_metric_diff(full_out_data,
                        "AVG_"+lower_name: avg_1,
                        "AVG_"+upper_name: avg_2}
     temp_fs_results = (pl.DataFrame(fs_results_dict)
-                       .with_columns(pl.col.SET.cast(pl.Float32),
+                       .with_columns(pl.col.SET.cast(pl.Float64),
                                      pl.col.METRIC.cast(pl.Utf8),
-                                     pl.col.N_FEATURES.cast(pl.Int32),
+                                     pl.col.N_FEATURES.cast(pl.Int64),
+                                     pl.col.PCT_TRAIN.cast(pl.Float64),
                                         pl.col.PVAL_DIFF.cast(pl.Float64),
                                         pl.col.DIFF_EST.cast(pl.Float64),
                                         pl.col.LOW_CI.cast(pl.Float64),
-                                        pl.col.HIGH_CI.cast(pl.Float64)
+                                        pl.col.HIGH_CI.cast(pl.Float64),
+                                        pl.col("AVG_"+lower_name).cast(pl.Float64),
+                                        pl.col("AVG_"+upper_name).cast(pl.Float64)
                        )
                     )
-    
     fs_results = pl.concat([fs_results, temp_fs_results])
     return fs_results, pval_diff, diff_est, lowci, highci, avg_1, avg_2
-
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -294,6 +293,53 @@ def bootstrap_difference(metric_func: callable,
         return(total_diff, ci_low, ci_high, p_value, total_est_1, total_est_2)
     else: # if no bootstrap was successful
         return(total_diff, np.nan, np.nan, np.nan, np.nan, np.nan)
+
+
+from collections.abc import Iterable
+import numpy as np
+def bootstrap_nri(metric_func: callable, 
+                  obs: Iterable[float], 
+                  preds_old: Iterable[float], 
+                  preds_new: Iterable[float], 
+                  n_boots=500, 
+                  rng_seed=42) -> tuple[np.float64, np.float64, np.float64]:
+    """Bootstrapping metrics by shuffling observations and predictions through sampling with redrawing."""
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Setting up # # # # # # # # # # # # # # # # # # # # # # # 
+    bootstraps = []
+    obs = np.asarray(obs)
+    preds_old = np.asarray(preds_old)
+    preds_new = np.asarray(preds_new)
+    rng = np.random.RandomState(rng_seed)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Point estiamte # # # # # # # # # # # # # # # # # # # # # 
+    try: # tweedie sometimes has issues
+        total_est = metric_func(obs, preds_old, preds_new)
+    except: # return nan if not possible
+        return(np.nan, np.nan, np.nan)
+    
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # Bootstrapping # # # # # # # # # # # # # # # # # # # # # # 
+    for i in np.arange(n_boots):
+        idxs = rng.randint(0, len(obs), len(obs))
+        try: # tweedie sometimes has issues
+            bootstraps.append(metric_func(obs[idxs], preds_old[idxs], preds_new[idxs]))
+        except:
+            continue
+    if len(bootstraps) > 0: # if at least one bootstrap was successful
+        # Sorting
+        bootstraps = np.array(bootstraps)
+        bootstraps.sort()
+        # 95% CI
+        ci_low = bootstraps[int(0.025*len(bootstraps))]
+        ci_high = bootstraps[int(0.975*len(bootstraps))]
+        #p_value = np.mean(np.abs(bootstraps)>=np.abs(total_est))
+
+        return(total_est, ci_low, ci_high)
+    else: # if no bootstrap was successful
+        return(total_est, np.nan, np.nan)
     
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Evaluation metrics                                      #
@@ -312,7 +358,7 @@ def get_optim_precision_recall_cutoff(out_data: pl.DataFrame) -> float:
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Greater eval functions                                  #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-from minor_plot_utils import create_report_plots
+from major_plot_utils import create_report_plots
 from general_utils import get_date, make_dir
 import polars as pl
 def save_all_report_plots(out_data: pl.DataFrame,

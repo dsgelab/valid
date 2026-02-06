@@ -16,7 +16,6 @@ import logging
 logger = logging.getLogger(__name__)
 import argparse
 
-
 def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
@@ -48,7 +47,6 @@ def get_parser_arguments():
     args = parser.parse_args()
 
     return(args)
-
 
 if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -129,12 +127,13 @@ if __name__ == "__main__":
     other_labels = add_set(other_labels, 
                            valid_pct=args.valid_pct,
                            finetune_valid_pct=args.finetune_valid_pct)
-    log_print_n(other_labels.filter(pl.col.SET==0), "Train")
     log_print_n(other_labels.filter(pl.col.SET==0.5), "Finetune Valid")
     log_print_n(other_labels.filter(pl.col.SET==1), "Valid")
-    log_print_n(other_labels.filter(pl.col.SET==2), "Test")
+    log_print_n(other_labels.filter(pl.col.SET==0), "Train")
 
     labels = pl.concat([other_labels, test_labels])
+    print(labels["SET"].value_counts(normalize=True))
+    print(labels["SET"].value_counts(normalize=False))
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Data before start                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
