@@ -39,6 +39,7 @@ def get_parser_arguments():
     parser.add_argument("--file_path_second_sumstats", type=str, help="Path to summary statistics of a another lab value data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_pgs1", type=str, help="PGS scores - 1/2", default="")
     parser.add_argument("--file_path_pgs2", type=str, help="PGS scores - 2/2", default="")
+    parser.add_argument("--file_path_transformer", type=str, help="Transformer outputs", default="")
 
     # Extra info
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
@@ -116,10 +117,12 @@ if __name__ == "__main__":
                                           file_path_labs=args.file_path_labs, 
                                           file_path_pgs1=args.file_path_pgs1,
                                           file_path_pgs2=args.file_path_pgs2,
+                                          file_path_transformer=args.file_path_transformer,
                                           preds=args.preds,
                                           start_date=args.start_date,
                                           fill_missing=0 if args.model_type=="xgb" else 1,
                                           fids_path=args.fids_path)
+    print(data)
     fgids, X_train, y_train, \
         X_finetune_valid, y_finetune_valid, \
         X_valid, y_valid, \

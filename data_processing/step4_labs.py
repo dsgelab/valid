@@ -79,7 +79,7 @@ if __name__ == "__main__":
             # krea, egfr some other formula, egfr, cystatin c, UACR
             labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "46236952", "3020564", "3030366", "3020682"]))
         else:
-            labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "46236952", "3020564", "3030366"]))
+            labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "46236952", "3020564"]))
     if args.lab_name == "hba1c":
         if args.clean == 1:
             labs_data = labs_data.filter(~pl.col.OMOP_CONCEPT_ID.is_in(["3004410", "3018251", "3013826", "3013826"])) # hba1c and fasting glucose, glucose, glucose 2 hours post dose

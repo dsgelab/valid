@@ -182,4 +182,5 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    print(args.res_dir+out_file_name+".parquet")
     preds_wider.write_parquet(args.res_dir+out_file_name+".parquet")

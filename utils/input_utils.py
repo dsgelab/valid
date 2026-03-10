@@ -11,6 +11,7 @@ def get_data_and_pred_list(file_path_labels: str,
                            file_path_labs: str,
                            file_path_pgs1: str,
                            file_path_pgs2: str,
+                           file_path_transformer: str,
                            preds: list,
                            start_date: str,
                            fill_missing: int=0,
@@ -39,6 +40,11 @@ def get_data_and_pred_list(file_path_labels: str,
         fids = read_file(fids_path)
         print_count(data)
         data = data.filter(pl.col.FINNGENID.is_in(fids["FINNGENID"]))
+    print_count(data)
+
+    if file_path_transformer != "": 
+        trans_data = read_file(file_path_transformer)
+        data = data.join(trans_data.drop("SET", "y_MEAN_ABNORM"), on="FINNGENID", how="left")
     print_count(data)
 
     # Adding other data modalities
@@ -156,6 +162,8 @@ def get_data_and_pred_list(file_path_labels: str,
             [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_CODE_DATE"]
         elif pred == "SUMSTATS":
             [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
+        elif pred == "TRANSFORMER":
+            [X_cols.append(TRANSFORMER) for TRANSFORMER, _ in trans_data.schema.items() if TRANSFORMER != "FINNGENID" and TRANSFORMER != "SET" and TRANSFORMER != "y_MEAN_ABNORM"]
         elif pred == "SUMSTATS_MEAN":
             [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE" and "MEAN" in SUMSTAT]
         elif pred == "SECOND_SUMSTATS":

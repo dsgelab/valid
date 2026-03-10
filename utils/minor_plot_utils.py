@@ -12,7 +12,7 @@ def pretty_int(int_no):
     
 import polars as pl
 from general_utils import read_file
-def get_plot_names(col_names: list[str], 
+def get_plot_names(col_names: list, 
                    lab_name: str,
                    lab_name_two: str="",
                    omop_mapping_path="/home/ivm/valid/data/extra_data/upload/kanta_omop_mappings_counts.csv") -> list[str]:

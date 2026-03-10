@@ -20,6 +20,8 @@ def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
     # Data paths
+    parser.add_argument("--data_path_nofilt", type=str, help="Path to data.", default=None)
+
     parser.add_argument("--data_path_full", type=str, help="Path to data.", default="/home/ivm/valid/data/processed_data/step1_clean/")
     parser.add_argument("--fg_ver", type=str, default="R12", help="Which FinnGen release [options: R12 and R13]")
 
@@ -35,11 +37,13 @@ def get_parser_arguments():
     
     parser.add_argument("--start_pred_date", type=str, help="Start of prediction period [As string %Y-%m-%d].", default="2023-06-01")
     parser.add_argument("--end_pred_date", type=str, help="End of prediction period [As string %Y-%m-%d].", default="2023-12-31")
+    parser.add_argument("--min_per_year", type=bool, help="Take mean per year and the minimum/maximum (depending on the lab type) of that.", default=False)
+
     parser.add_argument("--months_buffer", type=int, help="Minimum number months before prediction start to be removed.", default=6)
     parser.add_argument("--months_buffer_abnorm", type=int, help="Months to average before baseline, which if abnormal -> removed.", default=3)
     parser.add_argument("--min_age", type=float, help="Minimum age at prediction time", default=30)
     parser.add_argument("--max_age", type=float, help="Maximum age at prediction time", default=70)
-    parser.add_argument("--test_pct", type=float, help="Percentage of test data.", default=0)
+    parser.add_argument("--n_test", type=int, help="Number of individuals in test data.", default=0)
     parser.add_argument("--valid_pct", type=float, help="Percentage of final validation data.", default=0.2)
     parser.add_argument("--finetune_valid_pct", type=float, help="Percentage of finetune-validation data. For feature selection and optuna optimization.", default=0.2)
     parser.add_argument("--test_bbs", type=str, default=["HELSINKI BIOBANK"], nargs="+", help="Cohorts that should be part of the test set i.e. HELSINKI BIOBANK")
@@ -80,6 +84,10 @@ if __name__ == "__main__":
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(args.data_path_full)
+    if not args.data_path_nofilt is None:
+        data = read_file(args.data_path_nofilt)
+        other_data = read_file(args.data_path_full)
+        
     #print(data) 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Cases and controls                                      #
@@ -87,6 +95,7 @@ if __name__ == "__main__":
     labels = label_cases_and_controls(data=data,
                                       start_pred_date=start_pred_date,
                                       end_pred_date=end_pred_date,
+                                      min_per_year=args.min_per_year,
                                       lab_name=args.lab_name,
                                       abnorm_type=args.abnorm_type,
                                       removed_ids_path=removed_ids_path,
@@ -106,22 +115,19 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Selecting relevant individuals                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    # Selecting in HBB, correct age at end, not dead, and BMI >= 18.5
     select_fids = get_bbs_indvs(fg_ver=args.fg_ver, bbs=args.test_bbs)
-    if args.test_pct>0:
-        n_test = int(len(select_fids)*args.test_pct)
-        # set a seed for reproducibility
-        np.random.seed(42)
-        select_fids = np.random.choice(select_fids, n_test, replace=False).tolist()
-
-    n_nothbb = labels.filter(~pl.col("FINNGENID").is_in(select_fids)).height
+    if args.n_test==0: n_test = int(len(select_fids)*args.test_pct)
+    else: n_test = args.n_test
+    np.random.seed(230123)
+    select_fids = np.random.choice(labels.filter(pl.col.FINNGENID.is_in(select_fids))["FINNGENID"].to_list(), n_test, replace=False).tolist()
     test_labels = (labels
                    .filter(pl.col("FINNGENID").is_in(select_fids))
                    .with_columns(pl.lit(2).cast(pl.Float64).alias("SET"))
+                   .unique()
     )
     other_labels = labels.filter(~pl.col.FINNGENID.is_in(select_fids))
-    logging_print(str(n_nothbb) + " individuals not in HBB.")
-    log_print_n(test_labels, "HBB")
+    logging_print(str(other_labels.height) + " individuals not in HBB.")
+    log_print_n(test_labels, "Test")
     log_print_n(other_labels, "TrainValid")
 
     other_labels = add_set(other_labels, 
@@ -134,6 +140,16 @@ if __name__ == "__main__":
     labels = pl.concat([other_labels, test_labels])
     print(labels["SET"].value_counts(normalize=True))
     print(labels["SET"].value_counts(normalize=False))
+
+    # train_labels = labels.filter(pl.col.SET<1)
+    # valid_labels = labels.filter((pl.col.SET>=1)&(pl.col.FINNGENID.is_in(other_data["FINNGENID"])))
+    # labels = pl.concat([train_labels, valid_labels])
+    # log_print_n(labels.filter(pl.col.SET==0.5), "Finetune Valid")
+    # log_print_n(labels.filter(pl.col.SET==1), "Valid")
+    # log_print_n(labels.filter(pl.col.SET==0), "Train")
+    # print(labels["SET"].value_counts(normalize=True))
+    # print(labels["SET"].value_counts(normalize=False))
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Data before start                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
