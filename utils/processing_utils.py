@@ -34,8 +34,10 @@ def egfr_ckdepi2021_transform(data,
         .otherwise(142*(pl.min_horizontal(pl.col(value_col_name)/fem_k, 1)**fem_alpha)*(pl.max_horizontal(pl.col(value_col_name)/male_k, 1)**(-1.2))*(0.9938**pl.col.EVENT_AGE)*1.012)
         .alias(value_col_name)
     )
-    
+    data = data.with_columns(pl.Series("UNIT", ["ml/min/1.73m2"]*data.height))
+
     return(data)
+    
 import polars as pl
 def cystc_ckdepi2012_transform(data,
                               value_col_name="VALUE"):

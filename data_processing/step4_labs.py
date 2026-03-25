@@ -45,20 +45,23 @@ if __name__ == "__main__":
         out_file_name += "impute_"
     if args.clean == 1:
         out_file_name += "clean_"
+    if args.start_date != "": 
+        out_file_name = out_file_name + "pred" + str(int(args.start_date[0:4])+1) + "_"
     out_file_name += get_date()
     print(out_file_name)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Get data                                                #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     labs_data = read_file(args.file_path_lab)
-    labs_data = labs_data.with_columns(pl.col.MEASUREMENT_VALUE_HARMONIZED.cast(pl.Float64),
+    labs_data = labs_data.with_columns(pl.col.MEASUREMENT_VALUE.cast(pl.Float64),
                                        pl.col.OMOP_CONCEPT_ID.cast(pl.Utf8))
-
+    if labs_data["APPROX_EVENT_DATETIME"].dtype == pl.Utf8:
+        labs_data = labs_data.with_columns(pl.col.APPROX_EVENT_DATETIME.str.to_date("%Y-%m-%dT%H:%M", strict=False))
     # Adding manual eGFR data 
     if args.lab_name not in ["krea", "egfr"]:
         crea_data = read_file(args.egfr_data_path)
         crea_data = (crea_data
-                     .rename({"VALUE": "MEASUREMENT_VALUE_HARMONIZED", "DATE": "APPROX_EVENT_DATETIME"})
+                     .rename({"VALUE": "MEASUREMENT_VALUE", "DATE": "APPROX_EVENT_DATETIME"})
                      .with_columns(pl.Series("OMOP_CONCEPT_ID", ["40764999"]*crea_data.height),
                                    pl.col.APPROX_EVENT_DATETIME.dt.date().alias("APPROX_EVENT_DATETIME"))
                     )
@@ -66,8 +69,8 @@ if __name__ == "__main__":
                      .filter(~pl.col.OMOP_CONCEPT_ID.is_in(["40764999", "3020564", "46236952"]))
                      .with_columns(pl.col.APPROX_EVENT_DATETIME.dt.date().alias("APPROX_EVENT_DATETIME"))
                     )
-        labs_data = pl.concat([labs_data.select("FINNGENID", "MEASUREMENT_VALUE_HARMONIZED", "APPROX_EVENT_DATETIME", "OMOP_CONCEPT_ID"),
-                                crea_data.select("FINNGENID", "MEASUREMENT_VALUE_HARMONIZED", "APPROX_EVENT_DATETIME", "OMOP_CONCEPT_ID")])
+        labs_data = pl.concat([labs_data.select("FINNGENID", "MEASUREMENT_VALUE", "APPROX_EVENT_DATETIME", "OMOP_CONCEPT_ID"),
+                                crea_data.select("FINNGENID", "MEASUREMENT_VALUE", "APPROX_EVENT_DATETIME", "OMOP_CONCEPT_ID")])
         
 
 
@@ -107,6 +110,7 @@ if __name__ == "__main__":
     #                 Filter to before start of prediction                    #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     labels = read_file(args.dir_path_labels+args.file_name_labels_start+"_labels.parquet")
+    print(labs_data)
     if args.start_date == "": 
         labs_data = labs_data.join(labels.select("FINNGENID"), on="FINNGENID", how="right")
         labs_data = labs_data.filter(pl.col.APPROX_EVENT_DATETIME < pl.col.START_DATE)
@@ -122,9 +126,9 @@ if __name__ == "__main__":
     #                 Stats for labs                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
     labs_data = labs_data.group_by(["FINNGENID", "OMOP_CONCEPT_ID"]).agg(
-                    pl.col.MEASUREMENT_VALUE_HARMONIZED.mean().alias("MEAN"),
-                    pl.col.MEASUREMENT_VALUE_HARMONIZED.quantile(0.25).alias("QUANT25"),
-                    pl.col.MEASUREMENT_VALUE_HARMONIZED.quantile(0.75).alias("QUANT75")
+                    pl.col.MEASUREMENT_VALUE.mean().alias("MEAN"),
+                    pl.col.MEASUREMENT_VALUE.quantile(0.25).alias("QUANT25"),
+                    pl.col.MEASUREMENT_VALUE.quantile(0.75).alias("QUANT75")
     )
     print_count(labs_data)
 

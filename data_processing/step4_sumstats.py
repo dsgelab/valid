@@ -46,20 +46,24 @@ if __name__ == "__main__":
     args = get_parser_arguments()
     init_logging(args.res_dir, args.lab_name, logger, args)
     if args.mean_impute >= 1 and not args.interpolate >= 1:
-        out_file_name = args.file_name_start+"_sumstats_"+get_date()
+        out_file_name = args.file_name_start+"_sumstats_"
     elif args.mean_impute >= 1 and args.interpolate >= 1:
-        out_file_name = args.file_name_start+"_sumstats_interpolate_"+get_date()
+        out_file_name = args.file_name_start+"_sumstats_int_"
     elif args.mean_impute == 0 and args.interpolate >= 1:
-        out_file_name = args.file_name_start+"_sumstats_noimpute_interpolate_"+get_date()
+        out_file_name = args.file_name_start+"_sumstats_ni_int_"
     else:
-        out_file_name = args.file_name_start+"_sumstats_noimpute_"+get_date()
-
+        out_file_name = args.file_name_start+"_sumstats_ni_"
+    if args.start_date != "": 
+        out_file_name = out_file_name + "pred" + str(int(args.start_date[0:4])+1) + "_"
+    out_file_name = out_file_name + get_date()
+    
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Get data                                                #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     
     
     if args.file_path_labels != "":
+        print(args.file_path_data)
         data = read_file(args.file_path_data)
         if args.file_path_data_2 != "":
             data_2 = read_file(args.file_path_data_2)

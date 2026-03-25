@@ -82,10 +82,6 @@ if __name__ == "__main__":
     #                 Processing                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     data = data.filter(pl.col.EVENT_AGE>=args.min_age)
-    if args.lab_name == "hba1c" or args.lab_name == "tsh": 
-        data = data.drop(["VALUE_FG", "UNIT_FG", "ABNORM_FG"])
-    else:
-        data = data.drop(["VALUE", "UNIT"]).rename({"VALUE_FG": "VALUE", "UNIT_FG": "UNIT"})
     if args.lab_name == "uacr":
         # there is something very weird about the low values
         data = data.filter(pl.col.ABNORM!="L")
@@ -112,15 +108,13 @@ if __name__ == "__main__":
                                                     dummy_unit=args.main_unit)
     else:
         data = data.filter(~pl.col.ABNORM.is_null())
-    if "ABNORM_FG" in data.columns:
-        data = (data
-                .drop("ABNORM")
+    data = (data
                 .with_columns(
-                    pl.when(pl.col.ABNORM_FG=="N").then(0)
-                    .when(pl.col.ABNORM_FG=="L").then(-1)
-                    .when(pl.col.ABNORM_FG=="H").then(1)
-                    .when(pl.col.ABNORM_FG=="LL").then(-2)
-                    .when(pl.col.ABNORM_FG=="HH").then(2)
+                    pl.when(pl.col.ABNORM=="N").then(0)
+                    .when(pl.col.ABNORM=="L").then(-1)
+                    .when(pl.col.ABNORM=="H").then(1)
+                    .when(pl.col.ABNORM=="LL").then(-2)
+                    .when(pl.col.ABNORM=="HH").then(2)
                     .cast(pl.Float64).alias("ABNORM")
                 )
                )
@@ -148,14 +142,10 @@ if __name__ == "__main__":
                                                                file_name=file_name, 
                                                                logger=logger,
                                                                plot=args.plot)
-        print(data["VALUE"].describe())
 
     if args.lab_name == "egfr":
         data, n_indvs_stats = remove_single_value_outliers(data=data, 
                                                            n_indvs_stats=n_indvs_stats)
-
-    print(data["VALUE"].describe())
-
 
     #### Finishing
     try:
