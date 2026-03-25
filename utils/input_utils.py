@@ -15,7 +15,8 @@ def get_data_and_pred_list(file_path_labels: str,
                            preds: list,
                            start_date: str,
                            fill_missing: int=0,
-                           fids_path: str="") -> tuple[pl.DataFrame, list]:
+                           fids_path: str="",
+                           future_val: str="") -> tuple[pl.DataFrame, list]:
     """Creates the data and predictor list. 
 
    Returns the data and the predictors.
@@ -36,6 +37,9 @@ def get_data_and_pred_list(file_path_labels: str,
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
+    if future_val == "train": data = data.filter(pl.col.SET==0)
+    elif future_val == "val": data = data.filter(pl.col.SET!=0)
+
     if fids_path != "": 
         fids = read_file(fids_path)
         print_count(data)
@@ -47,7 +51,7 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(trans_data.drop("SET", "y_MEAN_ABNORM"), on="FINNGENID", how="left")
     print_count(data)
 
-    # Adding other data modalities
+    # # # # # # # # # PGS # # # # # # # # # # # # # # # # # # #
     if file_path_pgs1 != "":
         pgs = pl.read_csv(file_path_pgs1, separator="\t")
         if len(pgs.columns)==2: # Zhijian PGS for eGFR levels
@@ -73,8 +77,6 @@ def get_data_and_pred_list(file_path_labels: str,
             pgs = pgs.with_columns((-1*pl.col.PGS2).alias("PGS2"))
         else: # Zhiyu PGS for creatinine slopes
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS2"] 
-            #pgs = pgs.with_columns((-1*pl.col.PGS2).alias("PGS2"))
-        #
         data = data.join(pgs.select("FINNGENID", "PGS2"), on="FINNGENID", how="left")
         pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
         data = data.join(pcs.select("IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"), left_on="FINNGENID", right_on="IID", how="left")
@@ -83,12 +85,18 @@ def get_data_and_pred_list(file_path_labels: str,
         print("Number of individuals left")
         print_count(data.filter(~pl.col.PC1.is_null()))
         data = data.filter(~pl.col.PC1.is_null())
+
+    # # # # # # # # # ICD # # # # # # # # # # # # # # # # # # #
     if file_path_icds != "": 
         icds = read_file(file_path_icds)
         data = data.join(icds, on="FINNGENID", how="left")
+
+    # # # # # # # # # ATC # # # # # # # # # # # # # # # # # # #
     if file_path_atcs != "": 
         atcs = read_file(file_path_atcs)
         data = data.join(atcs, on="FINNGENID", how="left")
+
+    # # # # # # # # # Sumstats # # # # # # # # # # # # # # # # # # #
     if file_path_sumstats != "": 
         sumstats = read_file(file_path_sumstats,
                              schema={"SEQ_LEN": pl.Float64,
@@ -100,6 +108,8 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.with_columns(pl.when(pl.col.MEAN.is_null()).then(pl.lit(1)).otherwise(pl.lit(0)).alias("NO_HISTORY"))
         if start_date != "":
             data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.LAST_VAL_DATE).dt.total_days().alias("LAST_VAL_DIFF"))
+
+    # # # # # # # # # Second sumstats # # # # # # # # # # # # # # # # # # #
     if file_path_second_sumstats != "": 
         second_sumstats = read_file(file_path_second_sumstats)
         if "SET" in second_sumstats.columns: second_sumstats = second_sumstats.drop("SET")
@@ -107,19 +117,13 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(second_sumstats, on="FINNGENID", how="left")
         if start_date != "":
             data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.S_LAST_VAL_DATE).dt.total_days().alias("S_LAST_VAL_DIFF"))
+
+    # # # # # # # # # Labs # # # # # # # # # # # # # # # # # # #
     if file_path_labs != "": 
-        labs  =read_file(file_path_labs)
-        null_counts = (labs.select([pl.col(c).is_null().sum().alias(c) for c in labs.columns]))
-        null_counts_filtered = null_counts.select([
-            pl.col(c) for c in null_counts.columns if null_counts[0, c] > 0
-        ])
-        print(null_counts_filtered)
+        labs = read_file(file_path_labs)
         data = data.join(labs, on="FINNGENID", how="left")
-    null_counts = (data.select([pl.col(c).is_null().sum().alias(c) for c in data.columns]))
-    null_counts_filtered = null_counts.select([
-        pl.col(c) for c in null_counts.columns if null_counts[0, c] > 0
-    ])
-    print(null_counts_filtered)
+
+    # # # # # # # # # Extra # # # # # # # # # # # # # # # # # # #
     if "BMI" in preds:
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "BMI")            
         data = data.join(extra_data.select("FINNGENID", "BMI"), how="left", on="FINNGENID")
@@ -148,6 +152,7 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(extra_data.select("FINNGENID", "EDU"), how="left", on="FINNGENID")
         if fill_missing:
             data = data.with_columns(pl.when(pl.col.EDU.is_null()).then(pl.lit(0.5)).otherwise(pl.col.EDU).alias("EDU"))
+            
     # Changing data-modality of sex column
     data = data.with_columns(pl.col("SEX").replace({"female": 0, "male": 1}).cast(pl.Int32).alias("SEX"))
 
@@ -174,7 +179,7 @@ def get_data_and_pred_list(file_path_labels: str,
             [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID" and "MEAN" in LAB_MAT]
         else:
             X_cols.append(pred)
-    return(data, X_cols)
+    return(data.unique(), X_cols)
 
 from datetime import datetime
 import polars as pl

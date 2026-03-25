@@ -19,7 +19,8 @@ def get_out_file_name(file_name_start: str,
                       bin_count: int,
                       months_before: int,
                       start_year: int,
-                     min_pct: str) -> str:
+                      min_pct: str,
+                     start_date: str) -> str:
     """
     Function to get the output file name based on the input parameters.
     """
@@ -42,7 +43,10 @@ def get_out_file_name(file_name_start: str,
         out_file_name += "_buffer" + str(months_before) + "months"
     if start_year > 0:
         out_file_name += "_start_" + str(start_year)
-    out_file_name += "_" + lab_name + "_" + get_date()
+    if start_date != "": 
+        out_file_name = out_file_name + "_pred" + str(int(start_date[0:4])+1) + "_"
+        
+    out_file_name += get_date()
     
     return out_file_name
 
@@ -111,7 +115,8 @@ if __name__ == "__main__":
                                       args.bin_count, 
                                       args.months_before, 
                                       args.start_year,
-                                     args.min_pct)
+                                     args.min_pct,
+                                     args.start_date)
     init_logging(args.res_dir, args.lab_name, logger, args)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 

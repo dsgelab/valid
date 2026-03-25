@@ -1,7 +1,8 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import get_date, make_dir, init_logging, Timer
+from general_utils import get_date, make_dir, init_logging, Timer, get_common_schema, align_schema
+
 from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim_cv
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
@@ -41,6 +42,12 @@ def get_parser_arguments():
     parser.add_argument("--file_path_pgs2", type=str, help="PGS scores - 2/2", default="")
     parser.add_argument("--file_path_transformer", type=str, help="Transformer outputs", default="")
 
+    parser.add_argument("--file_path_val_icds", type=str, help="Path to ICD data for the future validation set. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--file_path_val_atcs", type=str, help="Path to ATC data for the future validation set. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--file_path_val_labs", type=str, help="Path to Lab data for the future validation set. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--file_path_val_sumstats", type=str, help="Path to summary statistics of a single lab value data for the future validation set. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--file_path_val_second_sumstats", type=str, help="Path to summary statistics of a another lab value data for the future validation set. Each column is a predictor. [default: '' = not loaded]", default="")
+
     # Extra info
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--lab_name_two", type=str, help="Readable name of the second most relevant measurement value for file naming.", default="")
@@ -76,6 +83,7 @@ def get_parser_arguments():
     parser.add_argument("--filter_name", type=str, help="Name of ID filter.", default="")
 
     parser.add_argument("--train_pct", type=int, help="Percentage of training data to use. Note that this it the percentage of training and not fine-tuning data.", default=100)
+    parser.add_argument("--future_val", type=int, default=0, help="Percentage of future validation data to use. Note that this is the percentage of future validation and not training data.")
 
 
     args = parser.parse_args()
@@ -105,37 +113,76 @@ if __name__ == "__main__":
 
     init_logging(out_dir, args.lab_name, logger, args)
     make_dir(out_model_dir); make_dir(out_plot_dir); make_dir(out_down_dir)
-    
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Preparing data                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    data, X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
-                                          file_path_icds=args.file_path_icds, 
-                                          file_path_atcs=args.file_path_atcs, 
-                                          file_path_sumstats=args.file_path_sumstats, 
-                                          file_path_second_sumstats=args.file_path_second_sumstats, 
-                                          file_path_labs=args.file_path_labs, 
-                                          file_path_pgs1=args.file_path_pgs1,
-                                          file_path_pgs2=args.file_path_pgs2,
-                                          file_path_transformer=args.file_path_transformer,
-                                          preds=args.preds,
-                                          start_date=args.start_date,
-                                          fill_missing=0 if args.model_type=="xgb" else 1,
-                                          fids_path=args.fids_path)
-    print(data)
-    fgids, X_train, y_train, \
-        X_finetune_valid, y_finetune_valid, \
-        X_valid, y_valid, \
-        X_test, y_test, \
-        X_all, y_all, X_all_unscaled, \
-        dtrain, dfinetunevalid, dvalid, \
-            scaler_base, data = create_xgb_dts(data=data, 
-                                               X_cols=X_cols, 
-                                               y_goal=args.goal,
-                                               train_pct=args.train_pct)
+    if not args.future_val:
+        data, X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
+                                            file_path_icds=args.file_path_icds, 
+                                            file_path_atcs=args.file_path_atcs, 
+                                            file_path_sumstats=args.file_path_sumstats, 
+                                            file_path_second_sumstats=args.file_path_second_sumstats, 
+                                            file_path_labs=args.file_path_labs, 
+                                            file_path_pgs1=args.file_path_pgs1,
+                                            file_path_pgs2=args.file_path_pgs2,
+                                            file_path_transformer=args.file_path_transformer,
+                                            preds=args.preds,
+                                            start_date=args.start_date,
+                                            fill_missing=0 if args.model_type=="xgb" else 1,
+                                            fids_path=args.fids_path)
+        fgids, X_train, y_train, \
+            X_finetune_valid, y_finetune_valid, \
+            X_valid, y_valid, \
+            X_test, y_test, \
+            X_all, y_all, X_all_unscaled,_,_,_, \
+            dtrain, dfinetunevalid, dvalid, \
+                scaler_base, data = create_xgb_dts(data=data, 
+                                                   X_cols=X_cols, 
+                                                   y_goal=args.goal,
+                                                   train_pct=args.train_pct)
+        log_print_n(data.filter(pl.col.SET==0.5), "Finetune Valid")
+    else:
+        data, X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
+                                              file_path_icds=args.file_path_icds, 
+                                              file_path_atcs=args.file_path_atcs, 
+                                              file_path_sumstats=args.file_path_sumstats, 
+                                              file_path_second_sumstats=args.file_path_second_sumstats, 
+                                              file_path_labs=args.file_path_labs, 
+                                              file_path_pgs1=args.file_path_pgs1,
+                                              file_path_pgs2=args.file_path_pgs2,
+                                              file_path_transformer=args.file_path_transformer,
+                                              preds=args.preds,
+                                              start_date=args.start_date,
+                                              fill_missing=0 if args.model_type=="xgb" else 1,
+                                              fids_path=args.fids_path,
+                                              future_val="train")
+        val_data, val_X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
+                                                      file_path_icds=args.file_path_val_icds, 
+                                                      file_path_atcs=args.file_path_val_atcs, 
+                                                      file_path_sumstats=args.file_path_val_sumstats, 
+                                                      file_path_second_sumstats=args.file_path_val_second_sumstats, 
+                                                      file_path_labs=args.file_path_val_labs, 
+                                                      file_path_pgs1=args.file_path_pgs1,
+                                                      file_path_pgs2=args.file_path_pgs2,
+                                                      file_path_transformer=args.file_path_transformer,
+                                                      preds=args.preds,
+                                                      start_date=args.start_date,
+                                                      fill_missing=0 if args.model_type=="xgb" else 1,
+                                                      fids_path=args.fids_path,
+                                                      future_val="val")
+        
+        fgids, X_train, y_train, X_finetune_valid, y_finetune_valid, \
+            X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, \
+            X_val_all, y_val_all, X_val_all_unscaled, \
+            dtrain, dfinetunevalid, dvalid, \
+                scaler_base, data = create_xgb_dts(data=data, 
+                                                   X_cols=X_cols, 
+                                                   y_goal=args.goal,
+                                                   train_pct=args.train_pct,
+                                                   val_data=val_data)
+        
     print(X_all_unscaled.with_columns(pl.Series("FINNGENID", fgids)).head(2))
     log_print_n(data.filter(pl.col.SET==0), "Train")
-    log_print_n(data.filter(pl.col.SET==0.5), "Finetune Valid")
     log_print_n(data.filter(pl.col.SET==1), "Valid")
     log_print_n(data.filter(pl.col.SET==2), "Test")
     print(data["SET"].value_counts(normalize=True))
@@ -243,7 +290,20 @@ if __name__ == "__main__":
                                 lab_name=args.lab_name,
                                 goal=args.goal,
                                 abnorm_extra_choice=args.abnorm_extra_choice)
+        val_out_data = get_out_data(data=val_data, 
+                                model_final=model_final, 
+                                X_all=X_val_all, 
+                                y_all=y_val_all, 
+                                metric=args.metric,
+                                lab_name=args.lab_name,
+                                goal=args.goal,
+                                abnorm_extra_choice=args.abnorm_extra_choice)
+        
+        schema = get_common_schema([out_data, val_out_data])
+        out_data = pl.concat([align_schema(df, schema) for df in [out_data, val_out_data]])
+        print(out_data)
         out_data = out_data.with_columns(pl.when(pl.col.SET==0.5).then(pl.lit(0)).otherwise(pl.col.SET).alias("SET_fixed"))
+
         out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     elif not args.just_r2:
@@ -266,4 +326,3 @@ if __name__ == "__main__":
                               test_importances=test_importances,
                               train_type=get_train_type(args.metric),
                               model_type=args.model_type)
-

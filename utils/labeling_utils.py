@@ -46,10 +46,11 @@ from general_utils import logging_print
 import polars as pl
 def log_print_n(labels: pl.DataFrame,
                 name: str):
-    logging_print(name)
-    logging_print(f"MEAN N indvs {labels.height}  N cases { labels.get_column('y_MEAN_ABNORM').sum()} pct cases {round( labels.get_column('y_MEAN_ABNORM').sum()/labels.height*100,2)}%")
-    if "y_MIN" in labels.columns: logging_print(f"MIN N indvs {labels.height}  N cases { labels.get_column('y_MIN_ABNORM').sum()} pct cases {round( labels.get_column('y_MIN_ABNORM').sum()/labels.height*100,2)}%")
-    if "y_NEXT" in labels.columns: logging_print(f"NEXT N indvs {labels.height}  N cases { labels.get_column('y_NEXT_ABNORM').sum()} pct cases {round( labels.get_column('y_NEXT_ABNORM').sum()/labels.height*100,2)}%")
+    if labels.height>0:
+        logging_print(name)
+        logging_print(f"MEAN N indvs {labels.height}  N cases { labels.get_column('y_MEAN_ABNORM').sum()} pct cases {round( labels.get_column('y_MEAN_ABNORM').sum()/labels.height*100,2)}%")
+        if "y_MIN" in labels.columns: logging_print(f"MIN N indvs {labels.height}  N cases { labels.get_column('y_MIN_ABNORM').sum()} pct cases {round( labels.get_column('y_MIN_ABNORM').sum()/labels.height*100,2)}%")
+        if "y_NEXT" in labels.columns: logging_print(f"NEXT N indvs {labels.height}  N cases { labels.get_column('y_NEXT_ABNORM').sum()} pct cases {round( labels.get_column('y_NEXT_ABNORM').sum()/labels.height*100,2)}%")
 
 import polars as pl
 from datetime import datetime
@@ -101,22 +102,30 @@ import polars as pl
 from datetime import datetime
 def get_extra_file_descr(start_pred_date: pl.Date,
                          end_pred_date: pl.Date,
+                         val_start_pred_date: pl.Date,
+                         val_end_pred_date: pl.Date,
                          months_buffer: int,
                          test_version: str)-> str:
-    extra = "test" + test_version
+    extra = test_version
     if start_pred_date == datetime(2021, 1, 1) and end_pred_date == datetime(2023, 12, 31):
         extra += "_2021t2023"
     elif start_pred_date == datetime(2022, 6, 1) and end_pred_date == datetime(2022, 12, 31):
         extra += "_end2022"
     elif start_pred_date == datetime(2022, 1, 1) and end_pred_date == datetime(2022, 12, 31):
         extra += "_2022"
+    elif start_pred_date == datetime(2024, 1, 1) and end_pred_date == datetime(2024, 12, 31):
+        extra += "_2024"
     elif start_pred_date == datetime(2022, 1, 1) and end_pred_date == datetime(2024, 12, 31):
         extra += "_2022t2024"
+    elif start_pred_date == datetime(2023, 1, 1) and end_pred_date == datetime(2023, 12, 31) and \
+          val_start_pred_date == datetime(2024, 1, 1) and val_end_pred_date == datetime(2024, 12, 31):
+        extra += "_2023val2024"
     else:
         raise("Please description of this prediction time period to the function 'get_extra_file_descr'.")
     if months_buffer != 0:
         extra += "_w" + str(months_buffer)
     return(extra)
+
 
 import polars as pl
 import pandas as pd
@@ -156,10 +165,10 @@ def label_cases_and_controls(data: pl.DataFrame,
         labels = (data.filter((pl.col.DATE>=start_pred_date)&(pl.col.DATE<=end_pred_date))
                     .with_columns(
                         pl.col.VALUE.mean().over("FINNGENID").alias("y_MEAN"),
-                        pl.when((lab_name=="egfr")
+                        pl.when(lab_name=="egfr")
                         .then(pl.col.VALUE.min().over("FINNGENID"))
                         .otherwise(pl.col.VALUE.max().over("FINNGENID"))
-                        .alias("y_MIN")),
+                        .alias("y_MIN"),
                         pl.col.VALUE.get(pl.col.DATE.arg_min()).over("FINNGENID").alias("y_NEXT"),
                     )
         )

@@ -182,7 +182,8 @@ from typing import Tuple
 def create_xgb_dts(data: pl.DataFrame, 
                    X_cols: list, 
                    y_goal: str,
-                   train_pct: int = 1) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
+                   train_pct: int = 1,
+                   val_data: pl.DataFrame = None) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
     """Creates the XGBoost data matrices and scales the data.
 
     Returns the data and the predictors.
@@ -219,32 +220,56 @@ def create_xgb_dts(data: pl.DataFrame,
     scaler_base = StandardScaler()
     scaler_base.set_output(transform="polars")
     X_cols = numeric_cols + binary_cols
-    
+
+    # # # # # # # # ALL # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    X_all_unscaled = data.select(X_cols); y_all = data.select(y_goal)
+    if val_data is not None:
+        X_val_all_unscaled = val_data.select(X_cols); y_val_all = val_data.select(y_goal)
+    else:
+        X_val_all_unscaled = None; y_val_all = None; X_val_all = None
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Split data                                              #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
+    # # # # # # # # TRAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     train_data = data.filter(pl.col("SET")==0).drop("SET")
     finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
+
 
     # if training pct<100, take only part of training data
     if train_pct<100:
         train_data = train_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
         data = data.filter(pl.col("FINNGENID").is_in(train_data["FINNGENID"]).or_(pl.col("SET")!=0))
-        finetune_valid_data = finetune_valid_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
-        data = data.filter(pl.col("FINNGENID").is_in(finetune_valid_data["FINNGENID"]).or_(pl.col("SET")!=0.5))
-        
-    valid_data = data.filter(pl.col("SET")==1).drop("SET")
-    test_data = data.filter(pl.col("SET")==2).drop("SET")
-        
-    X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
+            
+        if finetune_valid_data.height>0:
+            finetune_valid_data = finetune_valid_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
+            data = data.filter(pl.col("FINNGENID").is_in(finetune_valid_data["FINNGENID"]).or_(pl.col("SET")!=0.5))
+            
     if finetune_valid_data.height>0:
         X_finetune_valid = finetune_valid_data.select(X_cols); y_finetune_valid = finetune_valid_data.select(y_goal)
     else:
         X_finetune_valid = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
-    X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
-    X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
-    X_all = data.select(X_cols); y_all = data.select(y_goal)
 
+    X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
+
+    # # # # # # # # VALID & TEST # # # # # # # # # # # # # # # # # # # # # # # # 
+    if val_data is None:
+        valid_data = data.filter(pl.col("SET")==1).drop("SET")
+        test_data = data.filter(pl.col("SET")==2).drop("SET")
+            
+        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
+        X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
+    else:
+        valid_data = val_data.filter(pl.col("SET")==1).drop("SET")
+        test_data = val_data.filter(pl.col("SET")==2).drop("SET")
+
+        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
+        X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Scaling data                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     preprocessor = ColumnTransformer([
         ('num', scaler_base, numeric_cols),
         ('bin', 'passthrough', binary_cols)
@@ -252,10 +277,12 @@ def create_xgb_dts(data: pl.DataFrame,
     X_train=pl.DataFrame(preprocessor.fit_transform(X_train), schema=X_train.schema)
     if finetune_valid_data.height>0:
         X_finetune_valid=pl.DataFrame(preprocessor.transform(X_finetune_valid), schema=X_finetune_valid.schema)
-    X_valid=pl.DataFrame(preprocessor.transform(X_valid), schema=X_valid.schema)
-    X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema)
-    X_all_scaled=pl.DataFrame(preprocessor.transform(X_all), schema=X_all.schema)
-
+    X_valid=pl.DataFrame(preprocessor.transform(X_valid), schema=X_valid.schema, strict=False)
+    X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema, strict=False)
+    X_all=pl.DataFrame(preprocessor.transform(X_all_unscaled), schema=X_all_unscaled.schema, strict=False)
+    if val_data is not None:
+        X_val_all=pl.DataFrame(preprocessor.transform(X_val_all_unscaled), schema=X_val_all_unscaled.schema, strict=False)
+        
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 XGBoost datatype                                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
@@ -265,5 +292,5 @@ def create_xgb_dts(data: pl.DataFrame,
         dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
     else:
         dfinetunevalid = None
-    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all_scaled, y_all, X_all, dtrain, dfinetunevalid, dvalid, preprocessor, data)
+    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, data)
 

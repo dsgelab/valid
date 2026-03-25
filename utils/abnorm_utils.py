@@ -1,6 +1,3 @@
-   
-
-
 def get_abnorm_func_based_on_name(lab_name,
                                   extra_choice=""):
     if lab_name == "tsh": 
@@ -62,11 +59,13 @@ def egfr_kdigo_abnorm(data,
                 )   
         elif soft_type == 2:
             # Add grey zone between 60 and 70
+            print(data)
             data = data.with_columns(
                     pl.when(pl.col(value_col_name) <60).then(1)
                     .when((pl.col(value_col_name) <=70)&(pl.col(value_col_name)>=60)).then(0.5)
                     .otherwise(0).alias("ABNORM_CUSTOM")
                 )   
+            print(data)
         print(data["ABNORM_CUSTOM"].value_counts())
     return(data)
 
