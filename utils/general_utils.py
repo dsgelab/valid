@@ -1,4 +1,30 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Polars                                                  #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+import polars as pl
+def get_common_schema(frames: list[pl.DataFrame]) -> dict:
+    """Promote types: int  float  str wins conflicts."""
+    priority = {pl.Utf8: 3, pl.Float64: 2, pl.Float32: 2,
+                pl.Int64: 1, pl.Int32: 1, pl.Int16: 1, pl.Int8: 1}
+
+    common = {}
+    for df in frames:
+        for col, dtype in df.schema.items():
+            if col not in common:
+                common[col] = dtype
+            else:
+                # pick the higher-priority (wider) type
+                if priority.get(dtype, 0) > priority.get(common[col], 0):
+                    common[col] = dtype
+    return common
+
+def align_schema(df: pl.DataFrame, schema: dict) -> pl.DataFrame:
+    return df.with_columns([
+        pl.col(col).cast(dtype, strict=False) for col, dtype in schema.items()
+        if col in df.columns
+    ])
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Directories and Logging                                 #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import os
