@@ -37,9 +37,9 @@ def get_data_and_pred_list(file_path_labels: str,
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
-    if future_val == "train": data = data.filter(pl.col.SET==0)
-    elif future_val == "val": data = data.filter(pl.col.SET!=0)
-
+    if future_val == "train" : data = data.filter(pl.col.SET==0)
+    elif future_val == "val" or future_val == "final train": data = data.filter(pl.col.SET!=0)
+    
     if fids_path != "": 
         fids = read_file(fids_path)
         print_count(data)

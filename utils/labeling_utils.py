@@ -61,10 +61,17 @@ def add_ages(data: pl.DataFrame,
         minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_1.0.txt.gz"
     elif fg_ver == "R13" or fg_ver == "r13":        
         minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_1.0.txt.gz"
+    elif fg_ver == "ML4H" or fg_ver == "ml4h" or fg_ver=="ML4Health" or fg_ver=="ml4health":
+        minimum_file_name = "/finngen/red/ml4health/processed/main_modalities/DVV_processed.csv"
 
-    ages = pl.read_csv(minimum_file_name,
-                       separator="\t",
-                       columns=["FINNGENID", "APPROX_BIRTH_DATE"])
+    if fg_ver != "ML4H" and fg_ver != "ml4h" and fg_ver!="ML4Health" and fg_ver!="ml4health":
+        ages = pl.read_csv(minimum_file_name,
+                        separator="\t",
+                        columns=["FINNGENID", "APPROX_BIRTH_DATE"])
+    else:
+        ages = pl.read_csv(minimum_file_name,
+                        separator=",",
+                        columns=["FID", "DATE_OF_BIRTH"]).rename({"DATE_OF_BIRTH": "APPROX_BIRTH_DATE", "FID": "FINNGENID"})
     data = (data
               .join(ages, on="FINNGENID", how="left")
               .with_columns(pl.col.APPROX_BIRTH_DATE.cast(pl.Utf8).str.to_date())
@@ -85,9 +92,19 @@ def get_bbs_indvs(fg_ver="R13",
         minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
     elif fg_ver == "R13" or fg_ver == "r13":        
         minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.txt.gz"
-    min_data = pl.read_csv(minimum_file_name, 
+    elif fg_ver == "ML4H" or fg_ver == "ml4h" or fg_ver=="ML4Health" or fg_ver=="ml4health":
+        minimum_file_name = "/finngen/red/ml4health/processed/main_modalities/DVV_processed.csv"
+
+    if fg_ver != "ML4H" and fg_ver != "ml4h" and fg_ver!="ML4Health" and fg_ver!="ml4health":
+        min_data = pl.read_csv(minimum_file_name, 
                            separator="\t",
                            columns=["FINNGENID",  "COHORT"])
+    else:
+        min_data = pl.read_csv(minimum_file_name, 
+                           separator="\t",
+                           columns=["FID",  "MUNICIPALITY_NAME"]).rename({"MUNICIPALITY_NAME": "COHORT", "FID": "FINNGENID"})
+    
+
     # Filtering
     select_fids = (min_data
                    .filter(
