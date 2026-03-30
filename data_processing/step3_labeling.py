@@ -40,7 +40,7 @@ def get_parser_arguments():
 
     parser.add_argument("--end_pred_date", type=str, help="End of prediction period [As string %Y-%m-%d].", default="2023-12-31")
     parser.add_argument("--val_end_pred_date", type=str, help="End of validation prediction period [As string %Y-%m-%d].", default="2023-12-31")
-
+    
     parser.add_argument("--min_per_year", type=bool, help="Take mean per year and the minimum/maximum (depending on the lab type) of that.", default=False)
     parser.add_argument("--months_buffer", type=int, help="Minimum number months before prediction start to be removed.", default=6)
     parser.add_argument("--min_age", type=float, help="Minimum age at prediction time", default=30)
@@ -119,7 +119,7 @@ if __name__ == "__main__":
                                             abnorm_type=args.abnorm_type,
                                             removed_ids_path=removed_ids_path + "val_",
                                             out_file_name=out_file_name)
-                
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Age                                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -138,6 +138,8 @@ if __name__ == "__main__":
                                          max_age=args.max_age,
                                          removed_ids_path=removed_ids_path + "val_",
                                          out_file_name=out_file_name)
+        
+
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Selecting relevant individuals                          #
@@ -145,6 +147,10 @@ if __name__ == "__main__":
     
     # # # # # # # # # # #  Test set biobank  # # # # # # # # # # # # # # # #
     select_fids = get_bbs_indvs(fg_ver=args.fg_ver, bbs=args.test_bbs)
+    # The test set individuals should all have PCs
+    pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
+    select_fids = select_fids.filter(pl.col("FINNGENID").is_in(pcs["IID"]))
+
     if args.n_test==0: n_test = int(len(select_fids)*args.test_pct)
     else: n_test = args.n_test
     np.random.seed(230123)
