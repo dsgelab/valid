@@ -1,15 +1,19 @@
 # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import *
+from general_utils import Timer, logging_print, make_dir, query_to_df, gz_to_parquet
 # Standard stuff
-import pandas as pd
 import polars as pl
 # Logging and input
 import logging
 logger = logging.getLogger(__name__)
 import argparse
 from datetime import datetime
+# For file handling
+import gzip
+import csv
+import re
+from operator import itemgetter
 
 def get_death_data(fg_ver="r12"):
     table = f"`finngen-production-library.sandbox_tools_{fg_ver}.finngen_{fg_ver}_service_sector_detailed_longitudinal_v1`"
@@ -67,6 +71,10 @@ def get_parser_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--fg_ver", help="FinnGen release version", default="r12")
     parser.add_argument("--res_dir", type=str, help="Where data should be save", default="/home/ivm/PheRS/data/processed_data/step0/")
+    parser.add_argument("--data_path", type=str, help="Path to data if not bigquery. Currently only supports gzip compressed tabular files.", default="")
+    parser.add_argument("--in_col_names", nargs="+", type=str, default=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "ICD_CODE", "CATEGORY", "ICDVER", "SOURCE"], help="Column names for the output file if not bigquery.'")
+    parser.add_argument("--out_col_names", nargs="+", type=str, default=["FINNGENID", "EVENT_AGE", "DATE", "ICD_CODE", "CATEGORY",  "ICD_VERSION", "SOURCE"], help="Column names for the output file if not bigquery.")
+    parser.add_argument("--file_delim", type=str, help="Delimiter for data file if not bigquery. Default is comma.", default=",")
 
     args = parser.parse_args()
 
@@ -89,13 +97,47 @@ if __name__ == "__main__":
     make_dir(log_dir)
     
     init_logging(log_dir, log_file_name, date_time)
-    death_diags = get_death_data(args.fg_ver)
-    pat_diags = get_pat_data(args.fg_ver)
-    med_diags = get_med_data(args.fg_ver)
-    all_diags = pl.concat([death_diags.select(pat_diags.columns), pat_diags, med_diags.select(pat_diags.columns)])
-    
-    all_diags.write_parquet(args.res_dir + file_name + ".parquet")
-    logger.info(all_diags["ICD_VERSION"].value_counts())
-    logger.info(all_diags["SOURCE"].value_counts())
+
+    if args.data_path=="":
+        death_diags = get_death_data(args.fg_ver)
+        pat_diags = get_pat_data(args.fg_ver)
+        med_diags = get_med_data(args.fg_ver)
+        all_diags = pl.concat([death_diags.select(pat_diags.columns), pat_diags, med_diags.select(pat_diags.columns)])
+        all_diags.write_parquet(args.res_dir + file_name + ".parquet")
+        logger.info(all_diags["ICD_VERSION"].value_counts())
+        logger.info(all_diags["SOURCE"].value_counts())
+    else:
+        count = 0
+        columns = []
+        with gzip.open(args.data_path, "rt") as fin:
+            with gzip.open(args.res_dir + file_name + ".tsv.gz", "wt") as fout:
+                for line in csv.reader(fin, delimiter=args.file_delim.encode().decode('unicode_escape')):
+                    if count == 0: 
+                        columns = line
+                        fout.write("\t".join(args.out_col_names)+"\n")
+                    else:
+                        bad_cat = re.match(r"^ICP|^OP|^MOP", line[columns.index("CATEGORY")]) 
+                        good_icdver = re.match(r"^10|^NA", line[columns.index("ICDVER")])
+                        good_source = re.match(r"^INPAT|^OUTPAT|^PRIM_OUT|^REIMB|^DEATH", line[columns.index("SOURCE")])
+                        good_code1 = re.match(r"^[A-Z][0-9]+", line[columns.index("CODE1")])
+                        good_code2 = re.match(r"^[A-Z][0-9]+", line[columns.index("CODE2")])
+
+                        if bad_cat is None and good_source is not None and good_icdver is not None:
+
+                            if good_code1 is not None and line[columns.index("CODE1")] != "":
+                                crnt_in_col_names = [name if name != "ICD_CODE" else "CODE1" for name in args.in_col_names]
+                                fout.write("\t".join(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))+"\n")
+
+                            if good_code2 is not None and \
+                                         line[columns.index("CODE1")] != line[columns.index("CODE2")] and \
+                                         line[columns.index("CODE2")] != "":
+                                crnt_in_col_names = [name if name != "ICD_CODE" else "CODE2" for name in args.in_col_names]
+                                fout.write("\t".join(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))+"\n")
+                    count += 1
+        logging_print("Time for processing file: "+timer.get_elapsed())
+        gz_to_parquet(args.res_dir + file_name + ".tsv.gz", 
+                      args.res_dir + file_name + ".parquet",
+                      column_dtypes={"CATEGORY": "string"})
+
 
 #python3 /home/ivm/PheRS/scripts/extract/step0_extract_ICD.py --fg_ver r13
