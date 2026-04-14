@@ -2,7 +2,7 @@
 import sys
 
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import get_date, init_logging, Timer, read_file
+from general_utils import get_date, init_logging, Timer, read_file, logging_print
 
 # Standard stuff
 import polars as pl
@@ -96,6 +96,7 @@ def get_parser_arguments():
     parser.add_argument("--months_before", type=int, default=0, help="Months to add before start of measurements for a buffer.")
     parser.add_argument("--start_year", type=int, default=0, help="What year to start the data from. Ignored if 0.")
     parser.add_argument("--start_date", type=str, default="", help="Date to filter before", required=False)
+    parser.add_argument("--select_icds_path", type=str, default="", help="Path to processed ICD codes. To do batched work.", required=False)
 
     # Settings
     args = parser.parse_args()
@@ -115,8 +116,8 @@ if __name__ == "__main__":
                                       args.bin_count, 
                                       args.months_before, 
                                       args.start_year,
-                                     args.min_pct,
-                                     args.start_date)
+                                      args.min_pct,
+                                      args.start_date)
     init_logging(args.res_dir, args.lab_name, logger, args)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -134,6 +135,7 @@ if __name__ == "__main__":
                                           args.time,
                                           args.months_before)
     labels = read_file(args.dir_path_labels+args.file_name_labels_start+"_labels.parquet")
+
     if args.start_date == "": 
         # Filtering out data before start of prediction   
         preds_data = preds_data.join(labels.select("FINNGENID", "START_DATE"), on="FINNGENID", how="left")
@@ -148,28 +150,46 @@ if __name__ == "__main__":
     if args.start_year != 0:
         preds_data = preds_data.filter(pl.col.DATE.dt.year() >= args.start_year)
 
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Counting and wide                                       #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-    preds_wider = (preds_data
-                    .group_by(["FINNGENID", args.col_name])
-                    .agg(pl.len().alias("N_CODE"))
-    )
+    if args.select_icds_path == "":
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+        #                 Counting and wide in one go                             #
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
+        preds_wider = (preds_data
+                        .group_by(["FINNGENID", args.col_name])
+                        .agg(pl.len().alias("N_CODE"))
+        )
 
-    # Making binary 0/1 observed if bin_count is 1
-    if args.bin_count == 1:
-        preds_wider = preds_wider.with_columns(pl.when(pl.col.N_CODE>=1).then(1).otherwise(0).alias("N_CODE"))
+        # Making binary 0/1 observed if bin_count is 1
+        if args.bin_count == 1:
+            preds_wider = preds_wider.with_columns(pl.when(pl.col.N_CODE>=1).then(1).otherwise(0).alias("N_CODE"))
 
-    # Making wide
-    preds_wider = (preds_wider
-                    .pivot(values="N_CODE", index="FINNGENID", on=args.col_name)
-                    .fill_null(0)
-    )
+        # Making wide - problem with large data just stops
+        preds_wider = (preds_wider
+                        .pivot(values="N_CODE", index="FINNGENID", on=args.col_name)
+        )
 
-    # Add people without any codes
-    preds_wider = preds_wider.join(labels[["FINNGENID"]], on="FINNGENID", how="full", coalesce=True)
-    preds_wider = preds_wider.fill_null(0)
+        # Add people without any codes
+        preds_wider = preds_wider.join(labels[["FINNGENID"]], on="FINNGENID", how="full", coalesce=True)
+        preds_wider = preds_wider.fill_null(0)
+        select_icds = read_file(args.select_icds_path).sort(args.col_name).get_column(args.col_name)
+        preds_wider = pl.DataFrame()
+        total_timer = Timer()
+        for code in select_icds:
+            code_timer = Timer()
+            code_data = preds_data.filter(pl.col(args.col_name) == code).select(["FINNGENID", "DATE"])
+            code_data = code_data.group_by("FINNGENID").agg(pl.len().alias("N_CODE"))
+            if args.bin_count == 1:
+                code_data = code_data.with_columns(pl.when(pl.col.N_CODE>=1).then(1).otherwise(0).alias("N_CODE"))
+            code_data = code_data.rename({"N_CODE": code})
+            if preds_wider.is_empty():
+                preds_wider = code_data
+            else:
+                preds_wider = preds_wider.join(code_data, on="FINNGENID", how="full", coalesce=True)
+            logging_print("Time for code: " + str(code_timer.time()))
+        preds_wider = preds_wider.fill_null(0)
+        logging_print(f"Total time for looping through omops: {total_timer.get_elapsed()}")
     print(preds_wider)
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Date of last code                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
@@ -187,5 +207,5 @@ if __name__ == "__main__":
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    print(args.res_dir+out_file_name+".parquet")
+    logging_print(args.res_dir+out_file_name+".parquet")
     preds_wider.write_parquet(args.res_dir+out_file_name+".parquet")
