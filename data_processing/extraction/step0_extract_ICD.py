@@ -126,18 +126,21 @@ if __name__ == "__main__":
 
                             if good_code1 is not None and line[columns.index("CODE1")] != "":
                                 crnt_in_col_names = [name if name != "ICD_CODE" else "CODE1" for name in args.in_col_names]
-                                fout.write("\t".join(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))+"\n")
+                                row_list = list(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))
+                                if args.out_col_names[-1] == "ICD_THREE":
+                                    row_list.append(line[columns.index("CODE1")][0:3])
+                                fout.write("\t".join(row_list)+"\n")
 
                             if good_code2 is not None and \
                                          line[columns.index("CODE1")] != line[columns.index("CODE2")] and \
-                                         line[columns.index("CODE2")] != "":
+                                         line[columns.index("CODE2")] !="":
                                 crnt_in_col_names = [name if name != "ICD_CODE" else "CODE2" for name in args.in_col_names]
-                                fout.write("\t".join(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))+"\n")
+                                row_list = list(itemgetter(*[columns.index(name) for name in crnt_in_col_names])(line))
+                                if args.out_col_names[-1] == "ICD_THREE":
+                                    row_list.append(line[columns.index("CODE2")][0:3])
+                                fout.write("\t".join(row_list)+"\n")
                     count += 1
         logging_print("Time for processing file: "+timer.get_elapsed())
         gz_to_parquet(args.res_dir + file_name + ".tsv.gz", 
                       args.res_dir + file_name + ".parquet",
                       column_dtypes={"CATEGORY": "string"})
-
-
-#python3 /home/ivm/PheRS/scripts/extract/step0_extract_ICD.py --fg_ver r13
