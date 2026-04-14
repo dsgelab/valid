@@ -15,7 +15,8 @@ def get_out_data(data: pl.DataFrame,
                  metric: str,
                  lab_name: str,
                  goal: str,
-                 abnorm_extra_choice: str="") -> pl.DataFrame:
+                 abnorm_extra_choice: str="",
+                 optimal_proba_cutoff: float = None) -> pl.DataFrame:
     """Creates the output data with the predictions of the model.
     Args:
         data (pl.DataFrame): The input data.
@@ -44,14 +45,16 @@ def get_out_data(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Base data                                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    # data = data.with_columns([
-    #     pl.when(pl.col(col)>0).then(1).otherwise(0).alias(col) for col in data.columns if "ABNORM" in col
-    # ])
-    out_data = (data
-                .select("FINNGENID", "SEX", "y_MEAN", "y_MEAN_ABNORM", "y_MIN", "y_MIN_ABNORM", "y_NEXT", "y_NEXT_ABNORM", "EVENT_AGE", "SET", "LAST_VAL_DATE", "ABNORM")
-                .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
-               )
-    
+    try:
+        out_data = (data
+                    .select("FINNGENID", "SEX", "y_MEAN", "y_MEAN_ABNORM", "y_MIN", "y_MIN_ABNORM", "y_NEXT", "y_NEXT_ABNORM", "EVENT_AGE", "SET", "LAST_VAL_DATE", "ABNORM")
+                    .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
+                )
+    except:
+        data = data.with_columns(pl.lit(3).alias("SET"))
+
+        out_data = (data.select("FINNGENID", "EVENT_AGE", "SET", "SEX", "y_MEAN_ABNORM"))
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Continuous prediction                                   #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -86,23 +89,34 @@ def get_out_data(data: pl.DataFrame,
             y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
             out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
             # Binary abnormality prediction based on optimal cut-off
-            optimal_proba_cutoff = get_optim_precision_recall_cutoff(out_data)
+            if optimal_proba_cutoff is None:
+                optimal_proba_cutoff = get_optim_precision_recall_cutoff(out_data)
             logging.info(f"Optimal cut-off for prediction based on PR {optimal_proba_cutoff}")
             out_data = out_data.with_columns(
                 (pl.col("ABNORM_PROBS") > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS")
             )
         elif get_train_type(metric) == "multi":  
-            for pred_val in out_data["TRUE_ABNORM"].unique():
-                y_pred = model_final.predict_proba(X_all.to_numpy())[:,int(pred_val)]
-                out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS_"+str(pred_val))])
-                # Binary abnormality prediction based on optimal cut-off
-                temp_data = out_data.with_columns(pl.when((pl.col.TRUE_ABNORM!=1)&(pl.col.TRUE_ABNORM!=0)).then(pl.lit(0)).otherwise(pl.col.TRUE_ABNORM).alias("TRUE_ABNORM"))
-                temp_data = temp_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS"})
-                optimal_proba_cutoff = get_optim_precision_recall_cutoff(temp_data)
-                logging.info(f"Optimal cut-off for {pred_val} prediction based on PR {optimal_proba_cutoff}")
+            if out_data["TRUE_ABNORM"].unique().to_list() != [0]:
+                for pred_val in out_data["TRUE_ABNORM"].unique():
+                    y_pred = model_final.predict_proba(X_all.to_numpy())[:,int(pred_val)]
+                    out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS_"+str(pred_val))])
+                    # Binary abnormality prediction based on optimal cut-off
+                    temp_data = out_data.with_columns(pl.when((pl.col.TRUE_ABNORM!=1)&(pl.col.TRUE_ABNORM!=0)).then(pl.lit(0)).otherwise(pl.col.TRUE_ABNORM).alias("TRUE_ABNORM"))
+                    temp_data = temp_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS"})
+                    if optimal_proba_cutoff is None:
+                        optimal_proba_cutoff = get_optim_precision_recall_cutoff(temp_data)
+                    logging.info(f"Optimal cut-off for {pred_val} prediction based on PR {optimal_proba_cutoff}")
+                    out_data = out_data.with_columns(
+                    (pl.col("ABNORM_PROBS_"+str(pred_val)) > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS_"+str(pred_val)))
+                    # rename columns ABNORM_PROBS_1.0 to 1 and 0.0 to 0
+                    out_data = out_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS_"+str(int(pred_val)), "ABNORM_PREDS_"+str(pred_val): "ABNORM_PREDS_"+str(int(pred_val))})
+            else:
+                y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
+                out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
                 out_data = out_data.with_columns(
-                (pl.col("ABNORM_PROBS_"+str(pred_val)) > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS_"+str(pred_val)))
-    return(out_data)
+                    (pl.col("ABNORM_PROBS") > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS")
+                )
+    return(out_data, optimal_proba_cutoff)
 
 import polars as pl
 import shap
@@ -183,7 +197,8 @@ def create_xgb_dts(data: pl.DataFrame,
                    X_cols: list, 
                    y_goal: str,
                    train_pct: int = 1,
-                   val_data: pl.DataFrame = None) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
+                   val_data: pl.DataFrame = None,
+                   final_fit: bool=False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
     """Creates the XGBoost data matrices and scales the data.
 
     Returns the data and the predictors.
@@ -206,6 +221,8 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if -1 in data.get_column(y_goal):
         data = data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
+    if -1 in val_data.get_column(y_goal):
+        val_data = val_data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Scaling                                                 #
@@ -233,9 +250,13 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
     # # # # # # # # TRAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    train_data = data.filter(pl.col("SET")==0).drop("SET")
-    finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
-
+    if not final_fit:
+        train_data = data.filter(pl.col("SET")==0).drop("SET")
+        finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
+    # Training on validation and test set for final fit. 
+    else:
+        train_data = data.filter(pl.col("SET").is_in([1,2])).drop("SET")
+        finetune_valid_data = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
 
     # if training pct<100, take only part of training data
     if train_pct<100:
@@ -254,13 +275,17 @@ def create_xgb_dts(data: pl.DataFrame,
     X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
 
     # # # # # # # # VALID & TEST # # # # # # # # # # # # # # # # # # # # # # # # 
-    if val_data is None:
+    if val_data is None and not final_fit:
         valid_data = data.filter(pl.col("SET")==1).drop("SET")
         test_data = data.filter(pl.col("SET")==2).drop("SET")
             
         X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
         X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
-    else:
+    elif val_data is not None and final_fit:
+        valid_data = val_data
+        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
+        X_test = pl.DataFrame({col: [] for col in X_cols}); y_test = pl.DataFrame({y_goal: []})
+    elif val_data is not None and not final_fit:
         valid_data = val_data.filter(pl.col("SET")==1).drop("SET")
         test_data = val_data.filter(pl.col("SET")==2).drop("SET")
 
@@ -278,7 +303,8 @@ def create_xgb_dts(data: pl.DataFrame,
     if finetune_valid_data.height>0:
         X_finetune_valid=pl.DataFrame(preprocessor.transform(X_finetune_valid), schema=X_finetune_valid.schema)
     X_valid=pl.DataFrame(preprocessor.transform(X_valid), schema=X_valid.schema, strict=False)
-    X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema, strict=False)
+    if X_test.height>0:
+        X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema, strict=False)
     X_all=pl.DataFrame(preprocessor.transform(X_all_unscaled), schema=X_all_unscaled.schema, strict=False)
     if val_data is not None:
         X_val_all=pl.DataFrame(preprocessor.transform(X_val_all_unscaled), schema=X_val_all_unscaled.schema, strict=False)
@@ -292,5 +318,5 @@ def create_xgb_dts(data: pl.DataFrame,
         dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
     else:
         dfinetunevalid = None
-    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, data)
+    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, data, val_data)
 
