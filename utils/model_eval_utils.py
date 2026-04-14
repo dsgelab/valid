@@ -372,7 +372,7 @@ def save_all_report_plots(out_data: pl.DataFrame,
                           model_type: str="xgb",
                           n_features: int=None) -> None:
     set_names = {0: "train", 1: "valid", 2: "test"}
-    eval_sets = [0,1,2]
+    eval_sets = [0,1,2] if test_importances is not None else [0,1] if valid_importances is not None else [0]
     for goal in ["y_MEAN_ABNORM", "y_NEXT_ABNORM"]:
         if goal in out_data.columns:
             crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
@@ -412,10 +412,13 @@ def save_all_report_plots(out_data: pl.DataFrame,
                         fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".png")
                         fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".pdf")
                 else:
-                    crnt_importances = (pl.DataFrame(crnt_importances)
-                                        .with_columns(pl.col(crnt_importances.columns[0]).arr.to_struct().alias(crnt_importances.columns[0]))
-                                        .unnest(crnt_importances.columns[0])
-                                       )
+                    try:
+                        crnt_importances = (pl.DataFrame(crnt_importances)
+                                            .with_columns(pl.col(crnt_importances.columns[0]).arr.to_struct().alias(crnt_importances.columns[0]))
+                                            .unnest(crnt_importances.columns[0])
+                                        )
+                    except:
+                        print(crnt_importances)
         
                     for abnorm_type in out_data[goal].unique():
                         if abnorm_type == 0:
