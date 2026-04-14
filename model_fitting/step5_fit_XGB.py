@@ -299,7 +299,7 @@ if __name__ == "__main__":
 
 
     # Model predictions
-    out_data = get_out_data(data=data, 
+    out_data, optimal_proba_cutoff = get_out_data(data=data, 
                             model_final=model_final, 
                             X_all=X_all, 
                             y_all=y_all, 
@@ -307,14 +307,15 @@ if __name__ == "__main__":
                             lab_name=args.lab_name,
                             goal=args.goal,
                             abnorm_extra_choice=args.abnorm_extra_choice)
-    val_out_data = get_out_data(data=val_data, 
+    val_out_data, _ = get_out_data(data=val_data, 
                                 model_final=model_final, 
                                 X_all=X_val_all, 
                                 y_all=y_val_all, 
                                 metric=args.metric,
                                 lab_name=args.lab_name,
                                 goal=args.goal,
-                                abnorm_extra_choice=args.abnorm_extra_choice)
+                                abnorm_extra_choice=args.abnorm_extra_choice,
+                                optimal_proba_cutoff=optimal_proba_cutoff)
     if not args.final_fit:
         schema = get_common_schema([out_data, val_out_data])
         out_data = pl.concat([align_schema(df, schema) for df in [out_data, val_out_data]])
