@@ -1,128 +1,104 @@
-# Utils
-import re
+
+# Custom utils
 import sys
+
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, logging_print, make_dir, query_to_df, gz_to_parquet
+from general_utils import get_date, init_logging, Timer, read_file, logging_print
+from input_utils import get_min_file_path
+
 # Standard stuff
-import pandas as pd
-# Logging and input
+import polars as pl
+import argparse
+# Logging
 import logging
 logger = logging.getLogger(__name__)
-import argparse
-from datetime import datetime
-# For file handling
-import gzip
-import csv
-import re
-from operator import itemgetter
-
-
-def get_med_data(file_path,
-                  output_file_path,
-                  med_regex="",
-                  chunk_size=10_000_000,
-                  total_rows=0):
-    count = 0
-    writer = None
-    timer = Timer()
-
-    for chunk in pd.read_csv(file_path,
-                            compression="gzip",
-                            chunksize=chunk_size,
-                            dtype={"CODE1": str, "SOURCE": str, "EVENT_AGE": float, "FID": str},
-                            usecols=["FID", "SOURCE", "CODE1",  "EVENT_AGE", "EVENT_DAY"]):
-        
-        mask = ((chunk["SOURCE"] == "PURCH") & chunk["CODE1"].str.contains(med_regex, regex=True, na=False))
-        chunk = chunk[mask].copy()
-        chunk = chunk[["FID", "EVENT_AGE", "EVENT_DAY", "SOURCE", "CODE1"]]
-        chunk = chunk.rename(columns={"FID": "FINNGENID", "CODE1": "CODE"})
-        chunk["EVENT_DAY"] = pd.to_datetime(chunk["EVENT_DAY"]).dt.date
-        table = pa.Table.from_pandas(chunk, preserve_index=False)
-
-        if writer is None:
-            writer = pq.ParquetWriter(output_file_path, table.schema)
-        try:
-            writer.write_table(table)
-        except Exception as e:
-            print(chunk)
-            print(table)
-            print(e)
-
-        count += chunk_size
-        if count % 100_000_000 == 0: print(f"Processed {count} rows. Time elapsed: {timer.get_elapsed()}")
-        if total_rows > 0 and count >= total_rows: 
-            logging_print(f"Finished writing N={total_rows}. Total time: {timer.get_elapsed()}")
-            writer.close()
-            return
-
-    if writer:
-        logging_print(f"Finished writing. Total time: {timer.get_elapsed()} and total rows: {count}")
-        writer.close()
-
 
 def get_parser_arguments():
     #### Parsing and logging
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fg_ver", help="FinnGen release version", default="r12")
-    parser.add_argument("--res_dir", type=str, help="Where data should be save", default="/home/ivm/valid/data/extra_data/processed_data/step0_extract/")
-    parser.add_argument("--data_path", type=str, help="Path to data if not bigquery. Currently only supports gzip compressed tabular files.", default="")
-    parser.add_argument("--in_col_names", nargs="+", type=str, default=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "ICD_CODE", "CATEGORY", "ICDVER", "SOURCE"], help="Column names for the output file if not bigquery.'")
-    parser.add_argument("--out_col_names", nargs="+", type=str, default=["FINNGENID", "EVENT_AGE", "DATE", "ICD_CODE", "CATEGORY",  "ICD_VERSION", "SOURCE"], help="Column names for the output file if not bigquery.")
-    parser.add_argument("--file_delim", type=str, help="Delimiter for data file if not bigquery. Default is comma.", default=",")
+    # Saving info
+    parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
+    parser.add_argument("--file_path_atcs", type=str, help="Path to the data file", required=True)
+    parser.add_argument("--min_pct", type=float, help="Path to the diagnosis data file", default="")
+    # Settings
+    parser.add_argument("--fg_ver", type=str, default=0, help="")
+
+    parser.add_argument("--min_age", type=int, default=18, help="")
+    parser.add_argument("--max_age", type=int, default=70, help="")
+
+    parser.add_argument("--memory_save_mode", type=int, default=0, help="Need for ML4Health data which does not run otherwise.")
 
     args = parser.parse_args()
-
     return(args)
 
-def init_logging(log_dir, log_file_name, date_time):
-    logging.basicConfig(filename=log_dir+log_file_name+".log", level=logging.INFO, format="[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
-    logger.info("Time: " + date_time + " Args: --" + ' --'.join(f'{k}={v}' for k, v in vars(args).items()))
-     
+
+
+#do the main file functions and runs 
 if __name__ == "__main__":
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Initial setup                                           #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     timer = Timer()
     args = get_parser_arguments()
-    
-    log_dir = args.res_dir + "logs/"
-    date = datetime.today().strftime("%Y-%m-%d")
-    date_time = datetime.today().strftime("%Y-%m-%d-%H%M")
-    file_name = "ATC_long_" + args.fg_ver + "_" + date
-    log_file_name = "ATC_long_" + args.fg_ver + "_" +date_time
-    make_dir(args.res_dir)
-    make_dir(log_dir)
-    
-    init_logging(log_dir, log_file_name, date_time)
-    
-    if args.data_path=="":
-        table = f"`finngen-production-library.sandbox_tools_{args.fg_ver}.finngen_{args.fg_ver}_service_sector_detailed_longitudinal_v1`"
-        query_pat = f"""SELECT FINNGENID, EVENT_AGE, APPROX_EVENT_DAY, CODE1
-                        FROM {table}
-                        WHERE SOURCE = 'PURCH' AND CODE1 != 'NA'
-                    """
-        all_atcs = query_to_df(query_pat)
-        logger.info("Time import: "+timer.get_elapsed())
-        print(all_atcs)
-        all_atcs=all_atcs.rename({"CODE1": "ATC_CODE", "APPROX_EVENT_DAY": "DATE"}).unique()
-        print(all_atcs)
-        all_atcs.write_parquet(args.res_dir + file_name + ".parquet")
-        init_logging(f"Number of rows {all_atcs.height} with {all_atcs["FINNGENID"].unique().len()} individuals.")
+    init_logging(args.res_dir, "ATC", logger, args)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Get data                                                #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
+    out_file_path = args.res_dir+"atcs_"+args.fg_ver+"_min"+str(int(args.min_pct*100)).replace(".","p")+"pct_"+str(args.min_age)+"t"+str(args.max_age)+"_"+get_date()+".parquet"
+
+    minimum_file_path = get_min_file_path(args.fg_ver)
+
+    if args.fg_ver != "ml4h":
+        col_name = "FINNGENID"
     else:
-        count = 0
-        columns = []
-        with gzip.open(args.data_path, "rt") as fin:
-            with gzip.open(args.res_dir + file_name + ".tsv.gz", "wt") as fout:
-                for line in csv.reader(fin, delimiter=args.file_delim.encode().decode('unicode_escape')):
-                    if count == 0: 
-                        columns = line
-                        fout.write("\t".join(args.out_col_names)+"\n")
-                    else:
-                        good_source = re.match(r"^PURCH", line[columns.index("SOURCE")])
-                        good_code1 = re.match(r"^[A-Z][0-9]+", line[columns.index("CODE1")])
-                        if good_source is not None and good_code1 is not None:
-                            row_list = list(itemgetter(*[columns.index(name) for name in args.in_col_names])(line))
-                            if args.out_col_names[-1] == "ATC_FIVE":
-                                row_list.append(line[columns.index("CODE1")][0:5])
-                            fout.write("\t".join(row_list)+"\n")
-                    count += 1
-        logging_print("Time for processing file: "+timer.get_elapsed())
-        gz_to_parquet(args.res_dir + file_name + ".tsv.gz", 
-                      args.res_dir + file_name + ".parquet")
+        col_name = "FID"
+    ages = pl.read_csv(minimum_file_path,
+                        separator="\t" if args.fg_ver != "ml4h" else ",",
+                        columns=[col_name])
+    N_total = ages.height 
+    atc_data = read_file(args.file_path_icds)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Process data                                            #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    if "ATC_FIVE" not in atc_data.columns:
+        atc_data = atc_data.with_columns(pl.col("ATC_CODE").str.slice(0,3).alias("ATC_FIVE"))
+    if args.memory_save_mode:
+        total_timer = Timer()
+        all_stats = pl.DataFrame()
+        all_atc_data = pl.DataFrame()
+
+        atc_codes = sorted(set(atc_data["ATC_FIVE"]))
+        logging_print(f"Processing {len(atc_codes)} ATC codes one by one to save memory. Total individuals: {N_total}. Time for setup: {timer.get_elapsed()}")
+        for crnt_icd in atc_codes:
+            crnt_atc_data = (atc_data
+                             .filter(pl.col.ATC_FIVE == crnt_icd)
+                             .filter(pl.col.EVENT_AGE >= args.min_age, pl.col.EVENT_AGE <= args.max_age) 
+                             .drop("ATC_CODE")
+                             .unique()
+                             )
+            crnt_stats = (crnt_atc_data
+                          .with_columns(pl.col.FINNGENID.unique().len().alias("N_INDV"))
+                          .with_columns((pl.col.N_INDV/N_total).alias("PCT_INDV"))
+            )
+            if crnt_atc_data.height > 0:
+                if crnt_stats["PCT_INDV"][0] >= args.min_pct:
+                    all_stats = pl.concat([all_stats, crnt_stats]) if all_stats.height > 0 else crnt_stats
+                    all_atc_data = pl.concat([all_atc_data, crnt_atc_data]) if all_atc_data.height > 0 else crnt_atc_data
+        logging_print(f"Finished processing all ICDs. Total time: {total_timer.get_elapsed()}")
+    else:
+        all_stats = (atc_data
+                .filter(pl.col.EVENT_AGE >= args.min_age, pl.col.EVENT_AGE <= args.max_age) 
+                .group_by("ATC_FIVE")
+                .agg(pl.len().alias("N_ENTRY"), 
+                    pl.col.FINNGENID.unique().len().alias("N_INDV"))
+                .with_columns((pl.col.N_INDV/N_total).alias("N_PERCENT"))
+                .sort("N_INDV", descending=True)
+        )      
+        all_atc_data = atc_data.filter(pl.col.ATC_FIVE.is_in(all_stats.filter(pl.col.N_PERCENT>=args.min_pct)["ATC_FIVE"]))
+
+    print(all_atc_data)
+    print(out_file_path)
+    all_atc_data.write_parquet(out_file_path)
+    all_stats.write_parquet(out_file_path.replace(".parquet", "_counts.parquet"))
