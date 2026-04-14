@@ -83,24 +83,20 @@ def add_ages(data: pl.DataFrame,
     return(data.drop("APPROX_BIRTH_DATE"))
 
 import polars as pl
+from input_utils import get_min_file_path
 def get_bbs_indvs(fg_ver="R13",
                    bbs=["HELSINKI BIOBANK"]) -> pl.Series:
     """Selecting individuals in FinnGen that are in Helsinki Biobank, not dead before end date."""
 
     # Read in the minimum data file
-    if fg_ver == "R12" or fg_ver == "r12":
-        minimum_file_name = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
-    elif fg_ver == "R13" or fg_ver == "r13":        
-        minimum_file_name = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.txt.gz"
-    elif fg_ver == "ML4H" or fg_ver == "ml4h" or fg_ver=="ML4Health" or fg_ver=="ml4health":
-        minimum_file_name = "/finngen/red/ml4health/processed/main_modalities/DVV_processed.csv"
+    minimum_file_path = get_min_file_path(fg_ver)
 
     if fg_ver != "ML4H" and fg_ver != "ml4h" and fg_ver!="ML4Health" and fg_ver!="ml4health":
-        min_data = pl.read_csv(minimum_file_name, 
-                           separator="\t",
-                           columns=["FINNGENID",  "COHORT"])
+        min_data = pl.read_csv(minimum_file_path, 
+                               separator="\t",
+                               columns=["FINNGENID",  "COHORT"])
     else:
-        min_data = pl.read_csv(minimum_file_name, 
+        min_data = pl.read_csv(minimum_file_path, 
                            separator="\t",
                            columns=["FID",  "MUNICIPALITY_NAME"]).rename({"MUNICIPALITY_NAME": "COHORT", "FID": "FINNGENID"})
     

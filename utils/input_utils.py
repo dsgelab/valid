@@ -1,3 +1,16 @@
+def get_min_file_path(fg_ver):
+    # Read in the minimum data file
+    if fg_ver == "R12" or fg_ver == "r12":
+        minimum_file_path = "/finngen/library-red/finngen_R12/phenotype_1.0/data/finngen_R12_minimum_extended_1.0.txt.gz"
+    elif fg_ver == "R13" or fg_ver == "r13":        
+        minimum_file_path = "/finngen/library-red/finngen_R13/phenotype_1.0/data/finngen_R13_minimum_extended_1.0.txt.gz"
+    elif fg_ver == "R14" or fg_ver == "r14":
+        minimum_file_path = "/finngen/library-red/finngen_R14/phenotype_1.0/data/finngen_R14_minimum_extended_1.0.txt.gz"
+    elif fg_ver == "ML4H" or fg_ver == "ml4h" or fg_ver=="ML4Health" or fg_ver=="ml4health":
+        minimum_file_path = "/finngen/red/ml4health/processed/main_modalities/DVV_processed.csv"
+
+    return(minimum_file_path)
+
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
