@@ -119,6 +119,36 @@ def get_dated_path(file_path_start):
             return file_path_start+date+"/preds_"+date+".parquet"
     return None
 
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#                 Read/write                                              #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+import gzip
+import pandas as pd
+import pyarrow.parquet as pq
+import pyarrow as pa
+def gz_to_parquet(gz_file_path, 
+                  parquet_file_path,
+                  gz_sep="\t",
+                  chunk_size=100_000,
+                  column_dtypes=None): 
+    writer = None
+    with gzip.open(gz_file_path, "rt") as fin:
+        if column_dtypes is None:
+            for chunk in pd.read_csv(fin, sep=gz_sep, chunksize=chunk_size):
+                table = pa.Table.from_pandas(chunk)
+                if writer is None:
+                    writer = pq.ParquetWriter(parquet_file_path, table.schema)
+                writer.write_table(table)
+        else:
+            for chunk in pd.read_csv(fin, sep=gz_sep, chunksize=chunk_size, dtype=column_dtypes):
+                table = pa.Table.from_pandas(chunk)
+                if writer is None:
+                    writer = pq.ParquetWriter(parquet_file_path, table.schema)
+                writer.write_table(table)
+    if writer:
+        writer.close()
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 Plotting                                                #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
