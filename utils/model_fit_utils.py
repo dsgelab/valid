@@ -91,16 +91,11 @@ def xgb_final_fitting(best_params: dict,
                       y_train: pl.DataFrame, 
                       X_finetune_valid: pl.DataFrame,
                       y_finetune_valid: pl.DataFrame,
-                      X_valid: pl.DataFrame, 
-                      y_valid: pl.DataFrame, 
-                      X_test: pl.DataFrame,
-                      y_test: pl.DataFrame,
                       metric: str,
                       low_lr: float,
                       early_stop: int,
                       n_classes: int=2,
-                      fit_cv: int=1,
-                      final_fit: int=0):
+                      fit_cv: int=1):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -118,18 +113,11 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fitting                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if not final_fit:
-        if fit_cv:
-            X = pl.concat([X_train, X_finetune_valid])
-            y = pl.concat([y_train, y_finetune_valid])
-    else:
-        X = pl.concat([X_train, X_valid,  X_finetune_valid, X_test])
-        y = pl.concat([y_train, y_valid, y_finetune_valid, y_test])
     if get_train_type(metric) == "bin" or get_train_type(metric) == "multi":
         # Use Option 4 to find best num_boost_round
-        if fit_cv or final_fit:
+        if fit_cv:
             cv_clf = xgb.cv(params=params_fin, 
-                            dtrain=xgb.DMatrix(X, y), 
+                            dtrain=xgb.DMatrix(X_train, y_train), 
                             early_stopping_rounds=early_stop, 
                             stratified=True, 
                             num_boost_round=10000, 
@@ -138,7 +126,7 @@ def xgb_final_fitting(best_params: dict,
                             shuffle=True,
                             verbose_eval=100)
             clf = xgb.XGBClassifier(**params_fin, n_estimators=len(cv_clf))
-            clf.fit(X, y, verbose=100)
+            clf.fit(X_train, y_train, verbose=100)
             print("done")
         else:
             clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
@@ -147,7 +135,7 @@ def xgb_final_fitting(best_params: dict,
         if metric in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]: del params_fin["eval_metric"]
         if fit_cv:
             cv_clf = xgb.cv(params=params_fin, 
-                            dtrain=xgb.DMatrix(X, y), 
+                            dtrain=xgb.DMatrix(X_train, y_train), 
                             early_stopping_rounds=early_stop, 
                             #stratified=True, 
                             num_boost_round=10000, 
@@ -156,7 +144,7 @@ def xgb_final_fitting(best_params: dict,
                             shuffle=True,
                             verbose_eval=100)
             clf = xgb.XGBRegressor(**params_fin,  n_estimators=len(cv_clf))
-            clf.fit(X, y, verbose=100)       
+            clf.fit(X_train, y_train, verbose=100)       
         else:
             clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
             clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_finetune_valid, y_finetune_valid)], verbose=100)
@@ -167,7 +155,7 @@ def xgb_final_fitting(best_params: dict,
     # Get the best model
     logging.info('Final fitting ==============================')
     logging.info('Number of estimators ---------------------------')
-    if not fit_cv and not final_fit:
+    if not fit_cv:
         logging.info(f'best boosting round: {clf.best_iteration}')
     else:
         logging.info(len(cv_clf))
