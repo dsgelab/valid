@@ -49,7 +49,8 @@ def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]]
                      res_dir: str,
                      model_type: str,
                      model_fit_date: str,
-                     base_params: dict=None) -> dict:   
+                     base_params: dict=None,
+                     fg_ver: str=None) -> dict:   
     """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
        Uses Optuna to optimize the hyperparameters. The function returns the best hyperparameters found.
        Logs the best hyperparameters found and the best boosting round."""     
@@ -73,17 +74,12 @@ def run_optuna_optim(train: Union[xgb.DMatrix,Tuple[pl.DataFrame, pl.DataFrame]]
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Pick objective                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if model_type == "elr":
-        optuna_objective = lambda trial: optuna_elr_objective(trial,
-                                                              train[0],
-                                                              train[1],
-                                                              valid[0],
-                                                              valid[1])
     if model_type == "xgb":
         optuna_objective = lambda trial: optuna_xgb_objective(trial, 
                                                               base_params, 
                                                               train, 
-                                                              valid)
+                                                              valid,
+                                                              fg_ver=fg_ver)
     elif model_type == "cat":
         optuna_objective = lambda trial: optuna_cat_objective(trial, 
                                                                 base_params, 
@@ -116,7 +112,8 @@ def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFra
                         res_dir: str,
                         model_type: str,
                         model_fit_date: str,
-                        base_params: dict=None) -> dict:   
+                        base_params: dict=None,
+                        fg_ver: str = "R14") -> dict:   
     """Runs the first step of the XGBoost optimization, which is to find the best hyperparameters for the model on a high learning rate.
        Uses Optuna to optimize the hyperparameters. The function returns the best hyperparameters found.
        Logs the best hyperparameters found and the best boosting round."""     
@@ -143,7 +140,9 @@ def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFra
     optuna_objective = lambda trial: optuna_xgb_cv_objective(trial, 
                                                           base_params, 
                                                           train[0],
-                                                          train[1])
+                                                          train[1],
+                                                          n_folds=5,
+                                                          fg_ver=fg_ver)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Running trials                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -195,9 +194,8 @@ def optuna_cat_objective(trial: optuna.Trial,
         'bagging_temperature': trial.suggest_float('bagging_temperature', 1, 10),
         'border_count': trial.suggest_int('border_count', 32, 255),
         'random_strength': trial.suggest_float('random_strength', 1, 10),   
-        # < Subsampling
-       'subsample': trial.suggest_float('subsample', 0.5, 1.0),  # row sampling
-       'rsm': trial.suggest_float('rsm', 0.5, 1.0),              # feature sampling
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),  # row sampling
+        'rsm': trial.suggest_float('rsm', 0.5, 1.0),              # feature sampling
     }
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Setting up trial                                        #
@@ -233,7 +231,8 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
                              base_params: dict, 
                              X_train: np.ndarray,
                              y_train: np.ndarray,
-                             n_folds: int = 5) -> float:
+                             n_folds: int = 5,
+                             fg_ver: str = "R14") -> float:
     """Objective function for Optuna optimization using cross-validation.
     Returns the mean CV score."""
     
@@ -241,7 +240,7 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]),
+        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]) if fg_ver != "ml4h" else "hist",
         'max_depth': trial.suggest_int('max_depth', 2, 12),
         'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
         'subsample': trial.suggest_float('subsample', 0.5, 0.8),
@@ -300,14 +299,15 @@ import optuna
 def optuna_xgb_objective(trial: optuna.Trial, 
                          base_params: dict, 
                          dtrain: xgb.DMatrix, 
-                         dvalid: xgb.DMatrix) -> float:
+                         dvalid: xgb.DMatrix,
+                         fg_ver: str) -> float:
     """Objective function for the Optuna optimization. Returns the last value of the metric on the validation set."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]),
+        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]) if fg_ver != "ml4h" else "hist",
         'max_depth': trial.suggest_int('max_depth', 2, 12),
         'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
         'subsample': trial.suggest_float('subsample', 0.5, 0.8),
