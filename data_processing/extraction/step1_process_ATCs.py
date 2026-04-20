@@ -57,7 +57,7 @@ if __name__ == "__main__":
                         separator="\t" if args.fg_ver != "ml4h" else ",",
                         columns=[col_name])
     N_total = ages.height 
-    atc_data = read_file(args.file_path_icds)
+    atc_data = read_file(args.file_path_atcs)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Process data                                            #

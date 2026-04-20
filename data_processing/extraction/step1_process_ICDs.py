@@ -48,7 +48,6 @@ if __name__ == "__main__":
     out_file_path = args.res_dir+"icds_"+args.fg_ver+"_min"+str(int(args.min_pct*100)).replace(".","p")+"pct_"+str(args.min_age)+"t"+str(args.max_age)+"_"+get_date()+".parquet"
 
     minimum_file_path = get_min_file_path(args.fg_ver)
-
     if args.fg_ver != "ml4h":
         col_name = "FINNGENID"
     else:
@@ -79,8 +78,11 @@ if __name__ == "__main__":
                              .unique()
                              )
             crnt_stats = (crnt_icd_data
-                          .with_columns(pl.col.FINNGENID.unique().len().alias("N_INDV"))
+                          .with_columns(pl.col.FINNGENID.len().alias("N_ENTRY"),
+                                        pl.col.FINNGENID.unique().len().alias("N_INDV"))
                           .with_columns((pl.col.N_INDV/N_total).alias("PCT_INDV"))
+                          .select("ICD_THREE", "N_ENTRY","N_INDV", "PCT_INDV")
+                          .unique()
             )
             if crnt_icd_data.height > 0:
                 if crnt_stats["PCT_INDV"][0] >= args.min_pct:
@@ -92,13 +94,13 @@ if __name__ == "__main__":
                 .filter(pl.col.EVENT_AGE >= args.min_age, pl.col.EVENT_AGE <= args.max_age) 
                 .group_by("ICD_THREE")
                 .agg(pl.len().alias("N_ENTRY"), 
-                    pl.col.FINNGENID.unique().len().alias("N_INDV"))
-                .with_columns((pl.col.N_INDV/N_total).alias("N_PERCENT"))
+                     pl.col.FINNGENID.unique().len().alias("N_INDV"))
+                .with_columns((pl.col.N_INDV/N_total).alias("PCT_INDV"))
                 .sort("N_INDV", descending=True)
         )      
-        all_icd_data = icd_data.filter(pl.col.ICD_THREE.is_in(all_stats.filter(pl.col.N_PERCENT>=args.min_pct)["ICD_THREE"]))
+        all_icd_data = icd_data.filter(pl.col.ICD_THREE.is_in(all_stats.filter(pl.col.PCT_INDV>=args.min_pct)["ICD_THREE"]))
 
     print(all_icd_data)
     print(out_file_path)
     all_icd_data.write_parquet(out_file_path)
-    all_stats.write_parquet(out_file_path.replace(".parquet", "_counts.parquet"))
+    all_stats.write_csv(out_file_path.replace(".parquet", "_counts.csv"))
