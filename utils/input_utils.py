@@ -11,6 +11,61 @@ def get_min_file_path(fg_ver):
 
     return(minimum_file_path)
 
+def get_all_indvs(fg_ver):
+    min_file_path = get_min_file_path(fg_ver)
+    if fg_ver != "ml4h":
+        col_name = "FINNGENID"
+    else:
+        col_name = "FID"
+    all_indvs = pl.read_csv(min_file_path,  
+                        separator="\t" if fg_ver != "ml4h" else ",",
+                        columns=[col_name])
+    if "FID" in all_indvs.columns:
+        all_indvs = all_indvs.rename({"FID": "FINNGENID"})
+    return(all_indvs)
+
+def duplicate_lab_predictors(lab_name: str, clean: int) -> list:
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Duplicate predictors                           #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    if lab_name == "krea" or lab_name == "egfr":
+        if clean == 1:
+            # krea, egfr some other formula, egfr, cystatin c, UACR
+            not_select_omops = ["40764999", "46236952", "3020564", "3030366", "3020682"]
+        else:
+            not_select_omops = ["40764999", "46236952"]
+    if lab_name == "hba1c":
+        if clean == 1:
+            not_select_omops = ["3004410", "3018251", "3013826", "3013826"]# hba1c and fasting glucose, glucose, glucose 2 hours post dose
+        else:
+            not_select_omops = ["3004410", "3018251"] # hba1c and fasting glucose
+    if lab_name == "alatasat":
+        # ALAT, ASATs
+        not_select_omops = ["3006923", "3013721"]
+    if lab_name == "tsh":
+        if clean == 1:
+            not_select_omops = ["3009201", "3008486", "3026989"] # tsh, t4, t3
+        else:
+            not_select_omops = ["3009201", "3008486"]
+    if lab_name == "ldl":
+        if clean == 1: 
+            # LDL, LDL/HDL, HDl standard, HDL total, cholesterol total, weird cholesterol non hdl rare, tri fast, tri
+            not_select_omops = ["3001308", "3019900", "3023602", "42868674","3019900", "3048773", "3025839"]
+        else:
+            # LDL, tryg free, tryg
+            not_select_omops = ["3001308", "3048773", "3025839"]
+    return not_select_omops
+
+def filter_out_no_pcs(data):
+    pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
+    data = data.join(pcs.select("IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"), left_on="FINNGENID", right_on="IID", how="left")
+    print("Number of individuals without PCs")
+    print_count(data.filter(pl.col.PC1.is_null()))
+    print("Number of individuals left")
+    print_count(data.filter(~pl.col.PC1.is_null()))
+    data = data.filter(~pl.col.PC1.is_null())
+    return(data)
+
 import polars as pl
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
@@ -22,6 +77,8 @@ def get_data_and_pred_list(file_path_labels: str,
                            file_path_sumstats: str,
                            file_path_second_sumstats: str,
                            file_path_labs: str,
+                           lab_name: str,
+                           clean: int,
                            file_path_pgs1: str,
                            file_path_pgs2: str,
                            file_path_transformer: str,
@@ -29,7 +86,8 @@ def get_data_and_pred_list(file_path_labels: str,
                            start_date: str,
                            fill_missing: int=0,
                            fids_path: str="",
-                           future_val: str="") -> tuple[pl.DataFrame, list]:
+                           future_val: str="",
+                           fg_ver: str=None) -> tuple[pl.DataFrame, list]:
     """Creates the data and predictor list. 
 
    Returns the data and the predictors.
@@ -69,35 +127,18 @@ def get_data_and_pred_list(file_path_labels: str,
         pgs = pl.read_csv(file_path_pgs1, separator="\t")
         if len(pgs.columns)==2: # Zhijian PGS for eGFR levels
             pgs.columns = ["FINNGENID", "PGS1"]
-            #pgs = pgs.with_columns((-1*pl.col.PGS1).alias("PGS1"))
         else: # Zhiyu PGS for creatinine slopes
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS1"] 
-            pgs = pgs.with_columns((-1*pl.col.PGS1).alias("PGS1"))
-
         data = data.join(pgs.select("FINNGENID", "PGS1"), on="FINNGENID", how="left")
-        pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
-        data = data.join(pcs.select("IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"), left_on="FINNGENID", right_on="IID", how="left")
-        print("Number of individuals without PCs")
-        print_count(data.filter(pl.col.PC1.is_null()))
-        print("Number of individuals left")
-        print_count(data.filter(~pl.col.PC1.is_null()))
-        data = data.filter(~pl.col.PC1.is_null())
-    # Adding other data modalities
+        data = filter_out_no_pcs(data)
     if file_path_pgs2 != "":
         pgs = pl.read_csv(file_path_pgs2, separator="\t")
         if len(pgs.columns)==2: # Zhijian PGS for eGFR levels
             pgs.columns = ["FINNGENID", "PGS2"]
-            pgs = pgs.with_columns((-1*pl.col.PGS2).alias("PGS2"))
         else: # Zhiyu PGS for creatinine slopes
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS2"] 
         data = data.join(pgs.select("FINNGENID", "PGS2"), on="FINNGENID", how="left")
-        pcs = pl.read_csv("/finngen/library-red/finngen_R13/analysis_covariates/data/R13_COV_PHENO_V0.FID.txt.gz", separator="\t", columns=["IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"])
-        data = data.join(pcs.select("IID", "PC1","PC2","PC3", "PC4","PC5","PC6","PC7","PC8","PC9","PC10"), left_on="FINNGENID", right_on="IID", how="left")
-        print("Number of individuals without PCs")
-        print_count(data.filter(pl.col.PC1.is_null()))
-        print("Number of individuals left")
-        print_count(data.filter(~pl.col.PC1.is_null()))
-        data = data.filter(~pl.col.PC1.is_null())
+        data = filter_out_no_pcs(data)
 
     # # # # # # # # # ICD # # # # # # # # # # # # # # # # # # #
     if file_path_icds != "": 
@@ -134,6 +175,10 @@ def get_data_and_pred_list(file_path_labels: str,
     # # # # # # # # # Labs # # # # # # # # # # # # # # # # # # #
     if file_path_labs != "": 
         labs = read_file(file_path_labs)
+        # do not select OMOPs that are similar to the lab we are using as predictor to avoid data leakage
+        not_select_omops = duplicate_lab_predictors(lab_name=lab_name, clean=clean)
+        # labs is wider format so need to take out OMOP_ID_MEAN, OMOP_ID_QUANT25, OMOP_ID_QUANT75 for the not selected omops
+        labs = labs.select(*[col for col in labs.columns if col.split("_")[0] not in not_select_omops])
         data = data.join(labs, on="FINNGENID", how="left")
 
     # # # # # # # # # Extra # # # # # # # # # # # # # # # # # # #
@@ -161,7 +206,7 @@ def get_data_and_pred_list(file_path_labels: str,
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "ALCOHOL")
         data = data.join(extra_data.select("FINNGENID", "ALCOHOL"), how="left", on="FINNGENID")  
     if "EDU" in preds:
-        extra_data = get_edu_data(datetime.strptime(start_date, "%Y-%m-%d"))
+        extra_data = get_edu_data(datetime.strptime(start_date, "%Y-%m-%d"), fg_ver=fg_ver)
         data = data.join(extra_data.select("FINNGENID", "EDU"), how="left", on="FINNGENID")
         if fill_missing:
             data = data.with_columns(pl.when(pl.col.EDU.is_null()).then(pl.lit(0.5)).otherwise(pl.col.EDU).alias("EDU"))
@@ -289,8 +334,13 @@ def get_ext_data(start_date: datetime,
                 .group_by("FINNGENID").agg(pl.col.DBP.mean().alias("DBP"))
                )
 
-def get_edu_data(start_date: datetime):
-    edu_data = pl.read_csv("/finngen/pipeline/finngen_R12/socio_register_1.0/data/finngen_R12_socio_register_1.0.txt.gz", separator="\t")
+def get_edu_data(start_date: datetime,
+                 fg_ver="R12"):
+    if fg_ver in ["R12", "R13", "R14", "r12", "r13", "r14"]:
+        edu_data = pl.read_csv(f"/finngen/pipeline/finngen_R12/socio_register_1.0/data/finngen_R12_socio_register_1.0.txt.gz", separator="\t")
+    else:
+        edu_data = pl.read_csv(f"/finngen/red/ml4health/processed/socioeconomic_data/ml4health_socioeconomic_data.tsv.gz", separator="\t")
+        edu_data = edu_data.rename({"FID":"FINNGENID"})
     edu_data = (edu_data.filter(pl.col.CATEGORY=="EDUC").with_columns(pl.col.CODE2.str.head(1).cast(pl.Int32).alias("EDU"))
                     .filter(pl.col.YEAR<=start_date.year)
                     .filter((pl.col.EDU==pl.col.EDU.max()).over("FINNGENID"))
