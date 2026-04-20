@@ -22,7 +22,7 @@ def get_xgb_base_params(metric: str,
                         n_classes: int=2) -> dict:
     """Returns the base parameters for the XGBoost model."""
 
-    base_params = {'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
+    base_params = {'nthread': 1, 'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
     if metric == "q50":
         base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.5, "eval_metric": "q50"})
     elif metric == "q75":
@@ -121,7 +121,7 @@ def xgb_final_fitting(best_params: dict,
                             early_stopping_rounds=early_stop, 
                             stratified=True, 
                             num_boost_round=10000, 
-                            nfold=10,
+                            nfold=5 ,
                             seed=1241,
                             shuffle=True,
                             verbose_eval=100)
@@ -137,7 +137,6 @@ def xgb_final_fitting(best_params: dict,
             cv_clf = xgb.cv(params=params_fin, 
                             dtrain=xgb.DMatrix(X_train, y_train), 
                             early_stopping_rounds=early_stop, 
-                            #stratified=True, 
                             num_boost_round=10000, 
                             nfold=10,
                             seed=1241,

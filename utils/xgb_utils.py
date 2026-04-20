@@ -8,6 +8,7 @@ sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
 from abnorm_utils import get_abnorm_func_based_on_name
 from model_fit_utils import get_cont_goal_col_name
+
 def get_out_data(data: pl.DataFrame, 
                  model_final: xgb.XGBClassifier, 
                  X_all: pl.DataFrame, 
@@ -212,10 +213,6 @@ def create_xgb_dts(data: pl.DataFrame,
         Returns:
             tuple: A tuple containing the data (polars DataFrame) and the list of predictors
     """
-    # Need later to be Float for scaling
-    data = data.with_columns([
-        pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)
-    ])
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Replace -1s with 2s                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -231,9 +228,18 @@ def create_xgb_dts(data: pl.DataFrame,
                        if(set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {0, 1} or
                           set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {"0", "1"})  
     ])
+
     print(binary_cols)
     numeric_cols = [col_name for col_name in X_cols if col_name not in binary_cols]
     print(numeric_cols)
+
+    data = data.with_columns([
+        pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if (isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)) and col in numeric_cols
+    ])
+    data = data.with_columns([
+        pl.col(col).fill_nan(None).cast(pl.Int8, strict=False) for col in data.columns if col in binary_cols
+    ])
+    
     scaler_base = StandardScaler()
     scaler_base.set_output(transform="polars")
     X_cols = numeric_cols + binary_cols
@@ -318,5 +324,5 @@ def create_xgb_dts(data: pl.DataFrame,
         dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
     else:
         dfinetunevalid = None
-    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, data, val_data)
+    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, numeric_cols, binary_cols, data, val_data)
 
