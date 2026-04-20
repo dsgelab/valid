@@ -6,7 +6,7 @@ from general_utils import get_date, make_dir, init_logging, Timer, get_common_sc
 from model_eval_utils import get_train_type, save_all_report_plots
 from optuna_utils import run_optuna_optim_cv
 from xgb_utils import create_xgb_dts, get_shap_importances, save_importances, get_out_data
-from input_utils import get_data_and_pred_list   
+from input_utils import get_data_and_pred_list
 from model_fit_utils import xgb_final_fitting, get_xgb_base_params, logr_fitting, linr_fitting
 from minor_plot_utils import get_plot_names
 from labeling_utils import log_print_n
@@ -14,14 +14,17 @@ from labeling_utils import log_print_n
 # Standard stuff
 import polars as pl
 import numpy as np
-
-import pickle
 import shap
+
 # Logging and input
 import argparse
 import logging
 logger = logging.getLogger(__name__)
 
+# Output
+from sklearn.preprocessing import StandardScaler
+import xgboost as xgb
+import json
 
 def get_parser_arguments():
     #### Parsing and logging
@@ -36,6 +39,7 @@ def get_parser_arguments():
     parser.add_argument("--file_path_icds", type=str, help="Path to ICD data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_atcs", type=str, help="Path to ATC data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_labs", type=str, help="Path to Lab data. Each column is a predictor. [default: '' = not loaded]", default="")
+    parser.add_argument("--clean", type=int, default=0, help="Whether to remove lab predictors that are very similar or just the lab itself to the predicted lab value to avoid data leakage. [default: 0 = do not clean]")
     parser.add_argument("--file_path_sumstats", type=str, help="Path to summary statistics of a single lab value data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_second_sumstats", type=str, help="Path to summary statistics of a another lab value data. Each column is a predictor. [default: '' = not loaded]", default="")
     parser.add_argument("--file_path_pgs1", type=str, help="PGS scores - 1/2", default="")
@@ -125,6 +129,8 @@ if __name__ == "__main__":
                                               file_path_sumstats=args.file_path_sumstats, 
                                               file_path_second_sumstats=args.file_path_second_sumstats, 
                                               file_path_labs=args.file_path_labs, 
+                                              lab_name=args.lab_name,
+                                              clean=args.clean,
                                               file_path_pgs1=args.file_path_pgs1,
                                               file_path_pgs2=args.file_path_pgs2,
                                               file_path_transformer=args.file_path_transformer,
@@ -138,7 +144,8 @@ if __name__ == "__main__":
             X_test, y_test, \
             X_all, y_all, X_all_unscaled,_,_,_, \
             dtrain, dfinetunevalid, dvalid, \
-                scaler_base, data = create_xgb_dts(data=data, 
+            scaler_base, numeric_cols, binary_cols,\
+            data, val_data = create_xgb_dts(data=data, 
                                                    X_cols=X_cols, 
                                                    y_goal=args.goal,
                                                    train_pct=args.train_pct)
@@ -149,7 +156,9 @@ if __name__ == "__main__":
                                               file_path_atcs=args.file_path_atcs, 
                                               file_path_sumstats=args.file_path_sumstats, 
                                               file_path_second_sumstats=args.file_path_second_sumstats, 
-                                              file_path_labs=args.file_path_labs, 
+                                              file_path_labs=args.file_path_labs,
+                                                lab_name=args.lab_name,
+                                                clean=args.clean, 
                                               file_path_pgs1=args.file_path_pgs1,
                                               file_path_pgs2=args.file_path_pgs2,
                                               file_path_transformer=args.file_path_transformer,
@@ -164,6 +173,8 @@ if __name__ == "__main__":
                                                       file_path_sumstats=args.file_path_val_sumstats, 
                                                       file_path_second_sumstats=args.file_path_val_second_sumstats, 
                                                       file_path_labs=args.file_path_val_labs, 
+                                                        lab_name=args.lab_name,
+                                                        clean=args.clean,
                                                       file_path_pgs1=args.file_path_pgs1,
                                                       file_path_pgs2=args.file_path_pgs2,
                                                       file_path_transformer=args.file_path_transformer,
@@ -177,7 +188,7 @@ if __name__ == "__main__":
             X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, \
             X_val_all, y_val_all, X_val_all_unscaled, \
             dtrain, dfinetunevalid, dvalid, \
-                scaler_base, data = create_xgb_dts(data=data, 
+                scaler_base, numeric_cols, binary_cols, data, val_data = create_xgb_dts(data=data, 
                                                    X_cols=X_cols, 
                                                    y_goal=args.goal,
                                                    train_pct=args.train_pct,
@@ -208,14 +219,13 @@ if __name__ == "__main__":
                                               res_dir=args.res_dir,
                                               model_type="xgb",
                                               model_fit_date=args.model_fit_date,
-                                              base_params=base_params)
+                                              base_params=base_params,
+                                              fg_ver=args.fg_ver)
             logging.info(timer.get_elapsed())
             model_final = xgb_final_fitting(best_params=best_params,
                                             X_train=X_train, y_train=y_train, 
                                             X_finetune_valid=X_finetune_valid,
                                                 y_finetune_valid=y_finetune_valid,
-                                            X_valid=X_valid, y_valid=y_valid, 
-                                            X_test=X_test, y_test=y_test, 
                                             metric=args.metric,
                                             low_lr=args.low_lr,
                                             early_stop=args.early_stop,
@@ -242,10 +252,25 @@ if __name__ == "__main__":
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         if not args.just_r2:
-            pickle.dump(model_final, open(out_model_dir + "model_" + get_date() + ".pkl", "wb"))
-            pickle.dump(scaler_base, open(out_model_dir + "scaler_" + get_date() + ".pkl", "wb"))
+            model_final.save_model(out_model_dir + "model_" + get_date() + ".json")
+            scaler = scaler_base.named_transformers_['num']
+            config = {
+                "numeric_cols": numeric_cols,
+                "binary_cols": binary_cols,
+                "scaler": {
+                    "mean": scaler.mean_.tolist(),
+                    "scale": scaler.scale_.tolist(),
+                    "var": scaler.var_.tolist(),
+                    "n_features_in": int(scaler.n_features_in_),
+                    "feature_names_in": scaler.feature_names_in_.tolist(),
+                },
+            }
+            with open(out_model_dir + "preprocessor_" + get_date() + ".json", "w") as f:
+                json.dump(config, f, indent=2)
+
     elif not args.just_r2:
-        model_final = pickle.load(open(out_model_dir + "model_" + args.model_fit_date+ ".pkl", "rb"))
+        model_final = xgb.XGBClassifier()
+        model_final.load_model(out_model_dir + "model_" + args.model_fit_date + ".json")
 
     if not args.skip_model_fit and not args.just_r2:
         if args.model_type == "xgb" or args.model_type == "cat":
