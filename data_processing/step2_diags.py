@@ -1,15 +1,13 @@
  # Utils
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from general_utils import Timer, query_to_df, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
+from general_utils import Timer, query_to_df, get_date, get_common_schema, align_schema, make_dir, init_logging, logging_print, read_file
 # Standard stuff
-import numpy as np
 import polars as pl
 # Logging and input
 import logging
 logger = logging.getLogger(__name__)
 import argparse
-from datetime import datetime
 
 
 def get_diag_med_data(diag_regex="",
@@ -67,29 +65,28 @@ def get_codes_first(data: pl.DataFrame,
     """Get the first occurance of a code for each individual and code."""
     data = data.filter(pl.col("CODE").str.contains(crnt_regex))
     data = data.unique()
-    # data = (data
-    #         .sort(["FINNGENID", "APPROX_EVENT_DAY"], descending=False)
-    #         .group_by(["FINNGENID", "CODE"])
-    #         .head(1))
+    data = data.filter((pl.col.APPROX_EVENT_DAY==pl.col.APPROX_EVENT_DAYS.min()).over(pl.col(["FINNGENID", "CODE"])))
+
     return(data)
 
 def get_kidney_register_data(fg_ver = "R12"):
     """Get kidney register data."""
     if fg_ver == "R12":
-        table = "/finngen/library-red/finngen_R12/kidney_disease_register_1.0/data/finngen_R12_kidney_combined_1.0.txt"
+        kd_data_path = "/finngen/library-red/finngen_R12/kidney_disease_register_1.0/data/finngen_R12_kidney_combined_1.0.txt"
     elif fg_ver == "R13":
-        print("R13 kidney not yet processed (2025-04-07), using R12 instead.")
-        # table = "/finngen/library-red/finngen_R13/kidney_disease_register_1.0/data/finngen_R13_kidney_combined_1.0.txt"
-        table = "/finngen/library-red/finngen_R12/kidney_disease_register_1.0/data/finngen_R12_kidney_combined_1.0.txt"
+        kd_data_path = "/finngen/library-red/finngen_R13/kidney_disease_register_1.0/data/finngen_R13_kidney_combined_1.0.txt"
+    elif fg_ver == "R14":
+        print("R14 kidney not yet processed (2026-04-14), using R13 instead.")
+        kd_data_path = "/finngen/library-red/finngen_R13/kidney_disease_register_1.0/data/finngen_R13_kidney_combined_1.0.txt"
     else:
-        raise ValueError("Finngen version must be R12 or R13.")
+        raise ValueError("Finngen version must be R12, R13, or R14.")
 
-    kd_data = (pl.read_csv(table, separator="\t")
+    kd_data = (pl.read_csv(kd_data_path, separator="\t", infer_schema_length=100_000)
                  .select(["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY", "CURRENT_FORM_OF_TREATMENT"])
                  # All dialysis or transplant
                  .filter(pl.col.CURRENT_FORM_OF_TREATMENT.str.to_integer(strict=False)<52)
                  .filter(pl.col("EVENT_AGE").is_not_null())
-                 # pviot longer to combine diagnosis columns
+                 # pivot longer to combine diagnosis columns
                  .unpivot(index=["FINNGENID", "EVENT_AGE", "APPROX_EVENT_DAY"], value_name="EXCL_CODE")
                  .drop(["variable"])
                  .rename({"APPROX_EVENT_DAY":"EXCL_DATE"})
@@ -108,11 +105,12 @@ def get_parser_arguments():
     parser.add_argument("--lab_name", type=str, help="Readable name of the measurement value for file naming.", required=True)
     parser.add_argument("--fg_ver", type=str, help="Finngen version (R12 or R13)", required=True)
 
+    parser.add_argument("--icd_file_path", type=str, help="Path to the diagnosis data file. If not given using bigquery.", default="")
+    parser.add_argument("--atc_file_path", type=str, help="Path to the medication data file. If not given using bigquery.", default="")
+
     # Regex for selecting the data
     parser.add_argument("--diag_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", default="")
     parser.add_argument("--med_regex", type=str, help="Regex for selecting medication purchases.", required=False, default="")
-    parser.add_argument("--diag_excl_regex", type=str, help="Regex for selecting Code1 and 2 from the service sector detailed longitudinal data.", required=True)
-    parser.add_argument("--med_excl_regex", type=str, help="Regex for selecting medication purchases.", required=True)
 
 
     args = parser.parse_args()
@@ -127,44 +125,50 @@ if __name__ == "__main__":
     out_file_path = args.res_dir + args.lab_name + "_" + args.fg_ver + "_" + get_date()
     make_dir(args.res_dir)
     init_logging(args.res_dir, args.lab_name, logger, args)
-    
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Exclusion data                                          #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    if args.diag_excl_regex != "" or args.med_excl_regex != "": 
-        diags = get_diag_med_data(diag_regex=args.diag_excl_regex, 
-                                  med_regex=args.med_excl_regex,
-                                  fg_ver=args.fg_ver)
-        icd_excls = (get_codes_first(diags, args.diag_excl_regex)
-                     .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
-        if args.med_excl_regex != "":
-            med_excls = (get_codes_first(diags, args.med_excl_regex)
-                        .rename({"APPROX_EVENT_DAY": "EXCL_DATE", "CODE":"EXCL_CODE"}))
-            excls = pl.concat([icd_excls, med_excls])
-        else:
-            excls = icd_excls
-        excls.write_parquet(out_file_path + "_excls.parquet")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Diagnosis data                                          #
+    #                 Data from bigquery                                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
-    if args.diag_regex != "" or args.med_regex != "":
+    if args.icd_file_path == "" and args.atc_file_path == "":
         all_diags = get_diag_med_data(diag_regex=args.diag_regex, 
                                       med_regex=args.med_regex, 
                                       fg_ver=args.fg_ver)
-        if args.med_regex != "": 
+        if args.med_regex != "":  
             med_diags = (get_codes_first(all_diags, args.med_regex)
                          .rename({"APPROX_EVENT_DAY": "MED_DATE", "CODE":"MED"}))
-            print(med_diags)
-            med_diags.write_parquet(out_file_path + "_meds.parquet")
-        if args.diag_regex != "": 
-            icd_diags = (get_codes_first(all_diags, args.diag_regex)
+        if args.icd_regex != "":
+            icd_diags = (get_codes_first(all_diags, args.icd_regex)
                          .rename({"APPROX_EVENT_DAY": "DIAG_DATE", "CODE":"DIAG"}))
-            if args.lab_name == "egfr":
-                kd_data = get_kidney_register_data(fg_ver=args.fg_ver).rename({"EXCL_DATE": "DIAG_DATE", "EXCL_CODE": "DIAG"})
-                kd_data = kd_data.with_columns(pl.lit("KD_REGISTER").alias("SOURCE"))
-                icd_diags = pl.concat([icd_diags, kd_data.select(icd_diags.columns)])
-            icd_diags.write_parquet(out_file_path + "_diags.parquet")
+            
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Data from long files                                    #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    else:
+        if args.atc_file_path != "" and args.med_regex !="":
+            med_diags = read_file(args.atc_file_path)
+            med_diags = med_diags.filter(pl.col("ATC_CODE").str.contains(args.med_regex))
+            med_diags = med_diags.rename({"DATE": "MED_DATE", "ATC_CODE":"MED"})
+        if args.icd_file_path != "" and args.diag_regex != "":
+            icd_diags = read_file(args.icd_file_path).select(["FINNGENID", "EVENT_AGE", "DATE", "ICD_CODE", "SOURCE"])
+            icd_diags = icd_diags.filter(pl.col("ICD_CODE").str.contains(args.diag_regex))
+            icd_diags = icd_diags.rename({"DATE": "DIAG_DATE", "ICD_CODE":"DIAG"})
+            
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Kidney disease data                                     #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    if args.lab_name == "egfr" and args.fg_ver != "ml4h":
+        kd_data = get_kidney_register_data(fg_ver=args.fg_ver).rename({"EXCL_DATE": "DIAG_DATE", "EXCL_CODE": "DIAG"})
+        kd_data = kd_data.with_columns(pl.lit("KD_REGISTER").alias("SOURCE"))
+        common_schema = get_common_schema([icd_diags, kd_data])
+        icd_diags = pl.concat([align_schema(icd_diags, common_schema), align_schema(kd_data.select(icd_diags.columns), common_schema)])
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Write output files                                      #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    if args.med_regex != "": 
+        med_diags.write_parquet(out_file_path + "_meds.parquet")
+    if args.diag_regex != "":
+        icd_diags.write_parquet(out_file_path + "_diags.parquet")
 
 
 
