@@ -135,9 +135,12 @@ if __name__ == "__main__":
             code_timer = Timer()
 
             code_data = pl.DataFrame(pd.read_parquet(args.file_path_preds, filters=[(f"{args.col_name}", "==", code)]))
+            
             if "FINNGENID" not in code_data.columns:
                 code_data = code_data.rename({"FID": "FINNGENID"})
-            
+            code_data = prep_preds_data(preds_data=code_data,
+                                        start_date=args.start_date,
+                                        start_year=args.start_year)
             code_data = code_data.group_by("FINNGENID").agg(pl.len().alias("N_CODE"))
 
             if args.bin_count == 1:

@@ -192,7 +192,6 @@ def save_importances(top_gain,
 import polars as pl
 import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
-from sklearn.compose import ColumnTransformer
 from typing import Tuple
 def create_xgb_dts(data: pl.DataFrame, 
                    X_cols: list, 
@@ -228,10 +227,7 @@ def create_xgb_dts(data: pl.DataFrame,
                        if(set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {0, 1} or
                           set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {"0", "1"})  
     ])
-
-    print(binary_cols)
     numeric_cols = [col_name for col_name in X_cols if col_name not in binary_cols]
-    print(numeric_cols)
 
     data = data.with_columns([
         pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if (isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)) and col in numeric_cols
@@ -239,17 +235,14 @@ def create_xgb_dts(data: pl.DataFrame,
     data = data.with_columns([
         pl.col(col).fill_nan(None).cast(pl.Int8, strict=False) for col in data.columns if col in binary_cols
     ])
-    
-    scaler_base = StandardScaler()
-    scaler_base.set_output(transform="polars")
     X_cols = numeric_cols + binary_cols
 
     # # # # # # # # ALL # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    X_all_unscaled = data.select(X_cols); y_all = data.select(y_goal)
+    X_all = data.select(X_cols); y_all = data.select(y_goal)
     if val_data is not None:
-        X_val_all_unscaled = val_data.select(X_cols); y_val_all = val_data.select(y_goal)
+        X_val_all = val_data.select(X_cols); y_val_all = val_data.select(y_goal)
     else:
-        X_val_all_unscaled = None; y_val_all = None; X_val_all = None
+        X_val_all = None; y_val_all = None
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Split data                                              #
@@ -298,23 +291,7 @@ def create_xgb_dts(data: pl.DataFrame,
         X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
         X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
 
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Scaling data                                            #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    preprocessor = ColumnTransformer([
-        ('num', scaler_base, numeric_cols),
-        ('bin', 'passthrough', binary_cols)
-    ])
-    X_train=pl.DataFrame(preprocessor.fit_transform(X_train), schema=X_train.schema)
-    if finetune_valid_data.height>0:
-        X_finetune_valid=pl.DataFrame(preprocessor.transform(X_finetune_valid), schema=X_finetune_valid.schema)
-    X_valid=pl.DataFrame(preprocessor.transform(X_valid), schema=X_valid.schema, strict=False)
-    if X_test.height>0:
-        X_test=pl.DataFrame(preprocessor.transform(X_test), schema=X_test.schema, strict=False)
-    X_all=pl.DataFrame(preprocessor.transform(X_all_unscaled), schema=X_all_unscaled.schema, strict=False)
-    if val_data is not None:
-        X_val_all=pl.DataFrame(preprocessor.transform(X_val_all_unscaled), schema=X_val_all_unscaled.schema, strict=False)
-        
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 XGBoost datatype                                        #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
@@ -324,5 +301,5 @@ def create_xgb_dts(data: pl.DataFrame,
         dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
     else:
         dfinetunevalid = None
-    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_all_unscaled, X_val_all, y_val_all, X_val_all_unscaled, dtrain, dfinetunevalid, dvalid, preprocessor, numeric_cols, binary_cols, data, val_data)
+    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_val_all, y_val_all, dtrain, dfinetunevalid, dvalid, data, val_data)
 

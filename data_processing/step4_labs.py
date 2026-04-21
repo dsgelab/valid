@@ -13,6 +13,15 @@ import logging
 logger = logging.getLogger(__name__)
 from datetime import datetime
 
+def read_start_date(start_date_str: str) -> datetime:
+    """
+    Function to read the start date from the input string.
+    """
+    try:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    except:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d %H:%M:%S")
+    return start_date
 
 def get_parser_arguments():
     #### Parsing and logging
@@ -51,7 +60,7 @@ if __name__ == "__main__":
     if args.select_omops_path == "":
         labs_data = read_file(args.file_path_lab)
         labs_data = labs_data.with_columns(pl.col.MEASUREMENT_VALUE.cast(pl.Float64),
-                                        pl.col.OMOP_CONCEPT_ID.cast(pl.Utf8))
+                                          pl.col.OMOP_CONCEPT_ID.cast(pl.Utf8))
         if labs_data["APPROX_EVENT_DATETIME"].dtype == pl.Utf8:
             labs_data = labs_data.with_columns(pl.col.APPROX_EVENT_DATETIME.str.to_date("%Y-%m-%dT%H:%M", strict=False))
 
@@ -71,15 +80,9 @@ if __name__ == "__main__":
     
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         #                 Filter to before start of prediction                    #
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-        print(labs_data)
-        try:
-            labs_data = labs_data.filter(pl.col.APPROX_EVENT_DATETIME < datetime.strptime(args.start_date, "%Y-%m-%d"))
-        except:
-            labs_data = labs_data.filter(pl.col.APPROX_EVENT_DATETIME < datetime.strptime(args.start_date, "%Y-%m-%d %H:%M:%S"))
-
-
-                
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #           
+        labs_data = labs_data.filter(pl.col.APPROX_EVENT_DATETIME < read_start_date(args.start_date))
+             
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         #                 Stats for labs                                          #
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
@@ -119,6 +122,7 @@ if __name__ == "__main__":
             else:
                 crnt_labs_data = pl.DataFrame(pd.read_parquet(args.file_path_lab, 
                                                               filters=[("OMOP_CONCEPT_ID", "=", int(crnt_omop))]))
+                crnt_labs_data = crnt_labs_data.filter(pl.col("APPROX_EVENT_DATETIME").dt.date() < read_start_date(args.start_date))
             n_rows = crnt_labs_data.height
             crnt_labs_data = crnt_labs_data.group_by("FINNGENID").agg(
                 pl.col("MEASUREMENT_VALUE").mean().alias("MEAN"),   

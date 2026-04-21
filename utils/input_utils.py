@@ -339,7 +339,9 @@ def get_edu_data(start_date: datetime,
     if fg_ver in ["R12", "R13", "R14", "r12", "r13", "r14"]:
         edu_data = pl.read_csv(f"/finngen/pipeline/finngen_R12/socio_register_1.0/data/finngen_R12_socio_register_1.0.txt.gz", separator="\t")
     else:
-        edu_data = pl.read_csv(f"/finngen/red/ml4health/processed/socioeconomic_data/ml4health_socioeconomic_data.tsv.gz", separator="\t")
+        edu_data = pl.read_csv(f"/finngen/red/ml4health/processed/socioeconomic_data/ml4health_socioeconomic_data.tsv.gz", 
+                               separator="\t",
+                               schema_overrides={"CODE1": pl.Utf8, "EVENT_AGE": pl.Float64}, null_values="NA")
         edu_data = edu_data.rename({"FID":"FINNGENID"})
     edu_data = (edu_data.filter(pl.col.CATEGORY=="EDUC").with_columns(pl.col.CODE2.str.head(1).cast(pl.Int32).alias("EDU"))
                     .filter(pl.col.YEAR<=start_date.year)
