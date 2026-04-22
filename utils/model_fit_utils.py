@@ -19,10 +19,16 @@ from model_eval_utils import get_train_type
 """
 def get_xgb_base_params(metric: str,
                         lr: float,
-                        n_classes: int=2) -> dict:
+                        n_classes: int=2,
+                        device: str="cpu") -> dict:
     """Returns the base parameters for the XGBoost model."""
 
-    base_params = {'nthread': 1, 'tree_method': 'approx', 'learning_rate': lr, 'seed': 1239}
+    base_params = {'nthread': 1, 
+                   'tree_method': 'hist', 
+                   'learning_rate': lr, 
+                   'seed': 1239,
+                   "device": device
+                   }
     if metric == "q50":
         base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.5, "eval_metric": "q50"})
     elif metric == "q75":
@@ -45,6 +51,7 @@ def get_xgb_base_params(metric: str,
         base_params.update({"objective": "binary:logistic", "eval_metric": metric})
     elif get_train_type(metric) == "multi":
         base_params.update({"objective": "multi:softprob", "num_class": n_classes, "eval_metric": metric})
+
     return(base_params)
 
 def get_cont_goal_col_name(goal: str,
@@ -95,7 +102,8 @@ def xgb_final_fitting(best_params: dict,
                       low_lr: float,
                       early_stop: int,
                       n_classes: int=2,
-                      fit_cv: int=1):
+                      fit_cv: int=1,
+                      device: str="cpu"):
     """Fits the final XGB model with the best hyperparameters found in the optimization step."""
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -103,7 +111,7 @@ def xgb_final_fitting(best_params: dict,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     timer = Timer()
     params_fin = {}
-    params_fin.update(get_xgb_base_params(metric, low_lr, n_classes))
+    params_fin.update(get_xgb_base_params(metric, low_lr, n_classes, device))
     print(params_fin)
 
     params_fin.update(best_params)

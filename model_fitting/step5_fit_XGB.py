@@ -74,6 +74,7 @@ def get_parser_arguments():
     parser.add_argument("--n_trials", type=int, help="Number of hyperparameter optimizations to run [default: 1 = running based on time_step1 instead]", default=1)
     parser.add_argument("--time_optim", type=int, help="Number of seconds to run hyperparameter optimizations for, instead of basing it on the number of traisl. [run when n_trials=1]", default=300)
     parser.add_argument("--refit", type=int, help="Whether to rerun the hyperparameter optimization", default=1)
+    parser.add_argument("--device", type=str, help="Device to use for XGBoost training.", default="cpu")
 
     # Final model fitting and evaluation
     parser.add_argument("--skip_model_fit", type=int, help="Whether to rerun the final model fitting, or load a prior model fit.", default=0)
@@ -132,7 +133,8 @@ if __name__ == "__main__":
                                               preds=args.preds,
                                               start_date=args.start_date,
                                               fill_missing=0 if args.model_type=="xgb" else 1,
-                                              fids_path=args.fids_path)
+                                              fids_path=args.fids_path,
+                                              fg_ver=args.fg_ver)
         fgids, X_train, y_train, X_finetune_valid, y_finetune_valid, \
             X_valid, y_valid, X_test, y_test, X_all, y_all, \
             X_val_all, y_val_all, \
@@ -158,7 +160,8 @@ if __name__ == "__main__":
                                               start_date=args.start_date,
                                               fill_missing=0 if args.model_type=="xgb" else 1,
                                               fids_path=args.fids_path,
-                                              future_val="train" if not args.final_fit else "final train")
+                                              future_val="train" if not args.final_fit else "final train",
+                                              fg_ver=args.fg_ver)
         val_data, val_X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels if not args.final_fit else args.final_indvs_path, 
                                                       file_path_icds=args.file_path_val_icds, 
                                                       file_path_atcs=args.file_path_val_atcs, 
@@ -174,7 +177,8 @@ if __name__ == "__main__":
                                                       start_date=args.start_date,
                                                       fill_missing=0 if args.model_type=="xgb" else 1,
                                                       fids_path=args.fids_path,
-                                                      future_val="val" if not args.final_fit else "final val")
+                                                      future_val="val" if not args.final_fit else "final val",
+                                                      fg_ver=args.fg_ver)
         
         fgids, X_train, y_train, X_finetune_valid, y_finetune_valid, \
             X_valid, y_valid, X_test, y_test, X_all, y_all, \
@@ -201,7 +205,8 @@ if __name__ == "__main__":
         if not args.skip_model_fit:
             base_params = get_xgb_base_params(metric=args.metric, 
                                               lr=args.lr, 
-                                              n_classes=len(y_train.unique()))
+                                              n_classes=len(y_train.unique()),
+                                              device=args.device)
             best_params = run_optuna_optim_cv(train=[pl.concat([X_train, X_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
                                               lab_name=args.lab_name, 
                                               refit=args.refit, 
@@ -221,7 +226,8 @@ if __name__ == "__main__":
                                             metric=args.metric,
                                             low_lr=args.low_lr,
                                             early_stop=args.early_stop,
-                                            n_classes=len(y_train.unique()))
+                                            n_classes=len(y_train.unique()),
+                                            device=args.device)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
