@@ -36,6 +36,8 @@ def get_parser_arguments():
     parser.add_argument("--transform_egfr", type=int, default=1, help="Whether to transform krea or cystatin C to eGFR.")
     parser.add_argument("--min_age", type=int, default=18, help="Minimum age to filter for, this will make outlier removal easier.")
 
+    parser.add_argument("--fg_ver", type=str, default="R14")
+
     args = parser.parse_args()
     return(args)
 
@@ -66,10 +68,15 @@ if __name__ == "__main__":
     #                 Getting data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
     data = read_file(args.file_path)
-    data = data.with_columns(pl.col.DATE.dt.datetime().alias("DATE"))
-    r13_indivs = pl.read_csv("/finngen/library-red/all_allowed_ids_to_sb/finngen_R13_finngenid_actual_inclusion_list.txt", has_header=False)
-    print(f"Removing individuals not in R13: {data.filter(~pl.col.FINNGENID.is_in(r13_indivs["column_1"]))["FINNGENID"].unique().len()}")
-    data = data.filter(pl.col.FINNGENID.is_in(r13_indivs["column_1"]))
+    try:
+        data = data.with_columns(pl.col.DATE.dt.datetime().alias("DATE"))
+    except:
+        data = data.with_columns(pl.col.DATE.str.to_datetime().alias("DATE"))
+
+    if args.fg_ver != "ml4h":
+        r13_indivs = pl.read_csv("/finngen/library-red/all_allowed_ids_to_sb/finngen_R13_finngenid_actual_inclusion_list.txt", has_header=False)
+        print(f"Removing individuals not in R13: {data.filter(~pl.col.FINNGENID.is_in(r13_indivs["column_1"]))["FINNGENID"].unique().len()}")
+        data = data.filter(pl.col.FINNGENID.is_in(r13_indivs["column_1"]))
     
     # Prep
     n_indvs_stats = pd.DataFrame({"STEP": ["Start", "Dups manual", "Values", "Dups mean", "Outliers_known", "Outliers", "Outliers_single"]})

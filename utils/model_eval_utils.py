@@ -371,8 +371,11 @@ def save_all_report_plots(out_data: pl.DataFrame,
                           train_type: str ="bin",
                           model_type: str="xgb",
                           n_features: int=None) -> None:
+    
     set_names = {0: "train", 1: "valid", 2: "test"}
+    
     eval_sets = [0,1,2] if test_importances is not None else [0,1] if valid_importances is not None else [0]
+
     for goal in ["y_MEAN_ABNORM", "y_NEXT_ABNORM"]:
         if goal in out_data.columns:
             crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
@@ -386,6 +389,7 @@ def save_all_report_plots(out_data: pl.DataFrame,
                         out_data = out_data.with_columns(pl.when(pl.col(goal)==1).then(pl.lit(1)).otherwise(pl.lit(0)).alias(goal))
                         
                     ##### 6 panel report plots""
+                    print(out_data.filter(pl.col.SET == set_no).select(goal))
                     fig = create_report_plots(out_data.filter(pl.col.SET == set_no).select(goal), 
                                               out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS"),
                                               out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS"),

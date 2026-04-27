@@ -13,9 +13,14 @@ import argparse
 def get_orig_omop_id_data_parquet(omop_concept_id = "3020564",
                                   table = "/finngen/library-red/finngen_R13/kanta_lab_1.0/data/finngen_R13_kanta_lab_1.0.parquet",
                                   columns = ["FINNGENID", "SEX", "EVENT_AGE", "APPROX_EVENT_DATETIME", "MEASUREMENT_VALUE_HARMONIZED", "MEASUREMENT_VALUE_MERGED", "MEASUREMENT_UNIT_HARMONIZED",  "TEST_OUTCOME_IMPUTED"]):
-    data = pl.DataFrame(pd.read_parquet(table, 
-                                        filters=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
-                                        columns=columns))
+    try:
+        data = pl.DataFrame(pd.read_parquet(table, 
+                                            filters=[("OMOP_CONCEPT_ID", "==", omop_concept_id)],
+                                            columns=columns))
+    except:
+        data = pl.DataFrame(pd.read_parquet(table, 
+                                            filters=[("OMOP_CONCEPT_ID", "==", int(omop_concept_id))],
+                                            columns=columns))
     return(data)
 
 """Setting up the parser arguments."""
@@ -26,6 +31,7 @@ def get_parser_arguments():
     parser.add_argument("--res_dir", help="Path to the results directory.", required=True)
     parser.add_argument("--lab_name", help="Readable name of the measurement value.", required=True)
     parser.add_argument("--table_path", help="Path to data.", default="/finngen/library-red/finngen_R13/kanta_lab_1.0/data/finngen_R13_kanta_lab_1.0.parquet")
+    parser.add_argument("--fg_ver", help="Path to data.", default="R14")
 
     args = parser.parse_args()
     return(args)
@@ -42,13 +48,21 @@ if __name__ == "__main__":
     
     #### Data processing
     ## Raw data
+    if args.fg_ver != "ml4h":
+        col_select = ["FINNGENID", "SEX", "EVENT_AGE",  "TEST_OUTCOME_IMPUTED", "MEASUREMENT_VALUE_MERGED", "MEASUREMENT_UNIT_HARMONIZED", "MEASUREMENT_VALUE_HARMONIZED", "APPROX_EVENT_DATETIME"]
+    else:
+        col_select = ["FINNGENID", "SEX", "EVENT_AGE", "TEST_OUTCOME_IMPUTED", "MEASUREMENT_VALUE_HARMONIZED", "MEASUREMENT_UNIT_HARMONIZED",  "APPROX_EVENT_DATETIME"]
     data = get_orig_omop_id_data_parquet(omop_concept_id=args.omop, 
                                          table=args.table_path,
-                                         columns=["FINNGENID", "SEX", "EVENT_AGE",  "TEST_OUTCOME_IMPUTED", "MEASUREMENT_VALUE_MERGED", "MEASUREMENT_UNIT_HARMONIZED", "MEASUREMENT_VALUE_HARMONIZED", "APPROX_EVENT_DATETIME"],
+                                         columns=col_select,
                                         )
     ## Sorting
     data = data.sort(["FINNGENID", "APPROX_EVENT_DATETIME"], descending=True)
-    data = data.rename({"APPROX_EVENT_DATETIME": "DATE",  "MEASUREMENT_VALUE_MERGED": "VALUE",  "MEASUREMENT_UNIT_HARMONIZED": "UNIT", "TEST_OUTCOME_IMPUTED":"ABNORM"})
+    try:
+        data = data.rename({"APPROX_EVENT_DATETIME": "DATE",  "MEASUREMENT_VALUE_MERGED": "VALUE",  "MEASUREMENT_UNIT_HARMONIZED": "UNIT", "TEST_OUTCOME_IMPUTED":"ABNORM"})
+    except:
+        data = data.rename({"APPROX_EVENT_DATETIME": "DATE",  "MEASUREMENT_VALUE_HARMONIZED": "VALUE",  "MEASUREMENT_UNIT_HARMONIZED": "UNIT", "TEST_OUTCOME_IMPUTED":"ABNORM"})
+
     data = data.select(["FINNGENID", "SEX", "EVENT_AGE", "DATE", "VALUE", "UNIT", "ABNORM"])
 
     ## Saving

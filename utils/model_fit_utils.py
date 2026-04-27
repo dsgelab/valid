@@ -20,14 +20,15 @@ from model_eval_utils import get_train_type
 def get_xgb_base_params(metric: str,
                         lr: float,
                         n_classes: int=2,
-                        device: str="cpu") -> dict:
+                        device: str="cpu",
+                        nthread: int=1) -> dict:
     """Returns the base parameters for the XGBoost model."""
 
-    base_params = {'nthread': 1, 
+    base_params = {'nthread': nthread, 
                    'tree_method': 'hist', 
                    'learning_rate': lr, 
                    'seed': 1239,
-                   "device": device
+                   "device": device,
                    }
     if metric == "q50":
         base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.5, "eval_metric": "q50"})

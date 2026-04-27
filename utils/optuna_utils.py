@@ -240,7 +240,6 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
     #                 Suggested hyperparameters                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     params = {
-        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]) if fg_ver != "ml4h" else "hist",
         'max_depth': trial.suggest_int('max_depth', 2, 12),
         'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
         'subsample': trial.suggest_float('subsample', 0.5, 0.8),
@@ -290,62 +289,3 @@ def optuna_xgb_cv_objective(trial: optuna.Trial,
     best_score = cv_results[metric_name].iloc[-1]
     
     return best_score
-
-import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
-from model_eval_utils import quantile_eval
-import xgboost as xgb
-import optuna
-def optuna_xgb_objective(trial: optuna.Trial, 
-                         base_params: dict, 
-                         dtrain: xgb.DMatrix, 
-                         dvalid: xgb.DMatrix,
-                         fg_ver: str) -> float:
-    """Objective function for the Optuna optimization. Returns the last value of the metric on the validation set."""
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Suggested hyperparameters                               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params = {
-        'tree_method': trial.suggest_categorical('tree_method', ["approx", "hist"]) if fg_ver != "ml4h" else "hist",
-        'max_depth': trial.suggest_int('max_depth', 2, 12),
-        'min_child_weight': trial.suggest_int("min_child_weight", 5, 20),
-        'subsample': trial.suggest_float('subsample', 0.5, 0.8),
-        'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
-        'reg_lambda': trial.suggest_float('reg_lambda', 0, 15),
-        'gamma': trial.suggest_float('gamma', 0, 15),
-    }
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Setting up trial                                        #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    params.update(base_params)
-    pruning_callback = optuna.integration.XGBoostPruningCallback(trial, f'valid-{base_params["eval_metric"]}')
-    evals_result = dict()
-    
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Train model                                             #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if base_params["eval_metric"] in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]:
-        del params["eval_metric"]
-        model = xgb.train(params=params, 
-                          dtrain=dtrain, 
-                          num_boost_round=200, 
-                          evals=[(dtrain, "train"), (dvalid, "valid")], 
-                          evals_result=evals_result,
-                          custom_metric=quantile_eval(base_params["eval_metric"]),
-                          early_stopping_rounds=5, 
-                          verbose_eval=0,
-                          callbacks=[pruning_callback])
-    else:
-        model = xgb.train(params=params, 
-                          dtrain=dtrain, 
-                          num_boost_round=200, 
-                          evals=[(dtrain, "train"), (dvalid, "valid")], 
-                          evals_result=evals_result,
-                          early_stopping_rounds=5, 
-                          verbose_eval=0,
-                          callbacks=[pruning_callback])
-    trial.set_user_attr("best_iteration", int(model.best_iteration))
-    # Return the last value of the metric on the validation set
-    return evals_result["valid"][base_params["eval_metric"]][-1] 

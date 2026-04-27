@@ -97,14 +97,13 @@ def get_bbs_indvs(fg_ver="R13",
                                columns=["FINNGENID",  "COHORT"])
     else:
         min_data = pl.read_csv(minimum_file_path, 
-                           separator="\t",
+                           separator=",",
                            columns=["FID",  "MUNICIPALITY_NAME"]).rename({"MUNICIPALITY_NAME": "COHORT", "FID": "FINNGENID"})
     
 
     # Filtering
     select_fids = (min_data
                    .filter(
-                       # In Helsinki Biobank
                        (pl.col.COHORT.is_in(bbs))
                    )
                    .get_column("FINNGENID")
