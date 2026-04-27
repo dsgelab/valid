@@ -1,9 +1,28 @@
+import polars as pl
+try:
+    import cupy as cp
+except:
+    pass
+def df_to_numpy_cuda(data: pl.DataFrame,
+                     device):
+    no_cuda = True
+    if device == "cuda":
+        try:
+            data = cp.asarray(data.to_numpy() if hasattr(data, "to_numpy") else data)
+            no_cuda = False
+        except:
+            no_cuda = True
+
+    if no_cuda:
+        data = data.to_numpy() if hasattr(data, "to_numpy") else data
+    return(data)
 
 import logging
 import polars as pl
 import xgboost as xgb
 import logging
 import sys
+
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
 from abnorm_utils import get_abnorm_func_based_on_name
@@ -17,7 +36,8 @@ def get_out_data(data: pl.DataFrame,
                  lab_name: str,
                  goal: str,
                  abnorm_extra_choice: str="",
-                 optimal_proba_cutoff: float = None) -> pl.DataFrame:
+                 optimal_proba_cutoff: float = None,
+                 device: str=None) -> pl.DataFrame:
     """Creates the output data with the predictions of the model.
     Args:
         data (pl.DataFrame): The input data.
@@ -43,6 +63,8 @@ def get_out_data(data: pl.DataFrame,
             - `TRUE_VALUE` (if continuous prediction): True value
             - `TRUE_ABNORM` (if binary prediction): True abnormality"""
     
+    X_all = df_to_numpy_cuda(X_all, device)
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Base data                                               #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
@@ -61,7 +83,7 @@ def get_out_data(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     ################# PROBABLY DEPRECATED #####################################
     if get_train_type(metric) == "cont":    
-        y_pred = model_final.predict(X_all.to_numpy())
+        y_pred = model_final.predict(X_all)
         out_data = out_data.with_columns([
                             pl.Series("ABNORM_PROBS", y_pred),
                             pl.Series("TRUE_VALUE", y_all),
@@ -87,7 +109,7 @@ def get_out_data(data: pl.DataFrame,
 
         # # # # # # # # # Abnormality columns # # # # # # # # # # # # # # # # # # #
         if get_train_type(metric) == "bin":  
-            y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
+            y_pred = model_final.predict_proba(X_all)[:,1]
             out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
             # Binary abnormality prediction based on optimal cut-off
             if optimal_proba_cutoff is None:
@@ -99,7 +121,7 @@ def get_out_data(data: pl.DataFrame,
         elif get_train_type(metric) == "multi":  
             if out_data["TRUE_ABNORM"].unique().to_list() != [0]:
                 for pred_val in out_data["TRUE_ABNORM"].unique():
-                    y_pred = model_final.predict_proba(X_all.to_numpy())[:,int(pred_val)]
+                    y_pred = model_final.predict_proba(X_all)[:,int(pred_val)]
                     out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS_"+str(pred_val))])
                     # Binary abnormality prediction based on optimal cut-off
                     temp_data = out_data.with_columns(pl.when((pl.col.TRUE_ABNORM!=1)&(pl.col.TRUE_ABNORM!=0)).then(pl.lit(0)).otherwise(pl.col.TRUE_ABNORM).alias("TRUE_ABNORM"))
@@ -112,7 +134,7 @@ def get_out_data(data: pl.DataFrame,
                     # rename columns ABNORM_PROBS_1.0 to 1 and 0.0 to 0
                     out_data = out_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS_"+str(int(pred_val)), "ABNORM_PREDS_"+str(pred_val): "ABNORM_PREDS_"+str(int(pred_val))})
             else:
-                y_pred = model_final.predict_proba(X_all.to_numpy())[:,1]
+                y_pred = model_final.predict_proba(X_all)[:,1]
                 out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
                 out_data = out_data.with_columns(
                     (pl.col("ABNORM_PROBS") > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS")
@@ -125,6 +147,107 @@ import numpy as np
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from minor_plot_utils import get_plot_names
+def get_direction_shaps(X_in: pl.DataFrame,
+                        shap_values: np.ndarray,
+                        orig_names: list,
+                        new_names: list) -> pl.DataFrame:
+    direction_shaps = []
+    for idx, orig_name in enumerate(orig_names):
+
+        shap_feat = shap_values[:, idx]
+        try:
+            feat_values = X_in[:,idx].get()
+        except:
+            feat_values = X_in[:,idx]
+
+        mean_abs = np.abs(shap_feat).mean()
+        mean_signed = shap_feat.mean()
+        # actually want to 
+
+        mean_when_1 = shap_feat[feat_values == 1].mean() if ((feat_values == 0) | (feat_values == 1)).all() else shap_feat[feat_values >= np.nanquantile(feat_values, 0.75)].mean()
+        mean_when_0 = shap_feat[feat_values == 0].mean() if ((feat_values == 0) | (feat_values == 1)).all() else shap_feat[feat_values <= np.nanquantile(feat_values, 0.25)].mean()
+        
+        direction_shaps.append({
+            "labels": new_names[idx],
+            "orig": orig_name,
+            "mean_shap": mean_abs,
+            "mean_signed_shap": mean_signed,
+            "mean_shap_when_1": mean_when_1,
+            "mean_shap_when_0": mean_when_0,
+            "n_1": np.sum(feat_values == 1) if ((feat_values == 0) | (feat_values == 1)).all() else np.sum(feat_values >= np.nanquantile(feat_values, 0.75)),
+            "n_0": np.sum(feat_values == 0) if ((feat_values == 0) | (feat_values == 1)).all() else np.sum(feat_values <= np.nanquantile(feat_values, 0.25)),
+        })
+
+    return pl.DataFrame(direction_shaps).sort(pl.col.mean_shap, descending=True)
+
+def get_shap_importances(X_in: pl.DataFrame,
+                         explainer: shap.TreeExplainer,
+                         lab_name: str,
+                         lab_name_two: str = "",
+                         translate: bool = True,
+                         device: str = None,
+                         batch_size: int = 1_000_000) -> tuple[pl.DataFrame, list]:
+    orig_names = X_in.columns
+    new_names = get_plot_names(orig_names, lab_name, lab_name_two) if translate else orig_names
+
+    X_np = df_to_numpy_cuda(X_in, device)
+    n_rows, n_feat = X_in.shape
+
+    # Precompute quantiles + binary flags once
+    is_binary = np.array([
+        np.all((col == 0) | (col == 1) | np.isnan(col))
+        for col in np.asarray(X_in).T  
+    ])
+    q25 = np.nanquantile(X_in, 0.25, axis=0)
+    q75 = np.nanquantile(X_in, 0.75, axis=0)
+
+    abs_sum = np.zeros(n_feat)
+    signed_sum = np.zeros(n_feat)
+    shap_sum_hi = np.zeros(n_feat)
+    shap_sum_lo = np.zeros(n_feat)
+    n_hi = np.zeros(n_feat, dtype=np.int64)
+    n_lo = np.zeros(n_feat, dtype=np.int64)
+
+    for i in range(0, n_rows, batch_size):
+        X_chunk = X_np[i:i+batch_size]
+        shap_chunk = explainer.shap_values(X_chunk)
+        try:
+            X_chunk_np = X_chunk.get()
+        except AttributeError:
+            X_chunk_np = X_chunk
+
+        abs_sum += np.abs(shap_chunk).sum(0)
+        signed_sum += shap_chunk.sum(0)
+
+        for j in range(n_feat):
+            vals = X_chunk_np[:, j]
+            if is_binary[j]:
+                mask_hi = vals == 1
+                mask_lo = vals == 0
+            else:
+                mask_hi = vals >= q75[j]
+                mask_lo = vals <= q25[j]
+            shap_sum_hi[j] += shap_chunk[mask_hi, j].sum()
+            shap_sum_lo[j] += shap_chunk[mask_lo, j].sum()
+            n_hi[j] += mask_hi.sum()
+            n_lo[j] += mask_lo.sum()
+
+    with np.errstate(invalid="ignore"):
+        mean_when_1 = shap_sum_hi / np.where(n_hi > 0, n_hi, np.nan)
+        mean_when_0 = shap_sum_lo / np.where(n_lo > 0, n_lo, np.nan)
+
+    direction_shaps = pl.DataFrame({
+        "labels": new_names,
+        "orig": orig_names,
+        "mean_shap": abs_sum / n_rows,
+        "mean_signed_shap": signed_sum / n_rows,
+        "mean_shap_when_1": mean_when_1,
+        "mean_shap_when_0": mean_when_0,
+        "n_1": n_hi,
+        "n_0": n_lo,
+    }).sort("mean_shap", descending=True)
+
+    return direction_shaps, new_names
 
 """ Returns the SHAP importances of the model.
     Args:
@@ -139,18 +262,26 @@ def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
                          lab_name: str,
                          lab_name_two: str="",
-                         translate: bool=True) -> tuple[pl.DataFrame, list]:
+                         translate: bool=True,
+                         device: str=None) -> tuple[pl.DataFrame, list]:
     """Creates a dataframe based on the mean absolute SHAP values of the model. 
        Also returns the (readable) names of the features in the same order as the SHAP values."""
     if translate:
+        orig_names = X_in.columns
         new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
     else:
+        orig_names = X_in.columns
         new_names = X_in.columns
-    explanations = explainer.shap_values(X_in.to_pandas())
-    mean_shaps = np.abs(explanations).mean(0)
-    shap_importance = pl.DataFrame({"mean_shap": mean_shaps}, schema=["mean_shap"]).with_columns(pl.Series("labels", new_names), pl.Series("orig", X_in.columns)).sort("mean_shap", descending=True)
 
-    return(shap_importance, new_names)
+    X_in = df_to_numpy_cuda(X_in, device)
+    shap_values = explainer.shap_values(X_in)
+
+    direction_shaps = get_direction_shaps(X_in=X_in, 
+                                          shap_values=shap_values, 
+                                          orig_names=orig_names, 
+                                          new_names=new_names)
+    
+    return(direction_shaps, new_names)
 
 import polars as pl
 import logging
@@ -221,6 +352,14 @@ def create_xgb_dts(data: pl.DataFrame,
         val_data = val_data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Fix missing columns                                     #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if val_data is not None:
+        for crnt_col in X_cols:
+            if crnt_col not in val_data.columns:
+                val_data = val_data.with_columns(pl.Series(crnt_col, [0]*val_data.height))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Scaling                                                 #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     binary_cols = ([col_name for col_name in X_cols
@@ -255,6 +394,7 @@ def create_xgb_dts(data: pl.DataFrame,
     # Training on validation and test set for final fit. 
     else:
         train_data = data.filter(pl.col("SET").is_in([1,2])).drop("SET")
+        data = data.filter(pl.col("SET").is_in([1,2])).with_columns(pl.Series("SET", [0]*data.height))
         finetune_valid_data = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
 
     # if training pct<100, take only part of training data
