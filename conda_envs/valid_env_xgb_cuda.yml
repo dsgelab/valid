@@ -1,0 +1,27 @@
+name: xgb_cuda_python
+channels:
+  - defaults
+  - pytorch
+  - conda-forge
+dependencies:
+  - python
+  - pandas
+  - numpy
+  - optuna
+  - scikit-learn
+  - ipykernel
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - conda-pack
+  - pip
+  - tqdm
+  - plotly
+  - optuna-integration
+  - datasets
+  - polars
+  - shap
+  - cupy
+
+# export CONDA_OVERRIDE_CUDA="12.8" 
+# conda install -c conda-forge py-xgboost=*=cuda* 
