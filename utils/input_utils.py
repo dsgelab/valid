@@ -24,7 +24,9 @@ def get_all_indvs(fg_ver):
         all_indvs = all_indvs.rename({"FID": "FINNGENID"})
     return(all_indvs)
 
-def duplicate_lab_predictors(lab_name: str, clean: int) -> list:
+def duplicate_lab_predictors(lab_name: str, 
+                             clean: int,
+                             fg_ver: str="R14") -> list:
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Duplicate predictors                           #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
@@ -33,27 +35,34 @@ def duplicate_lab_predictors(lab_name: str, clean: int) -> list:
             # krea, egfr some other formula, egfr, cystatin c, UACR
             not_select_omops = ["40764999", "46236952", "3020564", "3030366", "3020682"]
         else:
-            not_select_omops = ["40764999", "46236952"]
+            not_select_omops = ["40764999", "46236952", "3020564"]
     if lab_name == "hba1c":
-        if clean == 1:
-            not_select_omops = ["3004410", "3018251", "3013826", "3013826"]# hba1c and fasting glucose, glucose, glucose 2 hours post dose
+        if fg_ver != "ml4h":
+            if clean == 1:
+                not_select_omops = ["3004410", "3018251", "3013826", "3013826"]# hba1c and fasting glucose, glucose, glucose 2 hours post dose
+            else:
+                not_select_omops = ["3004410", "3018251"] # hba1c and fasting glucose
         else:
-            not_select_omops = ["3004410", "3018251"] # hba1c and fasting glucose
-    if lab_name == "alatasat":
-        # ALAT, ASATs
-        not_select_omops = ["3006923", "3013721"]
+            not_select_omops = ["3004410"]
     if lab_name == "tsh":
-        if clean == 1:
-            not_select_omops = ["3009201", "3008486", "3026989"] # tsh, t4, t3
+        if fg_ver != "ml4h":
+            if clean == 1:
+                not_select_omops = ["3009201", "3008486", "3026989"] # tsh, t4, t3
+            else:
+                not_select_omops = ["3009201", "3008486"]
         else:
-            not_select_omops = ["3009201", "3008486"]
+            not_select_omops = ["3009201"]
     if lab_name == "ldl":
-        if clean == 1: 
-            # LDL, LDL/HDL, HDl standard, HDL total, cholesterol total, weird cholesterol non hdl rare, tri fast, tri
-            not_select_omops = ["3001308", "3019900", "3023602", "42868674","3019900", "3048773", "3025839"]
+        if fg_ver != "ml4h":
+            if clean == 1: 
+                # LDL, LDL/HDL, HDl standard, HDL total, cholesterol total, weird cholesterol non hdl rare, tri fast, tri
+                not_select_omops = ["3001308", "3019900", "3023602", "42868674","3019900", "3048773", "3025839"]
+            else:
+                # LDL, tryg free, tryg
+                not_select_omops = ["3001308", "3048773", "3025839"]
         else:
-            # LDL, tryg free, tryg
-            not_select_omops = ["3001308", "3048773", "3025839"]
+            not_select_omops = ["3001308"]
+
     return not_select_omops
 
 def filter_out_no_pcs(data):
@@ -142,12 +151,27 @@ def get_data_and_pred_list(file_path_labels: str,
 
     # # # # # # # # # ICD # # # # # # # # # # # # # # # # # # #
     if file_path_icds != "": 
-        icds = read_file(file_path_icds)
+        icds = read_file(file_path_icds).filter(pl.col.FINNGENID.is_in(data["FINNGENID"]))
+        icd_cols = [c for c in icds.columns if c != "FINNGENID"]
+        # count 1s per ICD column
+        icd_counts = icds.select(icd_cols).sum()  # one-row df with sum per column
+        # keep columns meeting threshold
+        keep = [c for c in icd_cols if icd_counts[c].item() >= 5]
+        icds = icds.select(["FINNGENID", *keep])
+
         data = data.join(icds, on="FINNGENID", how="left")
+
 
     # # # # # # # # # ATC # # # # # # # # # # # # # # # # # # #
     if file_path_atcs != "": 
-        atcs = read_file(file_path_atcs)
+        atcs = read_file(file_path_atcs).filter(pl.col.FINNGENID.is_in(data["FINNGENID"]))
+        atc_cols = [c for c in atcs.columns if c != "FINNGENID"]
+        # count 1s per ICD column
+        atc_counts = atcs.select(atc_cols).sum()  # one-row df with sum per column
+        # keep columns meeting threshold
+        keep = [c for c in atc_cols if atc_counts[c].item() >= 5]
+        atcs = atcs.select(["FINNGENID", *keep])
+
         data = data.join(atcs, on="FINNGENID", how="left")
 
     # # # # # # # # # Sumstats # # # # # # # # # # # # # # # # # # #
@@ -176,7 +200,7 @@ def get_data_and_pred_list(file_path_labels: str,
     if file_path_labs != "": 
         labs = read_file(file_path_labs)
         # do not select OMOPs that are similar to the lab we are using as predictor to avoid data leakage
-        not_select_omops = duplicate_lab_predictors(lab_name=lab_name, clean=clean)
+        not_select_omops = duplicate_lab_predictors(lab_name=lab_name, clean=clean, fg_ver=fg_ver)
         # labs is wider format so need to take out OMOP_ID_MEAN, OMOP_ID_QUANT25, OMOP_ID_QUANT75 for the not selected omops
         labs = labs.select(*[col for col in labs.columns if col.split("_")[0] not in not_select_omops])
         data = data.join(labs, on="FINNGENID", how="left")
@@ -194,7 +218,7 @@ def get_data_and_pred_list(file_path_labels: str,
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "WEIGHT")
         data = data.join(extra_data.select("FINNGENID", "WEIGHT"), how="left", on="FINNGENID")  
     if "SMOKE" in preds:
-        extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "SMOKE")
+        extra_data = get_smoke_data(datetime.strptime(start_date, "%Y-%m-%d"))
         data = data.join(extra_data.select("FINNGENID", "SMOKE"), how="left", on="FINNGENID")  
     if "SBP" in preds:
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "SBP")
@@ -238,6 +262,25 @@ def get_data_and_pred_list(file_path_labels: str,
         else:
             X_cols.append(pred)
     return(data.unique(), X_cols)
+
+from datetime import datetime
+import polars as pl
+def get_smoke_data(start_date: datetime):
+    smoke_data = pl.read_csv("/finngen/library-red/finngen_R14/harmonized_data/smoking_data/smoking_harmonized_longitudinal_v2.tsv.gz", separator="\t", columns=["FINNGENID", "APPROX_EVENT_DAY", "SMOKE"])
+    smoke_data = smoke_data.with_columns(pl.when(pl.col.SMOKE.is_in(["NO", "NEVER", "PASSIVE"]))
+                                         .then(pl.lit(0))
+                                         .when(pl.col.SMOKE.is_in(["FORMER", "EVER"]))
+                                         .then(pl.lit(1))
+                                         .when(pl.col.SMOKE=="CURRENT")
+                                         .then(pl.lit(2))
+                                         .otherwise(pl.lit(None)).alias("SMOKE")
+    )
+    smoke_data = smoke_data.filter(pl.col.SMOKE.is_not_null(), 
+                                   pl.col.APPROX_EVENT_DAY.str.to_date("%Y-%m-%d")<start_date)
+    smoke_data = smoke_data.filter((pl.col.APPROX_EVENT_DAY==pl.col.APPROX_EVENT_DAY.max()).over("FINNGENID"))
+    smoke_data = smoke_data.select("FINNGENID", "SMOKE")
+    return(smoke_data)
+
 
 from datetime import datetime
 import polars as pl
@@ -292,32 +335,6 @@ def get_ext_data(start_date: datetime,
                    .filter(pl.col.DATE<start_date)
                    .select("FINNGENID", "BMI")
                   )
-        return(pl.concat([long_data, bb_data]))
-    if dtype=="ALCOHOL":
-        return (ext_data
-                    .select("FINNGENID", "DATE", "ALCOHOL")
-                    .filter(~pl.col.ALCOHOL.is_null(), pl.col.DATE<start_date)
-                    .filter((pl.col.DATE==pl.col.DATE.max()).over("FINNGENID"))
-                    .filter(~pl.col.ALCOHOL.is_null())
-                    .filter((pl.col.ALCOHOL==pl.col.ALCOHOL.max()).over("FINNGENID"))
-                    .with_columns(pl.when(pl.col.ALCOHOL<=10)
-                                  .then(pl.lit(0))
-                                  .when((pl.col.ALCOHOL>10))
-                                  .then(pl.lit(1))
-                                  .alias("ALCOHOL"))
-                )
-    if dtype=="SMOKE":
-        long_data = ((ext_data
-                    .select("FINNGENID", "DATE", "SMOKE")
-                    .filter(~pl.col.SMOKE.is_null(), pl.col.DATE<start_date)
-                    .with_columns(pl.when(pl.col.SMOKE==9).then(pl.lit(None)).otherwise(pl.col.SMOKE).alias("SMOKE"))
-                    .filter((pl.col.DATE==pl.col.DATE.max()).over("FINNGENID"))
-                    .filter(~pl.col.SMOKE.is_null())
-                    .filter((pl.col.SMOKE==pl.col.SMOKE.min()).over("FINNGENID"))
-                     .unique()
-                    .with_columns(pl.when(pl.col.SMOKE<=3).then(pl.lit(1)).otherwise(pl.lit(0)).alias("SMOKE"))
-                )).select("FINNGENID", "SMOKE")
-        bb_data = minimum.filter(pl.col.CURRENT_SMOKER!="NA", ~pl.col.FINNGENID.is_in(long_data["FINNGENID"])).with_columns(pl.col.CURRENT_SMOKER.cast(pl.Int32).alias("SMOKE")).select("FINNGENID", "SMOKE")
         return(pl.concat([long_data, bb_data]))
     if dtype=="SBP":
         return (ext_data
