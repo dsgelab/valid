@@ -71,15 +71,13 @@ def get_parser_arguments():
     # Saving info
     parser.add_argument("--res_dir", type=str, help="Path to the results directory", required=True)
     parser.add_argument("--file_path_preds", type=str, help="Full path to the longitduinal ICD or ATC data.", required=True)
-    parser.add_argument("--dir_path_labels", type=str, help="Path to directory with label data.", required=True)
-    parser.add_argument("--file_name_labels_start", type=str, help="Path to the diagnosis data file", default="")
 
     # Settings
     parser.add_argument("--min_pct", type=int, help="Min percentage of inclusion for file name. Percentage 0-100.", required=True)
     parser.add_argument("--col_name", type=str, help="Name of the column to use from the longitduinal data. [i.e. ATC_FIVE or ICD_THREE]", required=True)
     parser.add_argument("--bin_count", type=int, default=1, help="Whether to count number of occurance or stay binary observed/not observed.")
     parser.add_argument("--start_year", type=int, default=0, help="What year to start the data from. Ignored if 0.")
-    parser.add_argument("--start_date", type=str, default="", help="Date to filter before", required=False)
+    parser.add_argument("--start_date", type=str, default="", help="Date to filter before.", required=False)
     parser.add_argument("--fg_ver", type=str, default="R14", help="Version/SB. Can be R12-14 or ml4h.", required=False)
 
     parser.add_argument("--select_code_paths", type=str, default="", help="List of paths to selected code files.", required=False)
@@ -123,6 +121,7 @@ if __name__ == "__main__":
                         .pivot(values="N_CODE", index="FINNGENID", on=args.col_name)
         )
     else:
+        # Making sure to only select the codes that are in at least x% of individuals.
         select_icds = (read_file(args.select_code_paths)
                        .filter(pl.col.PCT_INDV >= float(args.min_pct/100))
                        .sort(args.col_name)
