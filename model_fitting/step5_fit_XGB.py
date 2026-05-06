@@ -55,6 +55,7 @@ def get_parser_arguments():
     parser.add_argument("--lab_name_two", type=str, help="Readable name of the second most relevant measurement value for file naming.", default="")
     parser.add_argument("--pred_descriptor", type=str, help="Description of model predictors short.", required=True)
     parser.add_argument("--start_date", type=str, default="", help="Date to filter before")
+    parser.add_argument("--val_start_date", type=str, default="", help="Date to filter before")
 
     # Prediction task
     parser.add_argument("--goal", type=str, help="Column name in labels file used for prediction.", default="y_MEAN")
@@ -69,15 +70,19 @@ def get_parser_arguments():
     parser.add_argument("--low_lr", type=float, help="Learning rate for final model training.", default=0.001)
     parser.add_argument("--early_stop", type=int, help="Early stopping for the final fitting round. Currently, early stopping fixed at 5 for hyperparameter optimization.", default=5)
     parser.add_argument("--metric", type=str, help="Which metric to optimize based on.", default="mse")
+    parser.add_argument("--device", type=str, help="Device to use for XGBoost training.", default="cpu")
+    parser.add_argument("--nthread", type=int, help="Threads for trainig", default=1)
 
     # Hyperparameter optimization parameters
     parser.add_argument("--n_trials", type=int, help="Number of hyperparameter optimizations to run [default: 1 = running based on time_step1 instead]", default=1)
     parser.add_argument("--time_optim", type=int, help="Number of seconds to run hyperparameter optimizations for, instead of basing it on the number of traisl. [run when n_trials=1]", default=300)
     parser.add_argument("--refit", type=int, help="Whether to rerun the hyperparameter optimization", default=1)
-    parser.add_argument("--device", type=str, help="Device to use for XGBoost training.", default="cpu")
+
 
     # Final model fitting and evaluation
     parser.add_argument("--skip_model_fit", type=int, help="Whether to rerun the final model fitting, or load a prior model fit.", default=0)
+    parser.add_argument("--skip_shaps", type=int, help="Whether to rerun shap calculations.", default=0)
+
     parser.add_argument("--save_csv", type=int, help="Whether to save the eval metrics file. If false can do a rerun on low boots.", default=1)
     parser.add_argument("--n_boots", type=int, help="Number of random samples for bootstrapping of metrics.", default=500)
     parser.add_argument("--final_fit", type=int, help="Do one final fit on all data.", default=0)
@@ -106,7 +111,6 @@ if __name__ == "__main__":
     if args.model_fit_date == "": args.model_fit_date = get_date()
 
     out_dir = args.res_dir + study_name + "/";     
-    if args.final_fit: out_dir = out_dir + "/final/"
     out_model_dir = out_dir + "models/" + args.lab_name + "/" + args.model_fit_date + "/" 
     out_plot_dir = out_dir + "plots/" + args.model_fit_date + "/"
     out_plot_path = out_plot_dir + args.lab_name 
@@ -140,9 +144,9 @@ if __name__ == "__main__":
             X_val_all, y_val_all, \
             dtrain, dfinetunevalid, dvalid, \
                 data, val_data = create_xgb_dts(data=data, 
-                                                   X_cols=X_cols, 
-                                                   y_goal=args.goal,
-                                                   train_pct=args.train_pct)
+                                                X_cols=X_cols, 
+                                                y_goal=args.goal,
+                                                train_pct=args.train_pct)
         log_print_n(data.filter(pl.col.SET==0.5), "Finetune Valid")
     else:
         data, X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
@@ -174,7 +178,7 @@ if __name__ == "__main__":
                                                       file_path_pgs2=args.file_path_pgs2,
                                                       file_path_transformer=args.file_path_transformer,
                                                       preds=args.preds,
-                                                      start_date=args.start_date,
+                                                      start_date=args.val_start_date,
                                                       fill_missing=0 if args.model_type=="xgb" else 1,
                                                       fids_path=args.fids_path,
                                                       future_val="val" if not args.final_fit else "final val",
@@ -193,8 +197,8 @@ if __name__ == "__main__":
         
     print(X_all.with_columns(pl.Series("FINNGENID", fgids)).head(2))
     log_print_n(data.filter(pl.col.SET==0), "Train")
-    log_print_n(data.filter(pl.col.SET==1), "Valid")
-    log_print_n(data.filter(pl.col.SET==2), "Test")
+    log_print_n(val_data.filter(pl.col.SET==1), "Valid")
+    log_print_n(val_data.filter(pl.col.SET==2), "Test")
     print(data["SET"].value_counts(normalize=True))
     X_all.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_" + get_date() + ".parquet")
 
@@ -206,7 +210,8 @@ if __name__ == "__main__":
             base_params = get_xgb_base_params(metric=args.metric, 
                                               lr=args.lr, 
                                               n_classes=len(y_train.unique()),
-                                              device=args.device)
+                                              device=args.device,
+                                              nthread=args.nthread)
             best_params = run_optuna_optim_cv(train=[pl.concat([X_train, X_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
                                               lab_name=args.lab_name, 
                                               refit=args.refit, 
@@ -237,12 +242,29 @@ if __name__ == "__main__":
             model_final = xgb.XGBClassifier()
             model_final.load_model(out_model_dir + "model_" + args.model_fit_date + ".json")
 
-    if not args.skip_model_fit:
+    if not args.skip_shaps:
         if args.model_type == "xgb" or args.model_type == "cat":
             # SHAP explainer for model
             shap_explainer = shap.TreeExplainer(model_final)
-            train_importances, _ = get_shap_importances(pl.concat([X_train, X_finetune_valid]), shap_explainer, args.lab_name, args.lab_name_two)
-            valid_importances, _ = get_shap_importances(X_valid, shap_explainer, args.lab_name, args.lab_name_two)
+            train_importances, _ = get_shap_importances(X_in=pl.concat([X_train, X_finetune_valid]), 
+                                                        explainer=shap_explainer, 
+                                                        lab_name=args.lab_name, 
+                                                        lab_name_two=args.lab_name_two,
+                                                        translate=True,
+                                                        device=args.device)
+            save_importances(top_gain=train_importances,
+                            out_down_path=out_down_path,
+                            study_name=study_name,
+                            lab_name=args.lab_name,
+                            goal=args.goal,
+                            subset="train")
+            
+            valid_importances, _ = get_shap_importances(X_in=X_valid, 
+                                                        explainer=shap_explainer, 
+                                                        lab_name=args.lab_name, 
+                                                        lab_name_two=args.lab_name_two,
+                                                        translate=True,
+                                                        device=args.device)
             save_importances(top_gain=valid_importances,
                              out_down_path=out_down_path,
                              study_name=study_name,
@@ -250,25 +272,28 @@ if __name__ == "__main__":
                              goal=args.goal,
                              subset="valid")
             if X_test.height > 0:
-                test_importances, _ = get_shap_importances(X_test, shap_explainer, args.lab_name, args.lab_name_two)
+                test_importances, _ = get_shap_importances(X_in=X_test, 
+                                                           explainer=shap_explainer, 
+                                                           lab_name=args.lab_name, 
+                                                           lab_name_two=args.lab_name_two,
+                                                           translate=True,
+                                                           device=args.device)
                 save_importances(top_gain=test_importances,
-                                out_down_path=out_down_path,
-                                study_name=study_name,
-                                lab_name=args.lab_name,
-                                goal=args.goal,
-                                subset="test")
+                                 out_down_path=out_down_path,
+                                 study_name=study_name,
+                                 lab_name=args.lab_name,
+                                 goal=args.goal,
+                                 subset="test")
             else:
                 test_importances = None    
-        save_importances(top_gain=train_importances,
-                         out_down_path=out_down_path,
-                         study_name=study_name,
-                         lab_name=args.lab_name,
-                         goal=args.goal,
-                         subset="train")
+
     else:
         train_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_train_" + args.model_fit_date + ".csv")
-        test_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_test_" + args.model_fit_date + ".csv")
-        valid_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_train_" + args.model_fit_date + ".csv")
+        valid_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_valid_" + args.model_fit_date + ".csv")
+        if not args.final_fit:
+            test_importances = pl.read_csv(out_down_path+"/"+args.goal+"/" + args.lab_name+"_"+study_name+"_"+args.goal+"_shap_importance_test_" + args.model_fit_date + ".csv")
+        else:
+            test_importances = None
 
 
     # Model predictions
@@ -279,7 +304,9 @@ if __name__ == "__main__":
                             metric=args.metric,
                             lab_name=args.lab_name,
                             goal=args.goal,
-                            abnorm_extra_choice=args.abnorm_extra_choice)
+                            abnorm_extra_choice=args.abnorm_extra_choice,
+                            optimal_proba_cutoff=None,
+                            device=args.device)
     val_out_data, _ = get_out_data(data=val_data, 
                                 model_final=model_final, 
                                 X_all=X_val_all, 
@@ -288,19 +315,16 @@ if __name__ == "__main__":
                                 lab_name=args.lab_name,
                                 goal=args.goal,
                                 abnorm_extra_choice=args.abnorm_extra_choice,
-                                optimal_proba_cutoff=optimal_proba_cutoff)
+                                optimal_proba_cutoff=optimal_proba_cutoff,
+                                device=args.device)
     if not args.final_fit:
         schema = get_common_schema([out_data, val_out_data])
         out_data = pl.concat([align_schema(df, schema) for df in [out_data, val_out_data]])
         out_data = out_data.with_columns(pl.when(pl.col.SET==0.5).then(pl.lit(0)).otherwise(pl.col.SET).alias("SET_fixed"))
 
-        out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")  
     else:
-        out_data.write_csv(out_model_dir + "preds_" + get_date() + ".tsv", separator="\t")  
         out_data.write_parquet(out_model_dir + "preds_" + get_date() + ".parquet")
-
-        val_out_data.write_csv(out_model_dir + "final_preds_" + get_date() + ".tsv", separator="\t")  
         val_out_data.write_parquet(out_model_dir + "final_preds_" + get_date() + ".parquet")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
