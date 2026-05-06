@@ -113,15 +113,25 @@ if __name__ == "__main__":
         labs_data = pl.DataFrame()
         total_timer = Timer()
         for crnt_omop, crnt_unit in select_omops.items():
+            if crnt_omop in ["3020564", "46236952"]: # skipping different eGFR & creatinine measurements and adding eGFR from creatinine manually.
+                continue
             timer = Timer()
             # filter parquet to omop id, get mean, quantiles, pivot, rename, save with name including omop id
-            if crnt_unit != "NA":
-                crnt_labs_data = pl.DataFrame(pd.read_parquet(args.file_path_lab, 
-                                                              filters=[("OMOP_CONCEPT_ID", "=", int(crnt_omop)),
-                                                                       ("MEASUREMENT_UNIT_HARMONIZED", "=", crnt_unit)]))
+            if crnt_omop == "40764999":
+                crnt_labs_data = read_file(args.egfr_data_path)
+                crnt_labs_data = (crnt_labs_data
+                                .rename({"VALUE": "MEASUREMENT_VALUE", "DATE": "APPROX_EVENT_DATETIME"})
+                                .with_columns(pl.Series("OMOP_CONCEPT_ID", ["40764999"]*crnt_labs_data.height),
+                                            pl.col.APPROX_EVENT_DATETIME.dt.date().alias("APPROX_EVENT_DATETIME"))
+                                )
             else:
-                crnt_labs_data = pl.DataFrame(pd.read_parquet(args.file_path_lab, 
-                                                              filters=[("OMOP_CONCEPT_ID", "=", int(crnt_omop))]))
+                if crnt_unit != "NA":
+                    crnt_labs_data = pl.DataFrame(pd.read_parquet(args.file_path_lab, 
+                                                                filters=[("OMOP_CONCEPT_ID", "=", int(crnt_omop)),
+                                                                        ("MEASUREMENT_UNIT_HARMONIZED", "=", crnt_unit)]))
+                else:
+                    crnt_labs_data = pl.DataFrame(pd.read_parquet(args.file_path_lab, 
+                                                                filters=[("OMOP_CONCEPT_ID", "=", int(crnt_omop))]))
                 crnt_labs_data = crnt_labs_data.filter(pl.col("APPROX_EVENT_DATETIME").dt.date() < read_start_date(args.start_date))
             n_rows = crnt_labs_data.height
             crnt_labs_data = crnt_labs_data.group_by("FINNGENID").agg(
