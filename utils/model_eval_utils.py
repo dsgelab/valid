@@ -370,12 +370,13 @@ def save_all_report_plots(out_data: pl.DataFrame,
                           test_importances: pl.DataFrame=None,
                           train_type: str ="bin",
                           model_type: str="xgb",
-                          n_features: int=None) -> None:
+                          n_features: int=None,
+                          final_fit: int=0) -> None:
     
     set_names = {0: "train", 1: "valid", 2: "test"}
-    
     eval_sets = [0,1,2] if test_importances is not None else [0,1] if valid_importances is not None else [0]
-
+    if final_fit == 1:
+        eval_sets = [1,2]
     for goal in ["y_MEAN_ABNORM", "y_NEXT_ABNORM"]:
         if goal in out_data.columns:
             crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
@@ -384,80 +385,35 @@ def save_all_report_plots(out_data: pl.DataFrame,
                 elif set_no == 1: crnt_importances = valid_importances
                 elif set_no == 2: crnt_importances = test_importances
         
-                if out_data[goal].unique().len()==2 or train_type == "cont":
-                    if train_type == "cont" and out_data[goal].unique().len()>2:
-                        out_data = out_data.with_columns(pl.when(pl.col(goal)==1).then(pl.lit(1)).otherwise(pl.lit(0)).alias(goal))
+                if out_data[goal].unique().len()>2:
+                    out_data = out_data.with_columns(pl.when(pl.col(goal)==1).then(pl.lit(1)).otherwise(pl.lit(0)).alias(goal))
+                    if "ABNORM_PROBS" not in out_data.columns:
+                        out_data = out_data.rename({"ABNORM_PROBS_1": "ABNORM_PROBS", "ABNORM_PREDS_1": "ABNORM_PREDS"})
                         
-                    ##### 6 panel report plots""
-                    print(out_data.filter(pl.col.SET == set_no).select(goal))
-                    fig = create_report_plots(out_data.filter(pl.col.SET == set_no).select(goal), 
-                                              out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS"),
-                                              out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS"),
-                                              importances=crnt_importances,
-                                              train_type=train_type,
-                                              fg_down=False,
-                                              model_type=model_type)
-                    make_dir(out_plot_path+"/"+goal+"/")
-                    if n_features:
-                        fig.savefig(out_plot_path+"/"+goal+"/"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
-                    else:
-                        fig.savefig(out_plot_path+"/"+goal+"/"+set_names[set_no]+"_report_" + get_date() + ".png")
-                    fig = create_report_plots(out_data.filter(pl.col.SET == set_no).select(goal), 
-                                              out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS"),
-                                              out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS"),
-                                              importances=crnt_importances,
-                                              train_type=train_type,
-                                              fg_down=True,
-                                              model_type=model_type)
-                    if n_features:
-                        fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
-                        fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".pdf")
-                    else:
-                        fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".png")
-                        fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".pdf")
+                ##### 6 panel report plots""
+                print(out_data.filter(pl.col.SET == set_no).select(goal))
+                fig = create_report_plots(out_data.filter(pl.col.SET == set_no).select(goal), 
+                                          out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS"),
+                                          out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS"),
+                                          importances=crnt_importances,
+                                          train_type=train_type,
+                                          fg_down=False,
+                                          model_type=model_type)
+                make_dir(out_plot_path+"/"+goal+"/")
+                if n_features:
+                    fig.savefig(out_plot_path+"/"+goal+"/"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
                 else:
-                    try:
-                        crnt_importances = (pl.DataFrame(crnt_importances)
-                                            .with_columns(pl.col(crnt_importances.columns[0]).arr.to_struct().alias(crnt_importances.columns[0]))
-                                            .unnest(crnt_importances.columns[0])
-                                        )
-                    except:
-                        print(crnt_importances)
-        
-                    for abnorm_type in out_data[goal].unique():
-                        if abnorm_type == 0:
-                            two_abnorm = (pl.when(pl.col(goal)==0).then(pl.lit(1)).otherwise(pl.lit(0)).alias(goal))
-                        else:
-                            two_abnorm=((pl.when((pl.col(goal)!=1)&(pl.col(goal)!=0)).then(pl.lit(0)).otherwise(pl.col(goal)).alias(goal)))
-
-                        if "ABNORM_PROBS_"+str(abnorm_type) in out_data.columns:
-                            if abnorm_type == 0: crnt_n_importances = crnt_importances.select("field_0", "labels").rename({"field_0": "mean_shap"})
-                            elif abnorm_type == 1: crnt_n_importances = crnt_importances.select("field_1", "labels").rename({"field_1": "mean_shap"})
-                            elif abnorm_type == -1: crnt_n_importances = crnt_importances.select("field_2", "labels").rename({"field_2": "mean_shap"})
-                            crnt_n_importances = crnt_n_importances.sort("mean_shap", descending=True)
-                            fig = create_report_plots(out_data.filter(pl.col.SET == set_no).with_columns(two_abnorm).select(goal), 
-                                                      out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS_"+str(abnorm_type)),
-                                                      out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS_"+str(abnorm_type)),
-                                                      importances=crnt_n_importances,
-                                                      train_type=train_type,
-                                                      fg_down=False,
-                                                      model_type=model_type)
-                            make_dir(out_plot_path+"/"+goal+"/abnorm"+str(abnorm_type).replace("-","n")+"/")
-                            if n_features:
-                                fig.savefig(out_plot_path+"/"+goal+"/abnorm"+str(abnorm_type).replace("-","n")+"/"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
-                            else:
-                                fig.savefig(out_plot_path+"/"+goal+"/abnorm"+str(abnorm_type).replace("-","n")+"/"+set_names[set_no]+"_report_" + get_date() + ".png")
-                            fig = create_report_plots(out_data.filter(pl.col.SET == set_no).with_columns(two_abnorm).select(goal), 
-                                                      out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS_"+str(abnorm_type)),
-                                                      out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS_"+str(abnorm_type)),
-                                                      importances=crnt_n_importances,
-                                                      train_type=train_type,
-                                                      fg_down=True,
-                                                      model_type=model_type)
-                            if n_features:
-                                fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+"abnorm"+str(abnorm_type).replace("-","n")+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
-                                fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+"abnorm"+str(abnorm_type).replace("-","n")+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".pdf")
-                            else:
-                                fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+"abnorm"+str(abnorm_type).replace("-","n")+"_"+set_names[set_no]+"_report_" + get_date() + ".png")
-                                fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+"abnorm"+str(abnorm_type).replace("-","n")+"_"+set_names[set_no]+"_report_" + get_date() + ".pdf")
-        
+                    fig.savefig(out_plot_path+"/"+goal+"/"+set_names[set_no]+"_report_" + get_date() + ".png")
+                fig = create_report_plots(out_data.filter(pl.col.SET == set_no).select(goal), 
+                                          out_data.filter(pl.col.SET == set_no).select("ABNORM_PROBS"),
+                                          out_data.filter(pl.col.SET == set_no).select("ABNORM_PREDS"),
+                                          importances=crnt_importances,
+                                          train_type=train_type,
+                                          fg_down=True,
+                                          model_type=model_type)
+                if n_features:
+                    fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".png")
+                    fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_fs"+str(n_features)+"_" + get_date() + ".pdf")
+                else:
+                    fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".png")
+                    fig.savefig(crnt_out_down_path+goal+"_"+study_name+"_"+set_names[set_no]+"_report_" + get_date() + ".pdf")

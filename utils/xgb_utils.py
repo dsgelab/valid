@@ -1,22 +1,3 @@
-import polars as pl
-try:
-    import cupy as cp
-except:
-    pass
-def df_to_numpy_cuda(data: pl.DataFrame,
-                     device):
-    no_cuda = True
-    if device == "cuda":
-        try:
-            data = cp.asarray(data.to_numpy() if hasattr(data, "to_numpy") else data)
-            no_cuda = False
-        except:
-            no_cuda = True
-
-    if no_cuda:
-        data = data.to_numpy() if hasattr(data, "to_numpy") else data
-    return(data)
-
 import logging
 import polars as pl
 import xgboost as xgb
@@ -142,44 +123,30 @@ def get_out_data(data: pl.DataFrame,
     return(out_data, optimal_proba_cutoff)
 
 import polars as pl
+try:
+    import cupy as cp
+except:
+    pass
+def df_to_numpy_cuda(data: pl.DataFrame,
+                     device):
+    no_cuda = True
+    if device == "cuda":
+        try:
+            data = cp.asarray(data.to_numpy() if hasattr(data, "to_numpy") else data)
+            no_cuda = False
+        except:
+            no_cuda = True
+
+    if no_cuda:
+        data = data.to_numpy() if hasattr(data, "to_numpy") else data
+    return(data)
+
+import polars as pl
 import shap
 import numpy as np
 import sys
 sys.path.append(("/home/ivm/valid/scripts/utils/"))
 from minor_plot_utils import get_plot_names
-def get_direction_shaps(X_in: pl.DataFrame,
-                        shap_values: np.ndarray,
-                        orig_names: list,
-                        new_names: list) -> pl.DataFrame:
-    direction_shaps = []
-    for idx, orig_name in enumerate(orig_names):
-
-        shap_feat = shap_values[:, idx]
-        try:
-            feat_values = X_in[:,idx].get()
-        except:
-            feat_values = X_in[:,idx]
-
-        mean_abs = np.abs(shap_feat).mean()
-        mean_signed = shap_feat.mean()
-        # actually want to 
-
-        mean_when_1 = shap_feat[feat_values == 1].mean() if ((feat_values == 0) | (feat_values == 1)).all() else shap_feat[feat_values >= np.nanquantile(feat_values, 0.75)].mean()
-        mean_when_0 = shap_feat[feat_values == 0].mean() if ((feat_values == 0) | (feat_values == 1)).all() else shap_feat[feat_values <= np.nanquantile(feat_values, 0.25)].mean()
-        
-        direction_shaps.append({
-            "labels": new_names[idx],
-            "orig": orig_name,
-            "mean_shap": mean_abs,
-            "mean_signed_shap": mean_signed,
-            "mean_shap_when_1": mean_when_1,
-            "mean_shap_when_0": mean_when_0,
-            "n_1": np.sum(feat_values == 1) if ((feat_values == 0) | (feat_values == 1)).all() else np.sum(feat_values >= np.nanquantile(feat_values, 0.75)),
-            "n_0": np.sum(feat_values == 0) if ((feat_values == 0) | (feat_values == 1)).all() else np.sum(feat_values <= np.nanquantile(feat_values, 0.25)),
-        })
-
-    return pl.DataFrame(direction_shaps).sort(pl.col.mean_shap, descending=True)
-
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
                          lab_name: str,
@@ -210,7 +177,11 @@ def get_shap_importances(X_in: pl.DataFrame,
 
     for i in range(0, n_rows, batch_size):
         X_chunk = X_np[i:i+batch_size]
-        shap_chunk = explainer.shap_values(X_chunk)
+        if lab_name == "tsh":
+            # Multimodal prediction with binary classification for each class, taking high abnormal class SHAP values for importances
+            shap_chunk = explainer.shap_values(X_chunk)[:,:,1]
+        else:
+            shap_chunk = explainer.shap_values(X_chunk)
         try:
             X_chunk_np = X_chunk.get()
         except AttributeError:
@@ -248,40 +219,6 @@ def get_shap_importances(X_in: pl.DataFrame,
     }).sort("mean_shap", descending=True)
 
     return direction_shaps, new_names
-
-""" Returns the SHAP importances of the model.
-    Args:
-        X_in (pl.DataFrame): The input data.
-        explainer (shap.TreeExplainer): The SHAP explainer for the model.
-        lab_name (str): The name of the lab.
-        lab_name_two (str): The name of the second lab (default is empty string).
-    Returns:
-        tuple: A tuple containing the SHAP importances (pl.DataFrame) and the feature names (list).
-"""
-def get_shap_importances(X_in: pl.DataFrame,
-                         explainer: shap.TreeExplainer,
-                         lab_name: str,
-                         lab_name_two: str="",
-                         translate: bool=True,
-                         device: str=None) -> tuple[pl.DataFrame, list]:
-    """Creates a dataframe based on the mean absolute SHAP values of the model. 
-       Also returns the (readable) names of the features in the same order as the SHAP values."""
-    if translate:
-        orig_names = X_in.columns
-        new_names = get_plot_names(X_in.columns, lab_name, lab_name_two)
-    else:
-        orig_names = X_in.columns
-        new_names = X_in.columns
-
-    X_in = df_to_numpy_cuda(X_in, device)
-    shap_values = explainer.shap_values(X_in)
-
-    direction_shaps = get_direction_shaps(X_in=X_in, 
-                                          shap_values=shap_values, 
-                                          orig_names=orig_names, 
-                                          new_names=new_names)
-    
-    return(direction_shaps, new_names)
 
 import polars as pl
 import logging
