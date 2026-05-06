@@ -108,6 +108,7 @@ def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFra
                         refit: bool,
                         time_optim: int,
                         n_trials: int,
+                        n_folds: int,
                         study_name: str,
                         res_dir: str,
                         model_type: str,
@@ -141,12 +142,12 @@ def run_optuna_optim_cv(train: Union[xgb.DMatrix, Tuple[pl.DataFrame, pl.DataFra
                                                           base_params, 
                                                           train[0],
                                                           train[1],
-                                                          n_folds=5,
+                                                          n_folds=n_folds,
                                                           fg_ver=fg_ver)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Running trials                                          #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if n_trials == 1:
+    if n_trials == 0:
         while time.time() - tic < time_optim:
             study.optimize(optuna_objective, n_trials=1)
     else:

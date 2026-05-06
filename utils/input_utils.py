@@ -261,6 +261,7 @@ def get_data_and_pred_list(file_path_labels: str,
             [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID" and "MEAN" in LAB_MAT]
         else:
             X_cols.append(pred)
+            
     return(data.unique(), X_cols)
 
 from datetime import datetime

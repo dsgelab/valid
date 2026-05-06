@@ -365,6 +365,7 @@ def save_all_report_plots(out_data: pl.DataFrame,
                           out_plot_path: str,
                           out_down_path: str,
                           study_name: str,
+                          eval_goals: list[str],
                           train_importances: pl.DataFrame=None,
                           valid_importances: pl.DataFrame=None,
                           test_importances: pl.DataFrame=None,
@@ -375,9 +376,8 @@ def save_all_report_plots(out_data: pl.DataFrame,
     
     set_names = {0: "train", 1: "valid", 2: "test"}
     eval_sets = [0,1,2] if test_importances is not None else [0,1] if valid_importances is not None else [0]
-    if final_fit == 1:
-        eval_sets = [1,2]
-    for goal in ["y_MEAN_ABNORM", "y_NEXT_ABNORM"]:
+    if final_fit == 1: eval_sets = [1,2]
+    for goal in eval_goals:
         if goal in out_data.columns:
             crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
             for set_no in eval_sets:

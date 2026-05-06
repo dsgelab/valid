@@ -26,13 +26,15 @@ def get_out_data(data: pl.DataFrame,
         X_all (pl.DataFrame): The input features for all data.
         y_all (pl.DataFrame): The true labels for all data.
         metric (str): The evaluation metric.
-        lab_name (str): The name of the lab.
         goal (str): The goal column name.
-        abnorm_extra_choice (str): Additional abnormality choice (default is empty string). 
+
+        lab_name (str): The name of the lab. Only needed for the abnormality prediction based on the continuous value.
+        abnorm_extra_choice (str): Additional abnormality choice (default is empty string). Only needed for the abnormality prediction based on the continuous value.
 
        Returns the relevant columns from the input data with the predictions of the model.
-       Not that abnormality here is the case/control status.
-       Columns:
+       Note that abnormality here is the case/control status.
+
+       If available columns:
             - `FINNGENID`: Individual ID
             - `EVENT_AGE`: Age at event (for controls last lab record and for cases )
             - `LAST_VAL_DATE`: Prediction date (TODO need to check what exact time this is)
@@ -42,7 +44,17 @@ def get_out_data(data: pl.DataFrame,
             - `ABNORM_PROBS` (if binary prediction): Probability of abnormality
             - `ABNORM_PREDS` (if binary prediction): Predicted abnormality
             - `TRUE_VALUE` (if continuous prediction): True value
-            - `TRUE_ABNORM` (if binary prediction): True abnormality"""
+            - `TRUE_ABNORM` (if binary prediction): True abnormality
+       Otherwise:
+               - `FINNGENID`: Individual ID
+               - `EVENT_AGE`: Age at event (for controls last lab record and for cases )
+               - `SEX`: Sex                - `SET`: Train, validation or test set
+               - `SET`: Train, validation or test set.
+               - `goal`: True label for the prediction  
+               - `ABNORM_PROBS` (if binary prediction): Probability of the positive class (abnormality for lab value prediction)
+               - `ABNORM_PREDS` (if binary prediction): Predicted label for the abnormality based on the optimal cut-off
+               - `TRUE_ABNORM` (if binary prediction): The goal column.
+    """
     
     X_all = df_to_numpy_cuda(X_all, device)
 
@@ -55,13 +67,14 @@ def get_out_data(data: pl.DataFrame,
                     .rename({"LAST_VAL_DATE": "DATE", "ABNORM": "N_PRIOR_ABNORMS"})
                 )
     except:
-        data = data.with_columns(pl.lit(3).alias("SET"))
-
-        out_data = (data.select("FINNGENID", "EVENT_AGE", "SET", "SEX", "y_MEAN_ABNORM"))
+        if "SET" not in data.columns:
+            data = data.with_columns(pl.lit(3).alias("SET"))
+        out_data = (data.select("FINNGENID", "EVENT_AGE",  "SEX", "SET", goal))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Continuous prediction                                   #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+     
     ################# PROBABLY DEPRECATED #####################################
     if get_train_type(metric) == "cont":    
         y_pred = model_final.predict(X_all)
@@ -75,10 +88,10 @@ def get_out_data(data: pl.DataFrame,
         print(out_data["TRUE_ABNORM"].value_counts())
         
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Binary prediction of "abnormality"                       #
+    #                 Binary prediction of "abnormality"                      #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     else:        
-        # # # # # # # # # Continuous column # # # # # # # # # # # # # # # # # # # #
+        # # # # # # # # # Continuous column # # # # # # # # # # # # # # # # # # 
         new_goal = get_cont_goal_col_name(goal, data.columns)
         if new_goal is not None:
             y_cont_all = data.select(new_goal)
@@ -86,35 +99,48 @@ def get_out_data(data: pl.DataFrame,
             out_data = out_data.with_columns([
                 pl.Series("TRUE_VALUE", y_cont_all),
             ])
+        # # # # # # # # # Binary column # # # # # # # # # # # # # # # # # # 
         out_data = out_data.with_columns([pl.col(goal).alias("TRUE_ABNORM")])
 
         # # # # # # # # # Abnormality columns # # # # # # # # # # # # # # # # # # #
         if get_train_type(metric) == "bin":  
             y_pred = model_final.predict_proba(X_all)[:,1]
             out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
+
             # Binary abnormality prediction based on optimal cut-off
+            # If optimal_proba_cutoff is not provided, calculate it based on the training data
+            # Otherwise use the provided optimal_proba_cutoff (e.g. from training data) for the final prediction data
             if optimal_proba_cutoff is None:
                 optimal_proba_cutoff = get_optim_precision_recall_cutoff(out_data)
             logging.info(f"Optimal cut-off for prediction based on PR {optimal_proba_cutoff}")
+
             out_data = out_data.with_columns(
                 (pl.col("ABNORM_PROBS") > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS")
             )
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Multi-class prediction                                  #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         elif get_train_type(metric) == "multi":  
-            if out_data["TRUE_ABNORM"].unique().to_list() != [0]:
+            if out_data["TRUE_ABNORM"].unique().to_list() != [0]: # this should be dummy columns like final prediction data
+
                 for pred_val in out_data["TRUE_ABNORM"].unique():
                     y_pred = model_final.predict_proba(X_all)[:,int(pred_val)]
                     out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS_"+str(pred_val))])
+
                     # Binary abnormality prediction based on optimal cut-off
                     temp_data = out_data.with_columns(pl.when((pl.col.TRUE_ABNORM!=1)&(pl.col.TRUE_ABNORM!=0)).then(pl.lit(0)).otherwise(pl.col.TRUE_ABNORM).alias("TRUE_ABNORM"))
                     temp_data = temp_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS"})
                     if optimal_proba_cutoff is None:
                         optimal_proba_cutoff = get_optim_precision_recall_cutoff(temp_data)
                     logging.info(f"Optimal cut-off for {pred_val} prediction based on PR {optimal_proba_cutoff}")
-                    out_data = out_data.with_columns(
-                    (pl.col("ABNORM_PROBS_"+str(pred_val)) > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS_"+str(pred_val)))
+
+                    out_data = out_data.with_columns((pl.col("ABNORM_PROBS_"+str(pred_val)) > optimal_proba_cutoff).cast(pl.Int64).alias("ABNORM_PREDS_"+str(pred_val)))
+
                     # rename columns ABNORM_PROBS_1.0 to 1 and 0.0 to 0
                     out_data = out_data.rename({"ABNORM_PROBS_"+str(pred_val): "ABNORM_PROBS_"+str(int(pred_val)), "ABNORM_PREDS_"+str(pred_val): "ABNORM_PREDS_"+str(int(pred_val))})
             else:
+                # this is the final prediction, which also means we want to use the training data optimal cut-off
+                # in this case there is only one class in the data
                 y_pred = model_final.predict_proba(X_all)[:,1]
                 out_data = out_data.with_columns([pl.Series(y_pred).alias("ABNORM_PROBS")])
                 out_data = out_data.with_columns(
@@ -129,6 +155,15 @@ except:
     pass
 def df_to_numpy_cuda(data: pl.DataFrame,
                      device):
+    """Converts a Polars DataFrame to a NumPy array, and if device is "cuda", also converts it to a CuPy array.
+
+    Args:
+        data (pl.DataFrame): The input Polars DataFrame.
+        device (str): The device to use ("cpu" or "cuda").
+
+    Returns:
+        np.ndarray or cp.ndarray: The converted array, either as a NumPy array (if device is "cpu") or a CuPy array (if device is "cuda").
+    """
     no_cuda = True
     if device == "cuda":
         try:
@@ -154,6 +189,32 @@ def get_shap_importances(X_in: pl.DataFrame,
                          translate: bool = True,
                          device: str = None,
                          batch_size: int = 1_000_000) -> tuple[pl.DataFrame, list]:
+    """Calculates SHAP importances for the given input data and SHAP explainer.
+
+    The output DataFrame contains the following columns:
+        - `labels`: The feature names (translated if translate is True).
+        - `orig`: The original feature names.
+        - `mean_shap`: The mean absolute SHAP value for each feature.
+        - `mean_signed_shap`: The mean signed SHAP value for each feature.
+        - `mean_shap_when_1`: The mean SHAP value for samples where the feature is 1 (for binary features) or above the 75th percentile (for continuous features).
+        - `mean_shap_when_0`: The mean SHAP value for samples where the feature is 0 (for binary features) or below the 25th percentile (for continuous features).
+        - `n_1`: The number of samples where the feature is 1 (for binary features) or above the 75th percentile (for continuous features).
+        - `n_0`: The number of samples where the feature is 0 (for binary features) or below the 25th percentile (for continuous features).
+    
+    Args:
+        X_in (pl.DataFrame): The input features for which to calculate SHAP importances.
+        explainer (shap.TreeExplainer): The SHAP explainer to use for calculating SHAP values.
+        lab_name (str): The name of the lab. Used for translating feature names to more interpretable names.
+        lab_name_two (str): An additional lab name for translation purposes. Default is an empty string.
+        translate (bool): Whether to translate feature names to more interpretable names. Default is True.
+        device (str): The device to use for calculations ("cpu" or "cuda"). Default is None, which means it will use "cpu".
+        batch_size (int): The batch size to use for calculating SHAP values. Default is 1,000,000.
+
+    Returns:
+        tuple: A tuple containing:
+            - pl.DataFrame: A Polars DataFrame with SHAP importances and related statistics for each feature.
+            - list: A list of the new feature names after translation (if translate is True) or the original feature names (if translate is False).
+    """
     orig_names = X_in.columns
     new_names = get_plot_names(orig_names, lab_name, lab_name_two) if translate else orig_names
 
@@ -234,10 +295,12 @@ def save_importances(top_gain,
                      n_features: int=None,
                      cv: bool=False) -> None:
     """Saves the feature importances of the model to a csv file.
+
     Args:
         top_gain (pl.DataFrame): The dataframe containing the feature importances.
         out_down_path (str): The output directory path.
         subset (str): The subset of the data (default is "all").
+
     Returns:
         None"""
     crnt_out_down_path = out_down_path+"/"+goal+"/"; make_dir(crnt_out_down_path)
@@ -267,7 +330,7 @@ def create_xgb_dts(data: pl.DataFrame,
                    train_pct: int = 1,
                    val_data: pl.DataFrame = None,
                    final_fit: bool=False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
-    """Creates the XGBoost data matrices and scales the data.
+    """Creates the XGBoost data matrices 
 
     Returns the data and the predictors.
     
@@ -283,6 +346,8 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Replace -1s with 2s                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # For i.e. multi-class like TSH, we want to keep -1 as a separate class, but for binary classification we want to replace it with 2 
+    # (so that it is not treated as missing value but as a separate class).
     if -1 in data.get_column(y_goal):
         data = data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
     if -1 in val_data.get_column(y_goal):
@@ -291,13 +356,14 @@ def create_xgb_dts(data: pl.DataFrame,
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Fix missing columns                                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # If val data is not exactly the same as data
     if val_data is not None:
         for crnt_col in X_cols:
-            if crnt_col not in val_data.columns:
+            if crnt_col not in data.columns:
                 val_data = val_data.with_columns(pl.Series(crnt_col, [0]*val_data.height))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Scaling                                                 #
+    #                 Memory saving                                           #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
     binary_cols = ([col_name for col_name in X_cols
                        if(set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {0, 1} or
@@ -313,16 +379,17 @@ def create_xgb_dts(data: pl.DataFrame,
     ])
     X_cols = numeric_cols + binary_cols
 
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Split data                                              #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
     # # # # # # # # ALL # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     X_all = data.select(X_cols); y_all = data.select(y_goal)
     if val_data is not None:
         X_val_all = val_data.select(X_cols); y_val_all = val_data.select(y_goal)
     else:
         X_val_all = None; y_val_all = None
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Split data                                              #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
     # # # # # # # # TRAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if not final_fit:
