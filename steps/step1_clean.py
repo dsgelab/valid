@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import Timer, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
 from processing_utils import egfr_ckdepi2021_transform, cystc_ckdepi2012_transform
 from abnorm_utils import get_abnorm_func_based_on_name

@@ -2,7 +2,7 @@ import gc
 
 import polars as pl
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import Timer
 import logging
 import numpy as np

@@ -3,7 +3,7 @@
 # Custom utils
 import sys
 
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import get_date, init_logging, Timer, read_file
 from processing_utils import egfr_ckdepi2021_transform
 

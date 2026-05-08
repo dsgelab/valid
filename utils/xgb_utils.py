@@ -4,7 +4,7 @@ import xgboost as xgb
 import logging
 import sys
 
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
 from abnorm_utils import get_abnorm_func_based_on_name
 from model_fit_utils import get_cont_goal_col_name
@@ -180,7 +180,7 @@ import polars as pl
 import shap
 import numpy as np
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import get_plot_names
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
@@ -284,7 +284,7 @@ def get_shap_importances(X_in: pl.DataFrame,
 import polars as pl
 import logging
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import make_dir, get_date
 def save_importances(top_gain,
                      out_down_path: str,

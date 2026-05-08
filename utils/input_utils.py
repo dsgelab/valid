@@ -1,6 +1,6 @@
 import polars as pl
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import read_file, print_count
 from datetime import datetime
 import gc

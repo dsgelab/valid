@@ -1,7 +1,7 @@
 # Utils
 import re
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import Timer, logging_print, make_dir, gz_to_parquet
 # Standard stuff
 import pandas as pd

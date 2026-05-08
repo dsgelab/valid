@@ -1,6 +1,6 @@
  # Utils
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import Timer, query_to_df, get_date, get_common_schema, align_schema, make_dir, init_logging, logging_print, read_file
 # Standard stuff
 import polars as pl

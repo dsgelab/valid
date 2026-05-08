@@ -1,5 +1,5 @@
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import get_dated_path
 from model_eval_utils import bootstrap_metric, bootstrap_difference, continuous_nri, bootstrap_nri
 import sklearn.metrics as skm

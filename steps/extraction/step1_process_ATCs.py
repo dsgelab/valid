@@ -2,7 +2,7 @@
 # Custom utils
 import sys
 
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import get_date, init_logging, Timer, read_file, logging_print
 from input_utils import get_min_file_path
 

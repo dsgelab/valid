@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import get_date, make_dir, init_logging, Timer, get_common_schema, align_schema
 
 from model_eval_utils import get_train_type, save_all_report_plots

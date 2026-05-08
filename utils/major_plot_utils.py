@@ -11,7 +11,7 @@ import pandas as pd
 import polars as pl
 from sklearn.metrics import confusion_matrix
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import round_column_min5
 def create_report_plots(y_true: Iterable[int], 
                        y_probs: Iterable[float], 
@@ -99,7 +99,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import polars as pl
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import pretty_int
 def plot_observed_vs_predicted(data: pl.DataFrame, 
                                 col_name_x: str, 
@@ -141,7 +141,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import polars as pl
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import round_column_min5, pretty_int
 def plot_observed_vs_predicted_min5(data: pl.DataFrame, 
                                     col_name_x: str, 
@@ -251,7 +251,7 @@ def feature_importance_plot(importances: Iterable[float],
 import seaborn as sns
 import sys
 import pandas as pd
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import round_column_min5, pretty_int
 def plot_box_probs(evals=[], 
                    labels=[], 
@@ -346,7 +346,7 @@ import scipy.stats
 from collections.abc import Iterable
 import warnings
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from minor_plot_utils import round_column_min5
 def plot_calibration(y_true: Iterable[int], 
                      y_probs: Iterable[float], 

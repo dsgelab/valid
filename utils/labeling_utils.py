@@ -41,7 +41,7 @@ def add_set(unique_data,
     return(unique_data)
 
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import logging_print
 import polars as pl
 def log_print_n(labels: pl.DataFrame,
@@ -145,7 +145,7 @@ import polars as pl
 import pandas as pd
 from datetime import datetime
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import logging_print
 from abnorm_utils import get_abnorm_func_based_on_name
 def label_cases_and_controls(data: pl.DataFrame,
@@ -202,7 +202,7 @@ import polars as pl
 import pandas as pd
 from datetime import datetime
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import logging_print
 def remove_age_outliers(labels: pl.DataFrame,
                         base_date: datetime,

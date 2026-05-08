@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from abnorm_utils import get_abnorm_func_based_on_name, three_level_abnorm, simple_abnorm
 # Standard stuff
 import pandas as pd

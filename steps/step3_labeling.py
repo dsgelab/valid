@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("../utils/"))
+sys.path.append("../../utils/")
 from general_utils import get_date, get_datetime, make_dir, init_logging, Timer, logging_print, read_file
 from labeling_utils import log_print_n, label_cases_and_controls,  remove_age_outliers, get_extra_file_descr, get_bbs_indvs, add_set
 
