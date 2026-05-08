@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import Timer, logging_print, make_dir, query_to_df, gz_to_parquet
 # Standard stuff
 import polars as pl

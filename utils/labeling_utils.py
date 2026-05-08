@@ -41,14 +41,16 @@ def add_set(unique_data,
     return(unique_data)
 
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import logging_print
 import polars as pl
 def log_print_n(labels: pl.DataFrame,
-                name: str):
+                name: str,
+                goal: str = "y_MEAN_ABNORM"):
+    
     if labels.height>0:
         logging_print(name)
-        logging_print(f"MEAN N indvs {labels.height}  N cases { labels.get_column('y_MEAN_ABNORM').sum()} pct cases {round( labels.get_column('y_MEAN_ABNORM').sum()/labels.height*100,2)}%")
+        logging_print(f"{goal} N indvs {labels.height}  N cases { labels.get_column(goal).sum()} pct cases {round( labels.get_column(goal).sum()/labels.height*100,2)}%")
         if "y_MIN" in labels.columns: logging_print(f"MIN N indvs {labels.height}  N cases { labels.get_column('y_MIN_ABNORM').sum()} pct cases {round( labels.get_column('y_MIN_ABNORM').sum()/labels.height*100,2)}%")
         if "y_NEXT" in labels.columns: logging_print(f"NEXT N indvs {labels.height}  N cases { labels.get_column('y_NEXT_ABNORM').sum()} pct cases {round( labels.get_column('y_NEXT_ABNORM').sum()/labels.height*100,2)}%")
 
@@ -143,7 +145,7 @@ import polars as pl
 import pandas as pd
 from datetime import datetime
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import logging_print
 from abnorm_utils import get_abnorm_func_based_on_name
 def label_cases_and_controls(data: pl.DataFrame,
@@ -200,7 +202,7 @@ import polars as pl
 import pandas as pd
 from datetime import datetime
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import logging_print
 def remove_age_outliers(labels: pl.DataFrame,
                         base_date: datetime,

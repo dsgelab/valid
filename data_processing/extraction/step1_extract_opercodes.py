@@ -1,7 +1,7 @@
 # Utils
 import re
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import Timer, logging_print, make_dir, gz_to_parquet
 # Standard stuff
 import pandas as pd

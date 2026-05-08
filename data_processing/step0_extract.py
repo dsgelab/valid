@@ -1,5 +1,5 @@
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import Timer, get_date, make_dir, init_logging
 # Standard stuff
 import pandas as pd

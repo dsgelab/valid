@@ -11,7 +11,7 @@ import pandas as pd
 import polars as pl
 from sklearn.metrics import confusion_matrix
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import round_column_min5
 def create_report_plots(y_true: Iterable[int], 
                        y_probs: Iterable[float], 
@@ -57,16 +57,12 @@ def create_report_plots(y_true: Iterable[int],
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # # # # # # # # # Plotting # # # # # # # # # # # # # # # # # # # # # # # #
     if imp_ax is not None: 
-        if model_type == "xgb" or model_type == "cat":
+        if model_type == "xgb":
             feature_importance_plot(importances=importances["mean_shap"], 
                                     feature_labels=importances["labels"], 
                                     ax=imp_ax,
                                     model_type=model_type)
-        if model_type == "elr" or model_type == "lr":
-            feature_importance_plot(importances=importances["odds_ratio"], 
-                                    feature_labels=importances["labels"], 
-                                    ax=imp_ax,
-                                    model_type=model_type)
+
     confusion_plot(confusion_matrix(y_true, y_preds), labels=confusion_labels, ax=conf_axes)
     if train_type == "bin" or train_type == "multi":
         ## ROC and Precision-Recall curves
@@ -103,7 +99,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import polars as pl
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import pretty_int
 def plot_observed_vs_predicted(data: pl.DataFrame, 
                                 col_name_x: str, 
@@ -145,7 +141,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import polars as pl
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import round_column_min5, pretty_int
 def plot_observed_vs_predicted_min5(data: pl.DataFrame, 
                                     col_name_x: str, 
@@ -255,7 +251,7 @@ def feature_importance_plot(importances: Iterable[float],
 import seaborn as sns
 import sys
 import pandas as pd
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import round_column_min5, pretty_int
 def plot_box_probs(evals=[], 
                    labels=[], 
@@ -350,7 +346,7 @@ import scipy.stats
 from collections.abc import Iterable
 import warnings
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import round_column_min5
 def plot_calibration(y_true: Iterable[int], 
                      y_probs: Iterable[float], 

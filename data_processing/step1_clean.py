@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import Timer, get_date, get_datetime, make_dir, init_logging, logging_print, read_file
 from processing_utils import egfr_ckdepi2021_transform, cystc_ckdepi2012_transform
 from abnorm_utils import get_abnorm_func_based_on_name
@@ -150,7 +150,7 @@ if __name__ == "__main__":
                                                                logger=logger,
                                                                plot=args.plot)
 
-    if args.lab_name == "egfr":
+    if args.lab_name == "egfr" or args.lab_name == "tsh":
         data, n_indvs_stats = remove_single_value_outliers(data=data, 
                                                            n_indvs_stats=n_indvs_stats)
 

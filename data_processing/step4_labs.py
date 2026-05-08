@@ -1,7 +1,7 @@
 # Custom utils
 import sys
 
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import get_date, init_logging, Timer, read_file, print_count, logging_print
 
 # Standard stuff
