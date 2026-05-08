@@ -78,7 +78,7 @@ def read_file(full_file_path,
                                schema_overrides=schema,
                                null_values="NA")
     elif full_file_path.endswith(".parquet"):
-        return pl.read_parquet(full_file_path)
+        return pl.read_parquet(full_file_path, memory_map=False)
     else:
         raise ValueError("File type not supported: " + full_file_path)
 

@@ -4,7 +4,7 @@ import xgboost as xgb
 import logging
 import sys
 
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from model_eval_utils import get_train_type, get_optim_precision_recall_cutoff
 from abnorm_utils import get_abnorm_func_based_on_name
 from model_fit_utils import get_cont_goal_col_name
@@ -180,7 +180,7 @@ import polars as pl
 import shap
 import numpy as np
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from minor_plot_utils import get_plot_names
 def get_shap_importances(X_in: pl.DataFrame,
                          explainer: shap.TreeExplainer,
@@ -188,7 +188,7 @@ def get_shap_importances(X_in: pl.DataFrame,
                          lab_name_two: str = "",
                          translate: bool = True,
                          device: str = None,
-                         batch_size: int = 1_000_000) -> tuple[pl.DataFrame, list]:
+                         batch_size: int = 100_000) -> tuple[pl.DataFrame, list]:
     """Calculates SHAP importances for the given input data and SHAP explainer.
 
     The output DataFrame contains the following columns:
@@ -284,7 +284,7 @@ def get_shap_importances(X_in: pl.DataFrame,
 import polars as pl
 import logging
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import make_dir, get_date
 def save_importances(top_gain,
                      out_down_path: str,
@@ -327,9 +327,7 @@ from typing import Tuple
 def create_xgb_dts(data: pl.DataFrame, 
                    X_cols: list, 
                    y_goal: str,
-                   train_pct: int = 1,
-                   val_data: pl.DataFrame = None,
-                   final_fit: bool=False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, xgb.DMatrix, xgb.DMatrix, StandardScaler]:
+                   set_to_get: str="all") -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Creates the XGBoost data matrices 
 
     Returns the data and the predictors.
@@ -338,10 +336,10 @@ def create_xgb_dts(data: pl.DataFrame,
             data (pl.DataFrame): The input data.
             X_cols (list): The list of feature columns.
             y_goal (str): The target column.
-            reweight (int): The reweighting factor.
+            set_to_get (str): The set to get (default is "all").
 
         Returns:
-            tuple: A tuple containing the data (polars DataFrame) and the list of predictors
+            tuple: A tuple containing the FinnGenIDs, the feature matrix X and the target vector y for the specified set.   
     """
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Replace -1s with 2s                                     #
@@ -350,100 +348,25 @@ def create_xgb_dts(data: pl.DataFrame,
     # (so that it is not treated as missing value but as a separate class).
     if -1 in data.get_column(y_goal):
         data = data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
-    if -1 in val_data.get_column(y_goal):
-        val_data = val_data.with_columns(pl.when(pl.col(y_goal)==-1).then(pl.lit(2)).otherwise(pl.col(y_goal)).alias(y_goal))
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Fix missing columns                                     #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    # If val data is not exactly the same as data
-    if val_data is not None:
-        for crnt_col in X_cols:
-            if crnt_col not in data.columns:
-                val_data = val_data.with_columns(pl.Series(crnt_col, [0]*val_data.height))
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Memory saving                                           #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-    binary_cols = ([col_name for col_name in X_cols
-                       if(set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {0, 1} or
-                          set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {"0", "1"})  
-    ])
-    numeric_cols = [col_name for col_name in X_cols if col_name not in binary_cols]
-
-    data = data.with_columns([
-        pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if (isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)) and col in numeric_cols
-    ])
-    data = data.with_columns([
-        pl.col(col).fill_nan(None).cast(pl.Int8, strict=False) for col in data.columns if col in binary_cols
-    ])
-    X_cols = numeric_cols + binary_cols
-
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Split data                                              #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
     # # # # # # # # ALL # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    X_all = data.select(X_cols); y_all = data.select(y_goal)
-    if val_data is not None:
-        X_val_all = val_data.select(X_cols); y_val_all = val_data.select(y_goal)
-    else:
-        X_val_all = None; y_val_all = None
+    if set_to_get == "all":
+        X = data.select(X_cols); y = data.select(y_goal)
 
     # # # # # # # # TRAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if not final_fit:
+    if set_to_get == "train":
         train_data = data.filter(pl.col("SET")==0).drop("SET")
-        finetune_valid_data = data.filter(pl.col("SET")==0.5).drop("SET")
-    # Training on validation and test set for final fit. 
-    else:
-        train_data = data.filter(pl.col("SET").is_in([1,2])).drop("SET")
-        data = data.filter(pl.col("SET").is_in([1,2])).with_columns(pl.Series("SET", [0]*data.height))
-        finetune_valid_data = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
+        X = train_data.select(X_cols); y = train_data.select(y_goal)
 
-    # if training pct<100, take only part of training data
-    if train_pct<100:
-        train_data = train_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
-        data = data.filter(pl.col("FINNGENID").is_in(train_data["FINNGENID"]).or_(pl.col("SET")!=0))
-            
-        if finetune_valid_data.height>0:
-            finetune_valid_data = finetune_valid_data.sample(fraction=train_pct/100, with_replacement=False, seed=42)
-            data = data.filter(pl.col("FINNGENID").is_in(finetune_valid_data["FINNGENID"]).or_(pl.col("SET")!=0.5))
-            
-    if finetune_valid_data.height>0:
-        X_finetune_valid = finetune_valid_data.select(X_cols); y_finetune_valid = finetune_valid_data.select(y_goal)
-    else:
-        X_finetune_valid = pl.DataFrame({col: [] for col in X_cols}); y_finetune_valid = pl.DataFrame({y_goal: []})
-
-    X_train = train_data.select(X_cols); y_train = train_data.select(y_goal)
-
-    # # # # # # # # VALID & TEST # # # # # # # # # # # # # # # # # # # # # # # # 
-    if val_data is None and not final_fit:
+    # # # # # # # # TEST # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if set_to_get == "valid":
         valid_data = data.filter(pl.col("SET")==1).drop("SET")
+        X = valid_data.select(X_cols); y = valid_data.select(y_goal)
+
+    # # # # # # # # TEST # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    if set_to_get == "test":
         test_data = data.filter(pl.col("SET")==2).drop("SET")
-            
-        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
-        X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
-    elif val_data is not None and final_fit:
-        valid_data = val_data
-        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
-        X_test = pl.DataFrame({col: [] for col in X_cols}); y_test = pl.DataFrame({y_goal: []})
-    elif val_data is not None and not final_fit:
-        valid_data = val_data.filter(pl.col("SET")==1).drop("SET")
-        test_data = val_data.filter(pl.col("SET")==2).drop("SET")
+        X = test_data.select(X_cols); y = test_data.select(y_goal)
 
-        X_valid = valid_data.select(X_cols); y_valid = valid_data.select(y_goal)
-        X_test = test_data.select(X_cols); y_test = test_data.select(y_goal)
-
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 XGBoost datatype                                        #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
-    dtrain = xgb.DMatrix(data=X_train, label=y_train, enable_categorical=True)
-    dvalid = xgb.DMatrix(data=X_valid, label=y_valid, enable_categorical=True)
-    if finetune_valid_data.height>0:
-        dfinetunevalid = xgb.DMatrix(data=X_finetune_valid, label=y_finetune_valid, enable_categorical=True)
-    else:
-        dfinetunevalid = None
-    return(data["FINNGENID"], X_train, y_train, X_finetune_valid, y_finetune_valid, X_valid, y_valid, X_test, y_test, X_all, y_all, X_val_all, y_val_all, dtrain, dfinetunevalid, dvalid, data, val_data)
+    return(data["FINNGENID"], X, y)
 

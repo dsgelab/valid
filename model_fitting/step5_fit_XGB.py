@@ -1,6 +1,6 @@
 # Utils
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import get_date, make_dir, init_logging, Timer, get_common_schema, align_schema
 
 from model_eval_utils import get_train_type, save_all_report_plots
@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Output
 import xgboost as xgb
+
+# Other
+import gc
+
 
 def get_parser_arguments():
     #### Parsing and logging
@@ -101,6 +105,7 @@ def get_parser_arguments():
 
     parser.add_argument("--train_pct", type=int, help="Percentage of training data to use. Note that this it the percentage of training and not fine-tuning data.", default=100)
     parser.add_argument("--future_val", type=int, default=0, help="Percentage of future validation data to use. Note that this is the percentage of future validation and not training data.")
+    parser.add_argument("--shap_batch_size", type=int, default=100_000, help="Batch size for SHAP calculations.")
 
 
     args = parser.parse_args()
@@ -187,15 +192,6 @@ if __name__ == "__main__":
                                               fill_missing=0 if args.model_type=="xgb" else 1,
                                               fids_path=args.fids_path,
                                               fg_ver=args.fg_ver)
-        fgids, X_train, y_train, X_finetune_valid, y_finetune_valid, \
-            X_valid, y_valid, X_test, y_test, X_all, y_all, \
-            X_val_all, y_val_all, \
-            dtrain, dfinetunevalid, dvalid, \
-                data, val_data = create_xgb_dts(data=data, 
-                                                X_cols=X_cols, 
-                                                y_goal=args.goal,
-                                                train_pct=args.train_pct)
-        log_print_n(data.filter(pl.col.SET==0.5), "Finetune Valid")
     else:
         # Future validation, so training and evaluation data are different inputs 
         data, X_cols = get_data_and_pred_list(file_path_labels=args.file_path_labels, 
@@ -228,65 +224,71 @@ if __name__ == "__main__":
                                                       file_path_transformer=args.file_path_transformer,
                                                       preds=args.preds,
                                                       start_date=args.val_start_date,
+                                                      needed_X_cols=X_cols,
                                                       fill_missing=0 if args.model_type=="xgb" else 1,
                                                       fids_path=args.fids_path,
                                                       future_val="val" if not args.final_fit else "final val",
                                                       fg_ver=args.fg_ver)
+
+        log_print_n(val_data.filter(pl.col.SET==1), "Valid", args.goal)
+        log_print_n(val_data.filter(pl.col.SET==2), "Test", args.goal)
         
-        fgids, X_train, y_train, X_finetune_valid, y_finetune_valid, \
-            X_valid, y_valid, X_test, y_test, X_all, y_all, \
-            X_val_all, y_val_all, \
-            dtrain, dfinetunevalid, dvalid, \
-                data, val_data = create_xgb_dts(data=data, 
-                                                X_cols=X_cols, 
-                                                y_goal=args.goal,
-                                                train_pct=args.train_pct,
-                                                val_data=val_data,
-                                                final_fit=args.final_fit)
-        
-    print(X_all.with_columns(pl.Series("FINNGENID", fgids)).head(2))
-    log_print_n(data.filter(pl.col.SET==0), "Train")
-    log_print_n(val_data.filter(pl.col.SET==1), "Valid")
-    log_print_n(val_data.filter(pl.col.SET==2), "Test")
     print(data["SET"].value_counts(normalize=True))
-    X_all.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_" + get_date() + ".parquet")
+    log_print_n(data.filter(pl.col.SET==0), "Train", args.goal)
+    log_print_n(data.filter(pl.col.SET==1), "Valid", args.goal)
+    log_print_n(data.filter(pl.col.SET==2), "Test", args.goal)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Hyperparam optimization with optuna                     #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if not args.skip_model_fit:
+        _, X_train, y_train =  create_xgb_dts(data=data, 
+                                                  X_cols=X_cols,
+                                                  y_goal=args.goal,
+                                                  set_to_get="train")
         base_params = get_xgb_base_params(metric=args.metric, 
                                           lr=args.lr, 
                                           n_classes=len(y_train.unique()),
                                           device=args.device,
                                           nthread=args.nthread)
-        best_params = run_optuna_optim_cv(train=[pl.concat([X_train, X_finetune_valid]), pl.concat([y_train, y_finetune_valid])], 
+        best_params = run_optuna_optim_cv(train=[X_train, y_train], 
                                           lab_name=args.lab_name, 
                                           refit=args.refit, 
                                           time_optim=args.time_optim, 
                                           n_trials=args.n_trials, 
+                                          early_stop=args.early_stop,
                                           n_folds=args.n_folds,
                                           study_name=study_name,
                                           res_dir=args.res_dir,
                                           model_type="xgb",
                                           model_fit_date=args.model_fit_date,
-                                          base_params=base_params,
-                                          fg_ver=args.fg_ver)
+                                          base_params=base_params)
         logging.info(timer.get_elapsed())
         model_final = xgb_final_fitting(best_params=best_params,
                                         X_train=X_train, y_train=y_train, 
-                                        X_finetune_valid=X_finetune_valid, y_finetune_valid=y_finetune_valid,
                                         metric=args.metric,
                                         low_lr=args.low_lr,
                                         early_stop=args.early_stop,
                                         n_folds=args.n_folds,
                                         n_classes=len(y_train.unique()),
                                         device=args.device)
+        
+        # Garbage collection to free up memory for SHAP calculations
+        del X_train; del y_train
+        gc.collect()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Saving or loading                                       #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         model_final.save_model(out_model_dir + "model_" + get_date() + ".json")
+        fgids, X_all, y_all =  create_xgb_dts(data=data, 
+                                              X_cols=X_cols,
+                                              y_goal=args.goal,
+                                              set_to_get="all")
+        X_all.with_columns(pl.Series("FINNGENID", fgids)).write_parquet(out_model_dir + "Xall_" + get_date() + ".parquet")
+        # Garbage collection to free up memory for SHAP calculations
+        del X_all; del y_all; del fgids
+        gc.collect()
     else:
         model_final = xgb.XGBClassifier()
         model_final.load_model(out_model_dir + "model_" + args.model_fit_date + ".json")
@@ -297,12 +299,20 @@ if __name__ == "__main__":
     if not args.skip_shaps:
         # SHAP explainer for model
         shap_explainer = shap.TreeExplainer(model_final)
-        train_importances, _ = get_shap_importances(X_in=pl.concat([X_train, X_finetune_valid]), 
+
+        _, X_train, _ =  create_xgb_dts(data=data, 
+                                                  X_cols=X_cols,
+                                                  y_goal=args.goal,
+                                                  set_to_get="train")
+        # Garbage collection to free up memory for SHAP calculations
+        train_importances, _ = get_shap_importances(X_in=X_train, 
                                                     explainer=shap_explainer, 
                                                     lab_name=args.lab_name, 
                                                     lab_name_two=args.lab_name_two,
                                                     translate=args.translate,
-                                                    device=args.device)
+                                                    device=args.device,
+                                                    batch_size=args.shap_batch_size)
+        del X_train; gc.collect()
         save_importances(top_gain=train_importances,
                             out_down_path=out_down_path,
                             study_name=study_name,
@@ -310,12 +320,24 @@ if __name__ == "__main__":
                             goal=args.goal,
                             subset="train")
             
+        if not args.future_val:
+            _, X_valid, _ =  create_xgb_dts(data=data, 
+                                            X_cols=X_cols,
+                                            y_goal=args.goal,
+                                            set_to_get="valid")
+        else:
+            _, X_valid, _ =  create_xgb_dts(data=val_data, 
+                                            X_cols=X_cols,
+                                            y_goal=args.goal,
+                                            set_to_get="valid")
         valid_importances, _ = get_shap_importances(X_in=X_valid, 
                                                     explainer=shap_explainer, 
                                                     lab_name=args.lab_name, 
                                                     lab_name_two=args.lab_name_two,
                                                     translate=args.translate,
-                                                    device=args.device)
+                                                    device=args.device,
+                                                    batch_size=args.shap_batch_size)
+        del X_valid; gc.collect()
         save_importances(top_gain=valid_importances,
                          out_down_path=out_down_path,
                          study_name=study_name,
@@ -323,19 +345,31 @@ if __name__ == "__main__":
                          goal=args.goal,
                          subset="valid")
             
-        if X_test.height > 0:
+        if data.filter(pl.col.SET==2).height > 0:
+            if not args.future_val:
+                _, X_test, _ =  create_xgb_dts(data=data, 
+                                                X_cols=X_cols,
+                                                y_goal=args.goal,
+                                                set_to_get="test")
+            else:
+                _, X_test, _ =  create_xgb_dts(data=val_data, 
+                                                X_cols=X_cols,
+                                                y_goal=args.goal,
+                                                set_to_get="test")
             test_importances, _ = get_shap_importances(X_in=X_test, 
-                                                       explainer=shap_explainer, 
-                                                       lab_name=args.lab_name, 
-                                                       lab_name_two=args.lab_name_two,
-                                                       translate=args.translate,
-                                                       device=args.device)
+                                                        explainer=shap_explainer, 
+                                                        lab_name=args.lab_name, 
+                                                        lab_name_two=args.lab_name_two,
+                                                        translate=args.translate,
+                                                        device=args.device,
+                                                        batch_size=args.shap_batch_size)
+            del X_test; gc.collect()
             save_importances(top_gain=test_importances,
-                             out_down_path=out_down_path,
-                             study_name=study_name,
-                             lab_name=args.lab_name,
-                             goal=args.goal,
-                             subset="test")
+                            out_down_path=out_down_path,
+                            study_name=study_name,
+                            lab_name=args.lab_name,
+                            goal=args.goal,
+                            subset="test")
         else:
             test_importances = None    
 
@@ -350,11 +384,13 @@ if __name__ == "__main__":
         else:
             test_importances = None
 
-
-
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                   Predictions                                             #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+    _, X_all, y_all =  create_xgb_dts(data=data, 
+                                          X_cols=X_cols,
+                                          y_goal=args.goal,
+                                          set_to_get="all")
     out_data, optimal_proba_cutoff = get_out_data(data=data, 
                                                   model_final=model_final, 
                                                   X_all=X_all, 
@@ -367,17 +403,22 @@ if __name__ == "__main__":
                                                   device=args.device)
     
     if args.future_val:
+        _, X_all, y_all =  create_xgb_dts(data=val_data, 
+                                          X_cols=X_cols,
+                                          y_goal=args.goal,
+                                          set_to_get="all")
         val_out_data, _ = get_out_data(data=val_data, 
-                                    model_final=model_final, 
-                                    X_all=X_val_all, 
-                                    y_all=y_val_all, 
-                                    metric=args.metric,
-                                    lab_name=args.lab_name,
-                                    goal=args.goal,
-                                    abnorm_extra_choice=args.abnorm_extra_choice,
-                                    optimal_proba_cutoff=optimal_proba_cutoff,
-                                    device=args.device)
-    
+                                        model_final=model_final, 
+                                        X_all=X_all, 
+                                        y_all=y_all, 
+                                        metric=args.metric,
+                                        lab_name=args.lab_name,
+                                        goal=args.goal,
+                                        abnorm_extra_choice=args.abnorm_extra_choice,
+                                        optimal_proba_cutoff=optimal_proba_cutoff,
+                                        device=args.device)
+    del X_all; y_all; gc.collect()
+
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                   Saving                                                  #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  

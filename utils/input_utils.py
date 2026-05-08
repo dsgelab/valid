@@ -77,9 +77,10 @@ def filter_out_no_pcs(data):
 
 import polars as pl
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import read_file, print_count
 from datetime import datetime
+import gc
 def get_data_and_pred_list(file_path_labels: str, 
                            file_path_icds: str,
                            file_path_atcs: str,
@@ -93,6 +94,7 @@ def get_data_and_pred_list(file_path_labels: str,
                            file_path_transformer: str,
                            preds: list,
                            start_date: str,
+                           needed_X_cols: list=[],
                            fill_missing: int=0,
                            fids_path: str="",
                            future_val: str="",
@@ -117,8 +119,12 @@ def get_data_and_pred_list(file_path_labels: str,
     #                 Getting Data                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     data = read_file(file_path_labels)
-    if future_val == "train" : data = data.filter(pl.col.SET==0)
-    elif future_val == "val" or future_val == "final train": data = data.filter(pl.col.SET!=0)
+    if future_val == "final train":
+        # Using valid&test as train for final fit, so filtering out train set and setting valid&test to 0
+        data = data.filter(pl.col("SET").is_in([1,2])).with_columns(pl.Series("SET", [0]*data.height))
+    elif future_val == "train" : data = data.filter(pl.col.SET==0)
+    elif future_val == "val": data = data.filter(pl.col.SET!=0)
+    # For Final val actually being passed a different df so no fitering needed
     
     if fids_path != "": 
         fids = read_file(fids_path)
@@ -129,6 +135,8 @@ def get_data_and_pred_list(file_path_labels: str,
     if file_path_transformer != "": 
         trans_data = read_file(file_path_transformer)
         data = data.join(trans_data.drop("SET", "y_MEAN_ABNORM"), on="FINNGENID", how="left")
+        trans_cols = trans_data.columns
+        del trans_data; gc.collect()
     print_count(data)
 
     # # # # # # # # # PGS # # # # # # # # # # # # # # # # # # #
@@ -140,6 +148,8 @@ def get_data_and_pred_list(file_path_labels: str,
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS1"] 
         data = data.join(pgs.select("FINNGENID", "PGS1"), on="FINNGENID", how="left")
         data = filter_out_no_pcs(data)
+        del pgs; gc.collect()
+
     if file_path_pgs2 != "":
         pgs = pl.read_csv(file_path_pgs2, separator="\t")
         if len(pgs.columns)==2: # Zhijian PGS for eGFR levels
@@ -148,6 +158,7 @@ def get_data_and_pred_list(file_path_labels: str,
             pgs.columns = ["X1", "FINNGENID", "X2", "X3", "PGS2"] 
         data = data.join(pgs.select("FINNGENID", "PGS2"), on="FINNGENID", how="left")
         data = filter_out_no_pcs(data)
+        del pgs; gc.collect()
 
     # # # # # # # # # ICD # # # # # # # # # # # # # # # # # # #
     if file_path_icds != "": 
@@ -160,7 +171,8 @@ def get_data_and_pred_list(file_path_labels: str,
         icds = icds.select(["FINNGENID", *keep])
 
         data = data.join(icds, on="FINNGENID", how="left")
-
+        icd_cols = icds.columns
+        del icds; gc.collect()
 
     # # # # # # # # # ATC # # # # # # # # # # # # # # # # # # #
     if file_path_atcs != "": 
@@ -173,6 +185,8 @@ def get_data_and_pred_list(file_path_labels: str,
         atcs = atcs.select(["FINNGENID", *keep])
 
         data = data.join(atcs, on="FINNGENID", how="left")
+        atc_cols = atcs.columns
+        del atcs; gc.collect()
 
     # # # # # # # # # Sumstats # # # # # # # # # # # # # # # # # # #
     if file_path_sumstats != "": 
@@ -186,6 +200,8 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.with_columns(pl.when(pl.col.MEAN.is_null()).then(pl.lit(1)).otherwise(pl.lit(0)).alias("NO_HISTORY"))
         if start_date != "":
             data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.LAST_VAL_DATE).dt.total_days().alias("LAST_VAL_DIFF"))
+        sumstats_cols = sumstats.columns
+        del sumstats; gc.collect()
 
     # # # # # # # # # Second sumstats # # # # # # # # # # # # # # # # # # #
     if file_path_second_sumstats != "": 
@@ -195,6 +211,8 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(second_sumstats, on="FINNGENID", how="left")
         if start_date != "":
             data = data.with_columns((datetime.strptime(start_date, "%Y-%m-%d")-pl.col.S_LAST_VAL_DATE).dt.total_days().alias("S_LAST_VAL_DIFF"))
+        second_sumstats_cols = second_sumstats.columns
+        del second_sumstats; gc.collect()
 
     # # # # # # # # # Labs # # # # # # # # # # # # # # # # # # #
     if file_path_labs != "": 
@@ -204,8 +222,11 @@ def get_data_and_pred_list(file_path_labels: str,
         # labs is wider format so need to take out OMOP_ID_MEAN, OMOP_ID_QUANT25, OMOP_ID_QUANT75 for the not selected omops
         labs = labs.select(*[col for col in labs.columns if col.split("_")[0] not in not_select_omops])
         data = data.join(labs, on="FINNGENID", how="left")
+        labs_cols = labs.columns
+        del labs; gc.collect()
 
     # # # # # # # # # Extra # # # # # # # # # # # # # # # # # # #
+    extra_data = None
     if "BMI" in preds:
         extra_data = get_ext_data(datetime.strptime(start_date, "%Y-%m-%d"), "BMI")            
         data = data.join(extra_data.select("FINNGENID", "BMI"), how="left", on="FINNGENID")
@@ -234,9 +255,14 @@ def get_data_and_pred_list(file_path_labels: str,
         data = data.join(extra_data.select("FINNGENID", "EDU"), how="left", on="FINNGENID")
         if fill_missing:
             data = data.with_columns(pl.when(pl.col.EDU.is_null()).then(pl.lit(0.5)).otherwise(pl.col.EDU).alias("EDU"))
-            
+    if extra_data is not None: del extra_data; gc.collect()
+
     # Changing data-modality of sex column
-    data = data.with_columns(pl.col("SEX").replace({"female": 0, "male": 1}).cast(pl.Int32).alias("SEX"))
+    # check if dtype is string and if it contains "female"
+    if data["SEX"].dtype == pl.String:
+        data = data.with_columns(pl.col("SEX").replace({"female": 0, "male": 1}).cast(pl.Int32).alias("SEX"))
+    else:
+        data = data.with_columns(pl.col.SEX.cast(pl.Int32).alias("SEX"))
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Predictors                                              #
@@ -244,24 +270,43 @@ def get_data_and_pred_list(file_path_labels: str,
     X_cols = []
     for pred in preds:
         if pred == "ICD_MAT":
-            [X_cols.append(ICD_CODE) for ICD_CODE, _ in icds.schema.items() if ICD_CODE != "FINNGENID" and ICD_CODE != "LAST_CODE_DATE"]
+            [X_cols.append(ICD_CODE) for ICD_CODE in icd_cols if ICD_CODE != "FINNGENID" and ICD_CODE != "LAST_CODE_DATE"]
         elif pred == "ATC_MAT":
-            [X_cols.append(ATC_CODE) for ATC_CODE, _ in atcs.schema.items() if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_CODE_DATE"]
+            [X_cols.append(ATC_CODE) for ATC_CODE in atc_cols if ATC_CODE != "FINNGENID" and ATC_CODE != "LAST_CODE_DATE"]
         elif pred == "SUMSTATS":
-            [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
+            [X_cols.append(SUMSTAT) for SUMSTAT in sumstats_cols if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE"]
         elif pred == "TRANSFORMER":
-            [X_cols.append(TRANSFORMER) for TRANSFORMER, _ in trans_data.schema.items() if TRANSFORMER != "FINNGENID" and TRANSFORMER != "SET" and TRANSFORMER != "y_MEAN_ABNORM"]
+            [X_cols.append(TRANSFORMER) for TRANSFORMER in trans_cols if TRANSFORMER != "FINNGENID" and TRANSFORMER != "SET" and TRANSFORMER != "y_MEAN_ABNORM"]
         elif pred == "SUMSTATS_MEAN":
-            [X_cols.append(SUMSTAT) for SUMSTAT, _ in sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE" and "MEAN" in SUMSTAT]
+            [X_cols.append(SUMSTAT) for SUMSTAT in sumstats_cols if SUMSTAT != "FINNGENID" and SUMSTAT != "LAST_VAL_DATE" and "MEAN" in SUMSTAT]
         elif pred == "SECOND_SUMSTATS":
-            [X_cols.append(SUMSTAT) for SUMSTAT, _ in second_sumstats.schema.items() if SUMSTAT != "FINNGENID" and SUMSTAT != "S_LAST_VAL_DATE"]
+            [X_cols.append(SUMSTAT) for SUMSTAT in second_sumstats_cols if SUMSTAT != "FINNGENID" and SUMSTAT != "S_LAST_VAL_DATE"]
         elif pred == "LAB_MAT":
-            [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID"]
+            [X_cols.append(LAB_MAT) for LAB_MAT in labs_cols if LAB_MAT != "FINNGENID"]
         elif pred == "LAB_MAT_MEAN":
-            [X_cols.append(LAB_MAT) for LAB_MAT, _ in labs.schema.items() if LAB_MAT != "FINNGENID" and "MEAN" in LAB_MAT]
+            [X_cols.append(LAB_MAT) for LAB_MAT in labs_cols if LAB_MAT != "FINNGENID" and "MEAN" in LAB_MAT]
         else:
             X_cols.append(pred)
-            
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #                 Memory saving                                           #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #   
+    binary_cols = ([col_name for col_name in X_cols
+                       if(set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {0, 1} or
+                          set(data.select(pl.col(col_name).drop_nulls().unique()).to_series()) <= {"0", "1"})  
+    ])
+    data = data.with_columns([
+        pl.col(col).cast(pl.Float64, strict=False) for col, dtype in data.schema.items() if (isinstance(dtype, pl.Int64) or isinstance(dtype, pl.Int32)) and col not in binary_cols
+    ])
+    data = data.with_columns([
+        pl.col(col).fill_nan(None).cast(pl.Int8, strict=False) for col in data.columns if col in binary_cols
+    ])
+    
+
+    for crnt_col in needed_X_cols:
+        if crnt_col not in data.columns:
+            data = data.with_columns(pl.Series(crnt_col, [0]*data.height))
+
     return(data.unique(), X_cols)
 
 from datetime import datetime

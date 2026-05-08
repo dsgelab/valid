@@ -1,6 +1,8 @@
+import gc
+
 import polars as pl
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append(("../utils/"))
 from general_utils import Timer
 import logging
 import numpy as np
@@ -46,6 +48,8 @@ def get_xgb_base_params(metric: str,
         base_params.update({"objective": "reg:quantileerror", "quantile_alpha": 0.1, "eval_metric": "q10"})
     elif metric == "tweedie":
         base_params.update({"objective": "reg:tweedie", "eval_metric": "tweedie-nloglik@1.99"})
+    elif get_train_type(metric) == "cox":
+        base_params.update({"objective": "survival:cox", "eval_metric": metric})
     elif get_train_type(metric) == "cont":
         base_params.update({"objective": "reg:squarederror", "eval_metric": metric})
     elif get_train_type(metric) == "bin":
@@ -72,9 +76,9 @@ def get_cont_goal_col_name(goal: str,
             return None
         else:
             return(new_goal)
-    # Continuous prediction tasks
+    # Continuous prediction tasks or others
     else:
-        print("Warning: Continuous prediction probably deprecated at the moment.")
+        print("Warning: Could not find continuous value column name. Certain plots cannot be created.")
         return None
     
 
@@ -94,11 +98,12 @@ def get_cont_goal_col_name(goal: str,
     Returns:
         clf (xgb.XGBClassifier or xgb.XGBRegressor): The fitted XGBoost model.
 """
+import gc
+from sklearn.model_selection import KFold
+from general_utils import logging_print
 def xgb_final_fitting(best_params: dict, 
                       X_train: pl.DataFrame, 
                       y_train: pl.DataFrame, 
-                      X_finetune_valid: pl.DataFrame,
-                      y_finetune_valid: pl.DataFrame,
                       metric: str,
                       low_lr: float,
                       early_stop: int,
@@ -126,24 +131,38 @@ def xgb_final_fitting(best_params: dict,
     if get_train_type(metric) == "bin" or get_train_type(metric) == "multi":
         # Use Option 4 to find best num_boost_round
         if fit_cv:
-            cv_clf = xgb.cv(params=params_fin, 
-                            dtrain=xgb.DMatrix(X_train, y_train), 
-                            early_stopping_rounds=early_stop, 
-                            stratified=True, 
-                            num_boost_round=10000, 
-                            nfold=n_folds,
-                            seed=1241,
-                            shuffle=True,
-                            verbose_eval=100)
-            clf = xgb.XGBClassifier(**params_fin, n_estimators=len(cv_clf))
+            print("Running cross-validation to find best number of boosting rounds...")
+            best_iterations = []
+            kf = KFold(n_splits=n_folds, 
+                       shuffle=True, 
+                       random_state=1241)
+            idx = 0
+            for tr_idx, va_idx in kf.split(X_train):
+                logging_print(f"Fitting fold {idx}...")
+                dtrain = xgb.DMatrix(X_train[tr_idx], label=y_train[tr_idx])
+                dval = xgb.DMatrix(X_train[va_idx], label=y_train[va_idx])
+                booster = xgb.train(params_fin, dtrain,
+                                    num_boost_round=10000,
+                                    evals=[(dval, "val")],
+                                    early_stopping_rounds=early_stop,
+                                    verbose_eval=100)
+                best_iterations.append(booster.best_iteration)
+                del dtrain, dval, booster
+                gc.collect()
+                idx += 1
+            logging_print(f"Average best iteration: {np.mean(best_iterations)}")
+            logging_print("Fitting final model with best parameters and number of boosting rounds...")
+            best_iteration = int(np.mean(best_iterations))
+            clf = xgb.XGBClassifier(**params_fin, n_estimators=best_iteration)
             clf.fit(X_train, y_train, verbose=100)
             print("done")
         else:
             clf = xgb.XGBClassifier(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_finetune_valid, y_finetune_valid)], verbose=100)
+            clf.fit(X_train, y_train, verbose=100)
     else:
         if metric in ["q10", "q05", "q25", "q50", "q75", "q90", "q95"]: del params_fin["eval_metric"]
         if fit_cv:
+            print("Running cross-validation to find best number of boosting rounds...")
             cv_clf = xgb.cv(params=params_fin, 
                             dtrain=xgb.DMatrix(X_train, y_train), 
                             early_stopping_rounds=early_stop, 
@@ -156,7 +175,7 @@ def xgb_final_fitting(best_params: dict,
             clf.fit(X_train, y_train, verbose=100)       
         else:
             clf = xgb.XGBRegressor(**params_fin, early_stopping_rounds=early_stop, n_estimators=10000)
-            clf.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_finetune_valid, y_finetune_valid)], verbose=100)
+            clf.fit(X_train, y_train, verbose=100)
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Logging info                                            #
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -166,8 +185,6 @@ def xgb_final_fitting(best_params: dict,
     logging.info('Number of estimators ---------------------------')
     if not fit_cv:
         logging.info(f'best boosting round: {clf.best_iteration}')
-    else:
-        logging.info(len(cv_clf))
     logging.info('Time ---------------------------')
     logging.info(timer.get_elapsed())
     logging.info('Best params ---------------------------')
@@ -176,92 +193,3 @@ def xgb_final_fitting(best_params: dict,
     logging.info("time taken {timer.get_elapsed()}")
 
     return(clf) 
-
-
-"""Fits the final CatBoost model with the best hyperparameters found in the optimization step.
-
-    Args:
-        best_params (dict): The best hyperparameters found in the optimization step.
-        X_train (pl.DataFrame): The training features.
-        y_train (pl.DataFrame): The training target.
-        X_valid (pl.DataFrame): The validation features.
-        y_valid (pl.DataFrame): The validation target.
-        metric (str): The evaluation metric.
-        low_lr (float): The learning rate.  
-        early_stop (int): The number of rounds for early stopping.
-        n_classes (int): The number of classes (for multi-class classification).
-
-    Returns:
-        clf (cat.CatBoostClassifier or cat.CatBoostRegressor): The fitted CatBoost model.
-"""
-try:
-    import catboost as cat
-except ImportError:
-    pass
-def cat_final_fitting(best_params: dict, 
-                      X_train: pl.DataFrame, 
-                      y_train: pl.DataFrame, 
-                      X_valid: pl.DataFrame, 
-                      y_valid: pl.DataFrame, 
-                      X_test: pl.DataFrame,
-                      y_test: pl.DataFrame,
-                      metric: str,
-                      low_lr: float,
-                      early_stop: int=5,
-                      n_classes: int=2,
-                      fit_cv: int=1,
-                      final_fit: int=0):
-    """Fits the final XGB model with the best hyperparameters found in the optimization step."""
-
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Study setup                                             #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    timer = Timer()
-    np.random.seed(9234)
-    best_params["learning_rate"] = low_lr
-    best_params["loss_function"] = "Logloss" if metric=="logloss" else metric
-    print(best_params)
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Fitting                                                 #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    if not final_fit:
-        X = pl.concat([X_train, X_valid])
-        y = pl.concat([y_train, y_valid])
-    else:
-        X = pl.concat([X_train, X_valid,  X_test])
-        y = pl.concat([y_train, y_valid, y_test])
-        # Use Option 4 to find best num_boost_round
-    if fit_cv or final_fit:
-        cv_clf = cat.cv(params=best_params, 
-                        pool=cat.Pool(X.to_pandas(), y.to_pandas()), 
-                        early_stopping_rounds=early_stop, 
-                        stratified=True, 
-                        fold_count=10,
-                        seed=1241,
-                        shuffle=True,
-                        verbose_eval=100)
-        clf = cat.CatBoostClassifier(**best_params, n_estimators=len(cv_clf))
-        clf.fit(X.to_pandas(), y.to_pandas(), verbose=100)
-        print("done")
-
-    # # # # # # # # # # # # #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #                 Logging info                                            #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    logging.info(timer.get_elapsed())
-    # Get the best model
-    logging.info('Final fitting ==============================')
-    logging.info('Number of estimators ---------------------------')
-    if not fit_cv and not final_fit:
-        logging.info(f'best boosting round: {clf.best_iteration_}')
-    else:
-        logging.info(len(cv_clf))
-    logging.info('Time ---------------------------')
-    logging.info(timer.get_elapsed())
-    logging.info('Best params ---------------------------')
-    logging.info(f'fixed learning rate: {best_params["learning_rate"]}')
-
-    logging.info("time taken {timer.get_elapsed()}")
-
-    return(clf)   
