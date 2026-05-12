@@ -220,6 +220,7 @@ def get_transformer_data(data: pl.DataFrame,
         tuple: A tuple containing the data with the transformer columns added and the list of transformer columns
     """
 
+    trans_cols = []
     if file_path_transformer != "": 
         trans_data = read_file(file_path_transformer)
         data = data.join(trans_data.drop("SET", "y_MEAN_ABNORM"), on="FINNGENID", how="left")
@@ -267,6 +268,7 @@ def get_icd_atc_data(data: pl.DataFrame,
         tuple: A tuple containing the data with the ICD/ATC columns added and the list of ICD/ATC columns
     """
 
+    pred_cols = []
     if file_path_preds != "": 
         preds = read_file(file_path_preds).filter(pl.col.FINNGENID.is_in(data["FINNGENID"]))
         pred_cols = [c for c in preds.columns if c != "FINNGENID"]
@@ -300,6 +302,7 @@ def get_sumstats_data(data: pl.DataFrame,
 
     """
 
+    sumstats_cols = []
     if file_path_sumstats != "": 
         sumstats = read_file(file_path_sumstats,
                              schema={"SEQ_LEN": pl.Float64,
@@ -336,6 +339,7 @@ def get_labs_data(data: pl.DataFrame,
         tuple: A tuple containing the data with the lab columns added and the list of lab columns
     """
 
+    labs_cols = []
     if file_path_labs != "": 
         labs = read_file(file_path_labs)
         # do not select OMOPs that are similar to the lab we are using as predictor to avoid data leakage
@@ -442,7 +446,7 @@ def get_col_list(preds: list,
             X_cols.append(pred)
 
     return X_cols
-    
+    f
 
 from datetime import datetime
 import polars as pl
@@ -463,10 +467,11 @@ def get_smoke_data(start_date: datetime) -> pl.DataFrame:
                                          .then(pl.lit(2))
                                          .otherwise(pl.lit(None)).alias("SMOKE")
     )
-    smoke_data = smoke_data.filter(pl.col.SMOKE.is_not_null(), 
-                                   pl.col.APPROX_EVENT_DAY.str.to_date("%Y-%m-%d")<start_date)
-    smoke_data = smoke_data.filter((pl.col.APPROX_EVENT_DAY==pl.col.APPROX_EVENT_DAY.max()).over("FINNGENID"))
-    smoke_data = smoke_data.select("FINNGENID", "SMOKE")
+    smoke_data = (smoke_data.filter(pl.col.SMOKE.is_not_null(), 
+                                   pl.col.APPROX_EVENT_DAY.str.to_date("%Y-%m-%d", strict=False)<start_date)
+                            .filter((pl.col.APPROX_EVENT_DAY==pl.col.APPROX_EVENT_DAY.max()).over("FINNGENID"))
+                            .select("FINNGENID", "SMOKE")
+    )
 
     return(smoke_data)
 

@@ -85,7 +85,6 @@ def get_out_data(data: pl.DataFrame,
         # Abnormality prediction based on the continuous value
         out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "ABNORM_PROBS").rename({"ABNORM_CUSTOM": "ABNORM_PREDS"})
         out_data = get_abnorm_func_based_on_name(lab_name, abnorm_extra_choice)(out_data, "TRUE_VALUE").rename({"ABNORM_CUSTOM": "TRUE_ABNORM"})
-        print(out_data["TRUE_ABNORM"].value_counts())
         
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     #                 Binary prediction of "abnormality"                      #
@@ -358,7 +357,7 @@ def create_xgb_dts(data: pl.DataFrame,
         train_data = data.filter(pl.col("SET")==0).drop("SET")
         X = train_data.select(X_cols); y = train_data.select(y_goal)
 
-    # # # # # # # # TEST # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # # # # # # # # VALID # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     if set_to_get == "valid":
         valid_data = data.filter(pl.col("SET")==1).drop("SET")
         X = valid_data.select(X_cols); y = valid_data.select(y_goal)

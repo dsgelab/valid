@@ -345,7 +345,7 @@ if __name__ == "__main__":
                          goal=args.goal,
                          subset="valid")
             
-        if data.filter(pl.col.SET==2).height > 0:
+        if (data.filter(pl.col.SET==2).height > 0) or (args.future_val and val_data.filter(pl.col.SET==2).height > 0):
             if not args.future_val:
                 _, X_test, _ =  create_xgb_dts(data=data, 
                                                 X_cols=X_cols,

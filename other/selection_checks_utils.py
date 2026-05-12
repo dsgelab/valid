@@ -1,5 +1,5 @@
 import sys
-sys.path.append(("/home/ivm/valid/scripts/utils/"))
+sys.path.append("../../utils/")
 from general_utils import *
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -176,7 +176,7 @@ def collapse_sample_sizes(collapsed_quart_cuts,
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 import polars as pl
 import numpy as np
-from sklearn.metrics import roc_auc_score, brier_score_loss, average_precision_score, log_loss, balanced_accuracy_score
+from sklearn.metrics import roc_auc_score, brier_score_loss, average_precision_score, log_loss
 import matplotlib.pyplot as plt
 from collections import defaultdict
 def draw_now(past_preds_paths,
